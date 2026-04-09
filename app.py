@@ -1,18 +1,18 @@
 """
-GST Reconciliation Web App — PROTECTED EDITION (No Trial, Full Features)
-========================================================================
-• Scripts protected: gst_suite_final.py (encoded), gstr1_extract.py (PyArmor)
-• Full version: No restrictions, unlimited uses
-• GSTR-3B PDF extraction enabled
-• Automatic download features included
+GST Reconciliation Web App — v3 COMPLETE
+=========================================
+FIXES:
+  1. GSTR-1 Reconciliation — dedicated tab in portal
+  2. GSTR-1 extraction always runs & path fixed
+  3. Auto-download status dashboard (all returns × 12 months)
+  4. Secure license (SQLite + SHA-256)
+  5. Rate limiting + file cleanup
 """
 import os, sys, json, zipfile, re, time, shutil, uuid, threading, hashlib
 from pathlib import Path
 from datetime import datetime
-from flask import (Flask, request, jsonify, send_file,
-                   render_template_string, abort)
+from flask import Flask, request, jsonify, send_file, render_template_string, abort
 
-# ── Config ────────────────────────────────────────────────────────
 import tempfile, platform
 
 def _get_app_dir(subfolder):
@@ -28,21 +28,18 @@ UPLOAD_DIR  = _get_app_dir("uploads")
 OUTPUT_DIR  = _get_app_dir("outputs")
 ALLOWED_EXT = {".zip", ".xlsx", ".xls", ".pdf", ".json"}
 MAX_FILE_MB = 50
-JOB_TTL_S   = 7200   # 2 hours — jobs & files auto-deleted after this
+JOB_TTL_S   = 7200
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_MB * 1024 * 1024
 
-# In-memory job tracking
 jobs      = {}
 jobs_lock = threading.Lock()
 
-# ── Rate limiting (per IP) ────────────────────────────────────────
-_rate: dict[str, list] = {}   # ip → [timestamps]
+_rate = {}
 _rate_lock = threading.Lock()
 
-def _check_rate(ip: str, limit: int = 10, window: int = 60) -> bool:
-    """Return True if request is allowed, False if rate-limited."""
+def _check_rate(ip, limit=10, window=60):
     now = time.time()
     with _rate_lock:
         hits = [t for t in _rate.get(ip, []) if now - t < window]
@@ -53,31 +50,56 @@ def _check_rate(ip: str, limit: int = 10, window: int = 60) -> bool:
     return True
 
 def rate_limit(limit=10, window=60):
-    """Decorator — abort 429 if rate exceeded."""
     from functools import wraps
     def decorator(f):
         @wraps(f)
         def wrapped(*args, **kwargs):
             ip = request.remote_addr or "unknown"
             if not _check_rate(ip, limit, window):
-                return jsonify(error="Too many requests. Please wait."), 429
+                return jsonify(error="Too many requests"), 429
             return f(*args, **kwargs)
         return wrapped
     return decorator
 
-# ── License validation (FULL VERSION - No Restrictions) ───────────
-def validate_license(key: str) -> dict:
-    """FULL VERSION MODE - No restrictions, unlimited uses."""
-    return {
-        "valid":      True,
-        "plan":       "full",
-        "customer":   "Full Version User",
-        "expires_at": None,
-    }
+def _license_db():
+    return Path(__file__).parent / "licenses.db"
 
-# ── Cleanup ───────────────────────────────────────────────────────
+def validate_license(key):
+    if not key:
+        return {"valid": False, "reason": "No key"}
+    db_path = _license_db()
+    if not db_path.exists():
+        return {"valid": False, "reason": "License system not configured"}
+    try:
+        import sqlite3
+        key_hash = hashlib.sha256(key.encode()).hexdigest()
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        r = conn.execute(
+            "SELECT * FROM licenses WHERE key_hash=? AND is_active=1", (key_hash,)
+        ).fetchone()
+        conn.close()
+        if not r:
+            return {"valid": False, "reason": "Key not found or revoked"}
+        if r["expires_at"]:
+            if datetime.fromisoformat(r["expires_at"]) < datetime.now():
+                return {"valid": False, "reason": "License expired"}
+        return {"valid": True, "plan": r["plan"], "customer": r["customer"], "expires_at": r["expires_at"]}
+    except Exception as e:
+        return {"valid": False, "reason": f"DB error: {e}"}
+
+def apply_trial_watermark(ws):
+    try:
+        from openpyxl.styles import Font
+        ws.insert_rows(1)
+        c = ws.cell(row=1, column=1)
+        c.value = "=== TRIAL VERSION — Upgrade at gst-recon.com ==="
+        c.font = Font(name="Arial", bold=True, color="FF0000", size=12)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ws.max_column)
+    except:
+        pass
+
 def _cleanup_old_jobs():
-    """Delete job folders older than JOB_TTL_S seconds."""
     try:
         now = time.time()
         for d in [UPLOAD_DIR, OUTPUT_DIR]:
@@ -87,8 +109,7 @@ def _cleanup_old_jobs():
     except:
         pass
 
-def _cleanup_job_files(job_id: str):
-    """Delete upload files for a completed job immediately."""
+def _cleanup_job_files(job_id):
     try:
         up = UPLOAD_DIR / job_id
         if up.exists():
@@ -96,14 +117,12 @@ def _cleanup_job_files(job_id: str):
     except:
         pass
 
-# ── Block access to .py files ─────────────────────────────────────
 @app.before_request
-def block_script_access():
-    path = request.path.lower()
-    if path.endswith(".py") or path.endswith(".pyc") or "gst_suite" in path or "gstr1_extract" in path:
+def block_scripts():
+    p = request.path.lower()
+    if p.endswith(".py") or p.endswith(".pyc") or "gst_suite" in p or "gstr1_extract" in p:
         abort(403)
 
-# ── HTML (embedded) ───────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -115,107 +134,143 @@ HTML = r"""<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#0a0e1a;--surface:#111827;--surface2:#1a2235;--border:#1e3050;
-  --accent:#00e5ff;--accent2:#7c3aed;--green:#00e676;--orange:#ff6d00;--red:#ff1744;
-  --gold:#ffd700;--text:#e8edf5;--muted:#6b7fa3;--mono:'IBM Plex Mono',monospace;
-  --sans:'Syne',sans-serif;
+  --accent:#00e5ff;--accent2:#7c3aed;--green:#00e676;--orange:#ff6d00;
+  --red:#ff1744;--gold:#ffd700;--text:#e8edf5;--muted:#6b7fa3;
+  --mono:'IBM Plex Mono',monospace;--sans:'Syne',sans-serif;
 }
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
 body::before{content:'';position:fixed;inset:0;
   background-image:linear-gradient(rgba(0,229,255,.04) 1px,transparent 1px),
-                    linear-gradient(90deg,rgba(0,229,255,.04) 1px,transparent 1px);
+    linear-gradient(90deg,rgba(0,229,255,.04) 1px,transparent 1px);
   background-size:40px 40px;pointer-events:none;z-index:0}
-.container{max-width:960px;margin:0 auto;padding:2rem 1.5rem;position:relative;z-index:1}
-header{text-align:center;padding:3rem 0 2rem}
-.logo{display:inline-flex;align-items:center;gap:.75rem;margin-bottom:1.5rem}
-.logo-icon{width:48px;height:48px;background:linear-gradient(135deg,var(--accent),var(--accent2));
-  border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.5rem}
-.logo-text{font-size:1.1rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
-  background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;
-  -webkit-text-fill-color:transparent}
-h1{font-size:clamp(1.8rem,4vw,2.8rem);font-weight:800;line-height:1.1;letter-spacing:-.02em}
+.container{max-width:1000px;margin:0 auto;padding:2rem 1.5rem;position:relative;z-index:1}
+header{text-align:center;padding:2rem 0 1.25rem}
+.logo{display:inline-flex;align-items:center;gap:.75rem;margin-bottom:.85rem}
+.logo-icon{width:46px;height:46px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.4rem}
+.logo-text{font-size:1.05rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+h1{font-size:clamp(1.5rem,3.2vw,2.2rem);font-weight:800;line-height:1.1;letter-spacing:-.02em}
 h1 span{background:linear-gradient(135deg,var(--accent),var(--accent2));
   -webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.subtitle{color:var(--muted);font-size:.95rem;margin-top:.75rem;font-family:var(--mono)}
-.version-badge{display:inline-flex;align-items:center;gap:.4rem;padding:.4rem 1rem;
-  border-radius:100px;font-size:.8rem;font-weight:700;font-family:var(--mono);margin-top:1rem;
-  background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
-  padding:1.75rem;margin-bottom:1.5rem;transition:border-color .2s}
-.card:hover{border-color:rgba(0,229,255,.3)}
-.card-title{font-size:1rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--accent);margin-bottom:1.25rem;display:flex;align-items:center;gap:.6rem}
+.subtitle{color:var(--muted);font-size:.85rem;margin-top:.4rem;font-family:var(--mono)}
+.vbadge{display:inline-flex;align-items:center;gap:.4rem;padding:.3rem .85rem;
+  border-radius:100px;font-size:.75rem;font-weight:700;font-family:var(--mono);margin-top:.6rem;
+  background:rgba(255,215,0,.15);color:var(--gold);border:1px solid rgba(255,215,0,.4)}
+.tabs{display:flex;gap:.35rem;margin-bottom:1.25rem;border-bottom:2px solid var(--border);padding-bottom:0;
+  overflow-x:auto}
+.tab-btn{padding:.6rem 1.2rem;background:none;border:none;color:var(--muted);
+  font-family:var(--sans);font-size:.82rem;font-weight:700;cursor:pointer;
+  border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s;
+  text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-pane{display:none}.tab-pane.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:1.5rem;margin-bottom:1.1rem;transition:border-color .2s}
+.card:hover{border-color:rgba(0,229,255,.18)}
+.card-title{font-size:.85rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--accent);margin-bottom:1rem;display:flex;align-items:center;gap:.5rem}
 .card-title::before{content:'';width:3px;height:1em;background:var(--accent);border-radius:2px}
-.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:.85rem}
 @media(max-width:600px){.form-grid{grid-template-columns:1fr}}
-.form-group{display:flex;flex-direction:column;gap:.5rem}
-label{font-size:.8rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-input[type=text],input[type=password]{background:var(--surface2);border:1px solid var(--border);
-  border-radius:8px;padding:.65rem .9rem;color:var(--text);font-family:var(--mono);font-size:.9rem;
+.fg{display:flex;flex-direction:column;gap:.35rem}
+label{font-size:.72rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+input[type=text],input[type=password]{
+  background:var(--surface2);border:1px solid var(--border);border-radius:7px;
+  padding:.55rem .8rem;color:var(--text);font-family:var(--mono);font-size:.85rem;
   transition:border-color .2s;width:100%}
 input:focus{outline:none;border-color:var(--accent)}
 input::placeholder{color:var(--muted)}
-.drop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1rem;margin-top:.5rem}
-.drop-zone{background:var(--surface2);border:2px dashed var(--border);border-radius:12px;
-  padding:1.5rem 1rem;text-align:center;cursor:pointer;transition:all .2s;
-  position:relative;min-height:120px;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:.5rem}
-.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:rgba(0,229,255,.05)}
-.drop-zone.has-files{border-color:var(--green);border-style:solid;background:rgba(0,230,118,.05)}
-.drop-icon{font-size:2rem;line-height:1}
-.drop-label{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-.drop-hint{font-size:.7rem;color:var(--muted);font-family:var(--mono)}
-.drop-count{font-size:.75rem;color:var(--green);font-weight:600;font-family:var(--mono)}
-.drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
-.name-lookup{background:var(--surface2);border:1px solid rgba(124,58,237,.4);border-radius:12px;
-  padding:1.25rem;margin-top:1rem}
-.name-lookup-title{font-size:.8rem;font-weight:700;text-transform:uppercase;
-  letter-spacing:.06em;color:var(--accent2);margin-bottom:.75rem}
-.name-info{font-size:.78rem;color:var(--muted);font-family:var(--mono);line-height:1.6}
-.name-info strong{color:var(--text)}
-.btn-submit{width:100%;padding:1rem;background:linear-gradient(135deg,var(--accent),var(--accent2));
-  border:none;border-radius:12px;color:#000;font-family:var(--sans);font-size:1rem;
+.drop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:.75rem;margin-top:.5rem}
+.dz{background:var(--surface2);border:2px dashed var(--border);border-radius:11px;
+  padding:1.1rem .75rem;text-align:center;cursor:pointer;transition:all .2s;
+  position:relative;min-height:105px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:.35rem}
+.dz:hover,.dz.drag-over{border-color:var(--accent);background:rgba(0,229,255,.04)}
+.dz.has-files{border-color:var(--green);border-style:solid;background:rgba(0,230,118,.04)}
+.dz-icon{font-size:1.7rem;line-height:1}
+.dz-label{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.dz-hint{font-size:.63rem;color:var(--muted);font-family:var(--mono)}
+.dz-cnt{font-size:.68rem;color:var(--green);font-weight:600;font-family:var(--mono)}
+.dz input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+.lic-box{background:linear-gradient(135deg,rgba(0,229,255,.07),rgba(124,58,237,.07));
+  border:1px solid var(--accent);border-radius:11px;padding:1rem;margin-bottom:1.1rem}
+.lic-title{font-size:.82rem;font-weight:700;color:var(--gold);margin-bottom:.55rem}
+.lic-row{display:flex;gap:.4rem}
+.lic-row input{flex:1}
+.btn-lic{padding:.55rem .85rem;background:var(--gold);border:none;border-radius:7px;
+  color:#000;font-weight:700;font-size:.75rem;cursor:pointer;white-space:nowrap}
+.lic-msg{font-size:.72rem;margin-top:.35rem;font-family:var(--mono)}
+.lic-msg.ok{color:var(--green)}.lic-msg.err{color:var(--red)}
+.btn-sub{width:100%;padding:.85rem;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none;border-radius:11px;color:#000;font-family:var(--sans);font-size:.9rem;
   font-weight:800;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;
-  transition:transform .15s,box-shadow .15s;margin-top:.5rem}
-.btn-submit:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,229,255,.3)}
-.btn-submit:disabled{opacity:.5;cursor:not-allowed;transform:none}
-#progress-section{display:none}
-.progress-bar-wrap{background:var(--surface2);border-radius:100px;height:8px;overflow:hidden;margin:1rem 0}
-.progress-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
-  border-radius:100px;transition:width .3s;width:0%}
-.log-box{background:#000;border:1px solid var(--border);border-radius:8px;
-  padding:1rem;font-family:var(--mono);font-size:.78rem;height:180px;overflow-y:auto;
+  transition:transform .15s,box-shadow .15s;margin-top:.35rem}
+.btn-sub:hover{transform:translateY(-2px);box-shadow:0 8px 26px rgba(0,229,255,.28)}
+.btn-sub:disabled{opacity:.42;cursor:not-allowed;transform:none}
+.prog-wrap{display:none}
+.pbar-wrap{background:var(--surface2);border-radius:100px;height:6px;overflow:hidden;margin:.7rem 0}
+.pbar{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
+  border-radius:100px;transition:width .4s;width:0%}
+.logbox{background:#000;border:1px solid var(--border);border-radius:7px;
+  padding:.85rem;font-family:var(--mono);font-size:.72rem;height:160px;overflow-y:auto;
   color:#aaffcc;line-height:1.7}
-.log-box .err{color:#ff6b6b}.log-box .info{color:var(--accent)}
-.log-box .ok{color:var(--green)}.log-box .warn{color:var(--orange)}
-#downloads-section{display:none}
-.dl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;margin-top:1rem}
-.dl-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;
-  padding:1.25rem;display:flex;flex-direction:column;gap:.75rem;align-items:flex-start}
-.dl-name{font-size:.8rem;font-weight:600;color:var(--text)}
-.dl-size{font-size:.72rem;color:var(--muted);font-family:var(--mono)}
-.btn-dl{padding:.5rem 1rem;background:var(--surface);border:1px solid var(--accent);
-  border-radius:8px;color:var(--accent);font-family:var(--mono);font-size:.8rem;
+.logbox .err{color:#ff6b6b}.logbox .info{color:var(--accent)}
+.logbox .ok{color:var(--green)}.logbox .warn{color:var(--orange)}
+.dl-wrap{display:none}
+.dl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:.75rem;margin-top:.75rem}
+.dlcard{background:var(--surface2);border:1px solid var(--border);border-radius:11px;
+  padding:1rem;display:flex;flex-direction:column;gap:.55rem}
+.dl-name{font-size:.75rem;font-weight:600;color:var(--text)}
+.dl-size{font-size:.67rem;color:var(--muted);font-family:var(--mono)}
+.btn-dl{padding:.4rem .85rem;background:var(--surface);border:1px solid var(--accent);
+  border-radius:6px;color:var(--accent);font-family:var(--mono);font-size:.75rem;
   cursor:pointer;text-decoration:none;display:inline-block;transition:background .15s}
 .btn-dl:hover{background:rgba(0,229,255,.1)}
-.btn-auto-dl{padding:.5rem 1rem;background:var(--green);border:none;
-  border-radius:8px;color:#000;font-family:var(--mono);font-size:.8rem;
-  cursor:pointer;margin-top:.5rem;font-weight:600}
-.btn-auto-dl:hover{background:#00c853}
-.status-badge{display:inline-flex;align-items:center;gap:.4rem;padding:.3rem .75rem;
-  border-radius:100px;font-size:.75rem;font-weight:700;font-family:var(--mono)}
-.status-processing{background:rgba(255,109,0,.15);color:var(--orange);border:1px solid rgba(255,109,0,.4)}
-.status-done{background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)}
-.status-error{background:rgba(255,23,68,.15);color:var(--red);border:1px solid rgba(255,23,68,.4)}
+.sbadge{display:inline-flex;align-items:center;gap:.3rem;padding:.22rem .6rem;
+  border-radius:100px;font-size:.68rem;font-weight:700;font-family:var(--mono)}
+.s-proc{background:rgba(255,109,0,.15);color:var(--orange);border:1px solid rgba(255,109,0,.4)}
+.s-done{background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)}
+.s-err{background:rgba(255,23,68,.15);color:var(--red);border:1px solid rgba(255,23,68,.4)}
 .pulse{animation:pulse 1.2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.step{display:flex;gap:1rem;align-items:flex-start;margin-bottom:.85rem}
-.step-num{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));
-  color:#000;font-weight:800;font-size:.8rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.step-text{font-size:.88rem;color:var(--muted);line-height:1.5}
-.step-text strong{color:var(--text)}
-.auto-download-section{background:var(--surface2);border:1px solid var(--green);border-radius:12px;
-  padding:1rem;margin-top:1rem}
-.auto-download-title{font-size:.8rem;font-weight:700;color:var(--green);margin-bottom:.5rem}
+
+/* Download status table */
+.dst{width:100%;border-collapse:collapse;font-size:.73rem;font-family:var(--mono);margin-top:.65rem}
+.dst th{background:var(--surface2);color:var(--muted);font-size:.64rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.05em;padding:.45rem .55rem;
+  border:1px solid var(--border);text-align:center}
+.dst th:first-child{text-align:left}
+.dst td{padding:.4rem .55rem;border:1px solid var(--border);text-align:center}
+.dst tr:nth-child(even) td{background:rgba(255,255,255,.018)}
+.dst td:first-child{text-align:left;color:var(--text);font-weight:600}
+.c-ok{color:var(--green);font-weight:700}
+.c-fail{color:var(--red);font-weight:700}
+.c-pend{color:var(--orange)}
+.c-skip{color:var(--muted)}
+
+/* Pricing */
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:.85rem;margin-top:.75rem}
+@media(max-width:600px){.pgrid{grid-template-columns:1fr}}
+.pcard{background:var(--surface2);border:1px solid var(--border);border-radius:11px;
+  padding:1.3rem;text-align:center}
+.pcard.feat{border-color:var(--gold);background:rgba(255,215,0,.03)}
+.ptitle{font-size:.95rem;font-weight:700;margin-bottom:.35rem}
+.pprice{font-size:1.7rem;font-weight:800;color:var(--accent);margin-bottom:.35rem}
+.pprice span{font-size:.82rem;color:var(--muted);font-weight:400}
+.pfeats{list-style:none;text-align:left;margin:.75rem 0}
+.pfeats li{font-size:.78rem;color:var(--muted);padding:.22rem 0;border-bottom:1px solid var(--border)}
+.pfeats li:last-child{border:none}
+.pfeats li::before{content:'✓ ';color:var(--green)}
+.pfeats li.x::before{content:'✗ ';color:var(--red)}
+.btn-buy{width:100%;padding:.6rem;background:var(--accent);border:none;border-radius:7px;
+  color:#000;font-weight:700;cursor:pointer;transition:all .15s}
+.btn-buy:hover{background:var(--accent2);color:#fff}
+.info-pills{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.85rem}
+.pill{padding:.25rem .65rem;background:var(--surface2);border:1px solid var(--border);
+  border-radius:100px;font-size:.68rem;color:var(--muted);font-family:var(--mono)}
 </style>
 </head>
 <body>
@@ -226,277 +281,505 @@ input::placeholder{color:var(--muted)}
     <div class="logo-icon">₹</div>
     <div class="logo-text">GST Recon</div>
   </div>
-  <h1>Annual GST<br><span>Reconciliation Portal</span></h1>
-  <p class="subtitle">Upload returns → Get reconciliation Excel in seconds</p>
-  <div class="version-badge">⭐ FULL VERSION — Unlimited Access</div>
+  <h1>Annual GST <span>Reconciliation Portal</span></h1>
+  <p class="subtitle">Upload returns → Instant reconciliation + GSTR-1 full detail</p>
+  <div class="vbadge" id="vbadge">🎯 TRIAL VERSION</div>
 </header>
 
-<!-- Instructions -->
-<div class="card">
-  <div class="card-title">How It Works</div>
-  <div class="step"><div class="step-num">1</div><div class="step-text"><strong>Enter client details</strong> — GSTIN, company name, financial year</div></div>
-  <div class="step"><div class="step-num">2</div><div class="step-text"><strong>Upload your files</strong> — GSTR-1 ZIPs, GSTR-2B Excel, GSTR-3B PDFs, GSTR-2A ZIPs</div></div>
-  <div class="step"><div class="step-num">3</div><div class="step-text"><strong>Optional:</strong> Upload <strong>customer_names.xlsx</strong> for auto-fill receiver names</div></div>
-  <div class="step"><div class="step-num">4</div><div class="step-text"><strong>Click Generate</strong> — Downloads Annual Reconciliation + GSTR3B-R1 + GSTR3B-R2A Summaries</div></div>
-</div>
-
-<form id="main-form">
-<div class="card">
-  <div class="card-title">Client Details</div>
-  <div class="form-grid">
-    <div class="form-group"><label>GSTIN *</label>
-      <input type="text" id="gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
-    <div class="form-group"><label>Company Name *</label>
-      <input type="text" id="client_name" placeholder="ABC Traders" required></div>
-    <div class="form-group"><label>Financial Year *</label>
-      <input type="text" id="fy" value="2025-26" required></div>
-    <div class="form-group"><label>State</label>
-      <input type="text" id="state" placeholder="Tamil Nadu (optional)"></div>
+<!-- License -->
+<div class="lic-box" id="lic-box">
+  <div class="lic-title">🔓 Unlock Full Version</div>
+  <div class="lic-row">
+    <input type="password" id="lic-key" placeholder="GSTPRO-XXXXX-XXXXX-XXXXX">
+    <button class="btn-lic" onclick="activateLicense()">Activate</button>
   </div>
-</div>
-
-<div class="card">
-  <div class="card-title">Upload Returns</div>
-  <div class="drop-grid">
-    <div class="drop-zone" id="zone-r1">
-      <div class="drop-icon">📋</div><div class="drop-label">GSTR-1</div>
-      <div class="drop-hint">ZIP files (12 months)</div>
-      <div class="drop-count" id="count-r1">No files</div>
-      <input type="file" multiple accept=".zip,.json" data-zone="r1" onchange="updateZone('r1',this)">
-    </div>
-    <div class="drop-zone" id="zone-r2b">
-      <div class="drop-icon">🏦</div><div class="drop-label">GSTR-2B</div>
-      <div class="drop-hint">Excel files (.xlsx)</div>
-      <div class="drop-count" id="count-r2b">No files</div>
-      <input type="file" multiple accept=".xlsx,.xls,.zip" data-zone="r2b" onchange="updateZone('r2b',this)">
-    </div>
-    <div class="drop-zone" id="zone-r2a">
-      <div class="drop-icon">📊</div><div class="drop-label">GSTR-2A</div>
-      <div class="drop-hint">ZIP or Excel</div>
-      <div class="drop-count" id="count-r2a">No files</div>
-      <input type="file" multiple accept=".zip,.xlsx" data-zone="r2a" onchange="updateZone('r2a',this)">
-    </div>
-    <div class="drop-zone" id="zone-r3b">
-      <div class="drop-icon">📄</div><div class="drop-label">GSTR-3B PDF</div>
-      <div class="drop-hint">PDF files (auto-extract)</div>
-      <div class="drop-count" id="count-r3b">No files</div>
-      <input type="file" multiple accept=".pdf" data-zone="r3b" onchange="updateZone('r3b',this)">
-    </div>
-  </div>
-  <div class="name-lookup">
-    <div class="name-lookup-title">Customer Name Lookup (Optional)</div>
-    <div class="drop-zone" id="zone-cust" style="min-height:80px;flex-direction:row;justify-content:flex-start;gap:1rem;padding:1rem">
-      <div class="drop-icon" style="font-size:1.5rem">👥</div>
-      <div>
-        <div class="drop-label" style="text-align:left">customer_names.xlsx</div>
-        <div class="name-info" style="margin-top:.25rem">
-          Any Excel with <strong>GSTIN</strong> + <strong>Company Name</strong> columns.<br>
-          Auto-fills receiver names in B2B, CDNR sheets.
-        </div>
-        <div class="drop-count" id="count-cust" style="margin-top:.4rem">No file</div>
-      </div>
-      <input type="file" accept=".xlsx,.xls" data-zone="cust" onchange="updateZone('cust',this)"
-             style="position:absolute;inset:0;opacity:0;cursor:pointer">
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <button type="submit" class="btn-submit" id="submit-btn">Generate Reconciliation →</button>
-</div>
-</form>
-
-<!-- Progress -->
-<div class="card" id="progress-section">
-  <div class="card-title">Processing
-    <span class="status-badge status-processing pulse" id="status-badge">Running</span>
-  </div>
-  <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progress-bar"></div></div>
-  <div class="log-box" id="log-box"></div>
-</div>
-
-<!-- Downloads -->
-<div class="card" id="downloads-section">
-  <div class="card-title">Downloads Ready</div>
-  <div class="dl-grid" id="dl-grid"></div>
-  <div class="auto-download-section" id="auto-download-section" style="display:none">
-    <div class="auto-download-title">📥 Auto-Download</div>
-    <p style="color:var(--muted);font-size:.75rem;margin-bottom:.5rem">All files will download automatically</p>
-    <button class="btn-auto-dl" onclick="downloadAll()">Download All Files</button>
-  </div>
-  <p style="color:var(--muted);font-size:.75rem;margin-top:1rem;font-family:var(--mono)">
-    ⏳ Files are available for 2 hours after generation.
+  <div class="lic-msg" id="lic-msg"></div>
+  <p style="color:var(--muted);font-size:.68rem;margin-top:.35rem">
+    No key? <a href="#" onclick="switchTab('pricing',event)" style="color:var(--gold)">Buy Full Version →</a>
   </p>
 </div>
 
+<!-- TABS -->
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('recon',event)">📊 Reconciliation</button>
+  <button class="tab-btn" onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
+  <button class="tab-btn" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
+  <button class="tab-btn" onclick="switchTab('pricing',event)">💳 Plans</button>
+</div>
+
+<!-- ══ TAB 1: RECONCILIATION ══ -->
+<div class="tab-pane active" id="tab-recon">
+<form id="recon-form">
+<div class="card">
+  <div class="card-title">Client Details</div>
+  <div class="form-grid">
+    <div class="fg"><label>GSTIN *</label><input type="text" id="r-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
+    <div class="fg"><label>Company Name *</label><input type="text" id="r-name" placeholder="ABC Traders" required></div>
+    <div class="fg"><label>Financial Year *</label><input type="text" id="r-fy" value="2025-26" required></div>
+    <div class="fg"><label>State</label><input type="text" id="r-state" placeholder="Tamil Nadu"></div>
+  </div>
+</div>
+<div class="card">
+  <div class="card-title">Upload Returns</div>
+  <div class="drop-grid">
+    <div class="dz" id="zone-r1"><div class="dz-icon">📋</div><div class="dz-label">GSTR-1</div>
+      <div class="dz-hint">ZIP files (12 months)</div><div class="dz-cnt" id="cnt-r1">No files</div>
+      <input type="file" multiple accept=".zip,.json" data-zone="r1" onchange="updateZone('r1',this)"></div>
+    <div class="dz" id="zone-r2b"><div class="dz-icon">🏦</div><div class="dz-label">GSTR-2B</div>
+      <div class="dz-hint">Excel (.xlsx)</div><div class="dz-cnt" id="cnt-r2b">No files</div>
+      <input type="file" multiple accept=".xlsx,.xls,.zip" data-zone="r2b" onchange="updateZone('r2b',this)"></div>
+    <div class="dz" id="zone-r2a"><div class="dz-icon">📊</div><div class="dz-label">GSTR-2A</div>
+      <div class="dz-hint">ZIP or Excel</div><div class="dz-cnt" id="cnt-r2a">No files</div>
+      <input type="file" multiple accept=".zip,.xlsx" data-zone="r2a" onchange="updateZone('r2a',this)"></div>
+    <div class="dz" id="zone-r3b"><div class="dz-icon">📄</div><div class="dz-label">GSTR-3B</div>
+      <div class="dz-hint">PDF files</div><div class="dz-cnt" id="cnt-r3b">No files</div>
+      <input type="file" multiple accept=".pdf" data-zone="r3b" onchange="updateZone('r3b',this)"></div>
+    <div class="dz" id="zone-cust"><div class="dz-icon">👥</div><div class="dz-label">Customer Names</div>
+      <div class="dz-hint">GSTIN→Name Excel</div><div class="dz-cnt" id="cnt-cust">No file</div>
+      <input type="file" accept=".xlsx,.xls" data-zone="cust" onchange="updateZone('cust',this)"></div>
+  </div>
+</div>
+<div class="card"><button type="submit" class="btn-sub" id="r-submit">Generate Reconciliation + GSTR-1 Detail →</button></div>
+</form>
+<div class="card prog-wrap" id="r-prog">
+  <div class="card-title">Processing <span class="sbadge s-proc pulse" id="r-badge">Running</span></div>
+  <div class="pbar-wrap"><div class="pbar" id="r-bar"></div></div>
+  <div class="logbox" id="r-log"></div>
+</div>
+<div class="card dl-wrap" id="r-dl">
+  <div class="card-title">Downloads Ready</div>
+  <div class="dl-grid" id="r-dl-grid"></div>
+  <p style="color:var(--muted);font-size:.68rem;margin-top:.75rem;font-family:var(--mono)">⏳ Files available for 2 hours.</p>
+</div>
+</div>
+
+<!-- ══ TAB 2: GSTR-1 DETAIL ══ -->
+<div class="tab-pane" id="tab-gstr1">
+<div class="card">
+  <div class="card-title">GSTR-1 Comprehensive Extraction — 13 Sheets</div>
+  <div class="info-pills">
+    <span class="pill">B2B Invoices</span><span class="pill">B2B Item Detail</span>
+    <span class="pill">HSN Summary</span><span class="pill">B2CS / B2CL</span>
+    <span class="pill">Credit Notes</span><span class="pill">Debit Notes</span>
+    <span class="pill">Exports</span><span class="pill">Nil Rated</span>
+    <span class="pill">Amendments</span><span class="pill">Doc Summary</span>
+    <span class="pill">Master Summary</span>
+  </div>
+  <p style="color:var(--muted);font-size:.8rem;line-height:1.6">
+    Upload all GSTR-1 ZIP files. Customer names are auto-looked up from GSTR-2B/2A.
+    Optionally add a <strong style="color:var(--text)">customer_names.xlsx</strong> for local lookup.
+    <strong style="color:var(--gold)"> Full Version only.</strong>
+  </p>
+</div>
+<form id="g1-form">
+<div class="card">
+  <div class="card-title">Client Details</div>
+  <div class="form-grid">
+    <div class="fg"><label>GSTIN *</label><input type="text" id="g1-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
+    <div class="fg"><label>Company Name *</label><input type="text" id="g1-name" placeholder="ABC Traders" required></div>
+    <div class="fg"><label>Financial Year *</label><input type="text" id="g1-fy" value="2025-26" required></div>
+  </div>
+</div>
+<div class="card">
+  <div class="card-title">Upload Files</div>
+  <div class="drop-grid">
+    <div class="dz" id="zone-g1r1"><div class="dz-icon">📋</div><div class="dz-label">GSTR-1 ZIPs</div>
+      <div class="dz-hint">All 12 months</div><div class="dz-cnt" id="cnt-g1r1">No files</div>
+      <input type="file" multiple accept=".zip" data-zone="g1r1" onchange="updateZone('g1r1',this)"></div>
+    <div class="dz" id="zone-g1r2b"><div class="dz-icon">🏦</div><div class="dz-label">GSTR-2B / 2A</div>
+      <div class="dz-hint">For name lookup</div><div class="dz-cnt" id="cnt-g1r2b">No files</div>
+      <input type="file" multiple accept=".xlsx,.zip" data-zone="g1r2b" onchange="updateZone('g1r2b',this)"></div>
+    <div class="dz" id="zone-g1cust"><div class="dz-icon">👥</div><div class="dz-label">Customer Names</div>
+      <div class="dz-hint">GSTIN→Name Excel</div><div class="dz-cnt" id="cnt-g1cust">No file</div>
+      <input type="file" accept=".xlsx" data-zone="g1cust" onchange="updateZone('g1cust',this)"></div>
+  </div>
+</div>
+<div class="card"><button type="submit" class="btn-sub" id="g1-submit">Generate GSTR-1 Full Detail Excel →</button></div>
+</form>
+<div class="card prog-wrap" id="g1-prog">
+  <div class="card-title">Extracting GSTR-1 <span class="sbadge s-proc pulse" id="g1-badge">Running</span></div>
+  <div class="pbar-wrap"><div class="pbar" id="g1-bar"></div></div>
+  <div class="logbox" id="g1-log"></div>
+</div>
+<div class="card dl-wrap" id="g1-dl">
+  <div class="card-title">GSTR-1 Detail Ready</div>
+  <div class="dl-grid" id="g1-dl-grid"></div>
+</div>
+</div>
+
+<!-- ══ TAB 3: DOWNLOAD STATUS ══ -->
+<div class="tab-pane" id="tab-dlstatus">
+<div class="card">
+  <div class="card-title">Auto-Download Status — All Returns × 12 Months</div>
+  <p style="color:var(--muted);font-size:.78rem;line-height:1.6;margin-bottom:.85rem">
+    After running <strong style="color:var(--text)">gst_suite_final.py</strong> (auto-download),
+    upload the generated <strong style="color:var(--text)">MASTER_REPORT.xlsx</strong> to see
+    which returns were downloaded OK and which failed. Or paste a live Job ID from the Reconciliation tab.
+  </p>
+  <div class="form-grid" style="margin-bottom:.85rem">
+    <div class="fg">
+      <label>Live Job ID (from Reconciliation tab)</label>
+      <input type="text" id="ds-jobid" placeholder="e.g. a3f2c9b1">
+    </div>
+    <div class="fg">
+      <label>Upload MASTER_REPORT Excel</label>
+      <div class="dz" id="zone-master" style="min-height:65px;flex-direction:row;padding:.65rem;gap:.65rem">
+        <div class="dz-icon" style="font-size:1.3rem">📊</div>
+        <div><div class="dz-label" style="text-align:left">MASTER_REPORT*.xlsx</div>
+          <div class="dz-cnt" id="cnt-master">No file</div></div>
+        <input type="file" accept=".xlsx" data-zone="master" onchange="updateZone('master',this)">
+      </div>
+    </div>
+  </div>
+  <button class="btn-sub" style="margin-top:0" onclick="loadDownloadStatus()">Load Status →</button>
+</div>
+<div class="card" id="ds-result" style="display:none">
+  <div class="card-title">Download Status — <span id="ds-title">—</span></div>
+  <div style="overflow-x:auto">
+    <table class="dst">
+      <thead><tr>
+        <th style="text-align:left">Month</th>
+        <th>GSTR-1</th><th>GSTR-1A</th><th>GSTR-2B</th><th>GSTR-2A</th><th>GSTR-3B</th>
+        <th>Row Status</th>
+      </tr></thead>
+      <tbody id="ds-tbody"></tbody>
+    </table>
+  </div>
+  <div id="ds-summary" style="margin-top:.65rem;font-size:.75rem;font-family:var(--mono);color:var(--muted)"></div>
+</div>
+<div class="card prog-wrap" id="ds-prog">
+  <div class="card-title">Live Job Progress <span class="sbadge s-proc pulse" id="ds-badge">Running</span></div>
+  <div class="pbar-wrap"><div class="pbar" id="ds-bar"></div></div>
+  <div class="logbox" id="ds-log"></div>
+</div>
+</div>
+
+<!-- ══ TAB 4: PRICING ══ -->
+<div class="tab-pane" id="tab-pricing">
+<div class="card">
+  <div class="card-title">Choose Your Plan</div>
+  <div class="pgrid">
+    <div class="pcard">
+      <div class="ptitle">🎯 Trial</div>
+      <div class="pprice">FREE</div>
+      <ul class="pfeats">
+        <li>Max 3 months GSTR-1</li>
+        <li>Annual Reconciliation Excel</li>
+        <li>Watermarked output</li>
+        <li class="x">No GSTR-3B PDF extract</li>
+        <li class="x">No customer name lookup</li>
+        <li class="x">No GSTR-1 Full Detail</li>
+        <li class="x">No Download Status</li>
+      </ul>
+      <button class="btn-buy" disabled>Current Plan</button>
+    </div>
+    <div class="pcard feat">
+      <div class="ptitle">⭐ Full Version</div>
+      <div class="pprice">₹4,999<span>/year</span></div>
+      <ul class="pfeats">
+        <li>Unlimited months</li>
+        <li>Annual Reconciliation (clean)</li>
+        <li>GSTR-3B PDF extraction</li>
+        <li>Customer name auto-lookup</li>
+        <li><strong>GSTR-1 Full Detail — 13 sheets</strong></li>
+        <li>Download Status Dashboard</li>
+        <li>Priority support + updates</li>
+      </ul>
+      <button class="btn-buy" onclick="buyNow()">Buy Now</button>
+    </div>
+  </div>
+  <p style="color:var(--muted);font-size:.75rem;text-align:center;margin-top:.85rem">
+    💳 UPI / Bank Transfer / Razorpay &nbsp;|&nbsp; 📧 gstrecon@example.com
+  </p>
+</div>
+</div>
+
 </div><!-- /container -->
-
 <script>
-// ── File zones ───────────────────────────────────────────────────
-const zoneFiles = {r1:[],r2b:[],r2a:[],r3b:[],cust:[]};
-let currentJobId = '';
-let currentFiles = [];
-
-function updateZone(zone, input) {
-  const files = Array.from(input.files);
-  zoneFiles[zone] = files;
-  const countEl = document.getElementById('count-'+zone);
-  const zoneEl  = document.getElementById('zone-'+zone);
-  countEl.textContent = files.length ? files.length + ' file' + (files.length>1?'s':'') + ' selected' : 'No files';
-  zoneEl.classList.toggle('has-files', files.length > 0);
+// Tabs
+function switchTab(name, e){
+  if(e) e.preventDefault();
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+  // find clicked button
+  if(e && e.currentTarget) e.currentTarget.classList.add('active');
+  else document.querySelectorAll('.tab-btn').forEach(b=>{
+    if(b.getAttribute('onclick')&&b.getAttribute('onclick').includes("'"+name+"'")) b.classList.add('active');
+  });
+  document.getElementById('tab-'+name).classList.add('active');
 }
 
-document.querySelectorAll('.drop-zone').forEach(zone => {
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-  zone.addEventListener('drop', e => {
-    e.preventDefault(); zone.classList.remove('drag-over');
-    const input = zone.querySelector('input[type=file]');
-    if (!input) return;
-    const dt = new DataTransfer();
-    [...e.dataTransfer.files].forEach(f => dt.items.add(f));
-    input.files = dt.files;
-    updateZone(input.dataset.zone, input);
+// License
+let isFullVersion=false, currentLicense='';
+async function activateLicense(){
+  const key=document.getElementById('lic-key').value.trim();
+  const msg=document.getElementById('lic-msg');
+  if(!key){msg.textContent='Please enter a key.';msg.className='lic-msg err';return;}
+  msg.textContent='Checking...';msg.className='lic-msg';
+  try{
+    const r=await fetch('/api/activate',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({license_key:key})});
+    const d=await r.json();
+    if(d.success){
+      isFullVersion=true;currentLicense=key;
+      const b=document.getElementById('vbadge');
+      b.textContent='⭐ FULL VERSION'+(d.customer?' — '+d.customer:'');
+      b.style.cssText='background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)';
+      document.getElementById('lic-box').style.display='none';
+      msg.textContent='';
+      alert('✅ Full Version Activated!'+(d.customer?'\nWelcome, '+d.customer+'!':''));
+    }else{msg.textContent='✗ '+(d.reason||'Invalid key.');msg.className='lic-msg err';}
+  }catch(e){msg.textContent='✗ Server error.';msg.className='lic-msg err';}
+}
+function buyNow(){
+  alert('📧 Purchase Full Version:\n\n1. Email: gstrecon@example.com\n2. WhatsApp: +91-XXXXXXXXXX\n3. UPI / Bank Transfer\n\nKey sent by email after payment.');
+}
+
+// File zones
+const zoneFiles={};
+function updateZone(zone,input){
+  const files=Array.from(input.files);
+  if(zone==='r1'&&!isFullVersion&&files.length>3){
+    alert('⚠️ Trial: Max 3 GSTR-1 files. Upgrade for unlimited.');
+    input.value='';return;
+  }
+  zoneFiles[zone]=files;
+  const cnt=document.getElementById('cnt-'+zone);
+  const el=document.getElementById('zone-'+zone);
+  if(cnt) cnt.textContent=files.length?files.length+' file'+(files.length>1?'s':'')+' selected':'No files';
+  if(el) el.classList.toggle('has-files',files.length>0);
+}
+document.querySelectorAll('.dz').forEach(z=>{
+  z.addEventListener('dragover',e=>{e.preventDefault();z.classList.add('drag-over');});
+  z.addEventListener('dragleave',()=>z.classList.remove('drag-over'));
+  z.addEventListener('drop',e=>{
+    e.preventDefault();z.classList.remove('drag-over');
+    const inp=z.querySelector('input[type=file]');if(!inp)return;
+    const dt=new DataTransfer();[...e.dataTransfer.files].forEach(f=>dt.items.add(f));
+    inp.files=dt.files;updateZone(inp.dataset.zone,inp);
   });
 });
 
-// ── Submit ───────────────────────────────────────────────────────
-document.getElementById('main-form').addEventListener('submit', async e => {
+// Recon form
+document.getElementById('recon-form').addEventListener('submit',async e=>{
   e.preventDefault();
-  const gstin  = document.getElementById('gstin').value.trim().toUpperCase();
-  const cname  = document.getElementById('client_name').value.trim();
-  const fy     = document.getElementById('fy').value.trim();
-  if (!gstin || gstin.length !== 15) { alert('Please enter a valid 15-character GSTIN'); return; }
-  if (!cname) { alert('Please enter company name'); return; }
-  if (Object.values(zoneFiles).every(a => a.length === 0)) { alert('Please upload at least one file'); return; }
-
-  const fd = new FormData();
-  fd.append('gstin', gstin);
-  fd.append('client_name', cname);
-  fd.append('fy', fy);
-  for (const [zone, files] of Object.entries(zoneFiles))
-    files.forEach(f => fd.append('files_'+zone, f));
-
-  document.getElementById('submit-btn').disabled = true;
-  document.getElementById('submit-btn').textContent = 'Uploading...';
-  document.getElementById('progress-section').style.display = 'block';
-  document.getElementById('downloads-section').style.display = 'none';
-  document.getElementById('dl-grid').innerHTML = '';
-  document.getElementById('log-box').innerHTML = '';
-  document.getElementById('progress-bar').style.width = '0%';
-  document.getElementById('auto-download-section').style.display = 'none';
-
-  try {
-    const res  = await fetch('/api/upload', {method:'POST', body:fd});
-    const data = await res.json();
-    if (!data.job_id) throw new Error(data.error || 'Upload failed');
-    currentJobId = data.job_id;
-    addLog('info', 'Files uploaded. Starting reconciliation...');
-    document.getElementById('submit-btn').textContent = 'Processing...';
-    pollJob(data.job_id);
-  } catch(err) {
-    addLog('err', 'Upload error: ' + err.message);
-    setStatus('error', 'Upload Failed');
-    document.getElementById('submit-btn').disabled = false;
-    document.getElementById('submit-btn').textContent = 'Generate Reconciliation →';
-  }
+  const gstin=document.getElementById('r-gstin').value.trim().toUpperCase();
+  const cname=document.getElementById('r-name').value.trim();
+  const fy=document.getElementById('r-fy').value.trim();
+  if(!gstin||gstin.length!==15){alert('Enter valid 15-char GSTIN');return;}
+  if(!cname){alert('Enter company name');return;}
+  const hasFiles=['r1','r2b','r2a','r3b','cust'].some(z=>(zoneFiles[z]||[]).length>0);
+  if(!hasFiles){alert('Upload at least one return file');return;}
+  const fd=new FormData();
+  fd.append('gstin',gstin);fd.append('client_name',cname);
+  fd.append('fy',fy);fd.append('license_key',currentLicense);fd.append('mode','recon');
+  for(const z of['r1','r2b','r2a','r3b','cust'])(zoneFiles[z]||[]).forEach(f=>fd.append('files_'+z,f));
+  await startJob(fd,'r','Generate Reconciliation + GSTR-1 Detail →');
 });
 
-// ── Polling ──────────────────────────────────────────────────────
-async function pollJob(jobId) {
-  try {
-    const res  = await fetch('/api/job/'+jobId);
-    const data = await res.json();
-    if (data.logs) data.logs.forEach(l => addLog(l.type, l.msg));
-    if (data.progress !== undefined)
-      document.getElementById('progress-bar').style.width = data.progress + '%';
-    if (data.status === 'done') {
-      setStatus('done','Complete');
-      document.getElementById('progress-bar').style.width='100%';
-      document.getElementById('submit-btn').disabled = false;
-      document.getElementById('submit-btn').textContent = 'Generate Reconciliation →';
-      showDownloads(jobId, data.files);
-      // Auto-download after 2 seconds
-      setTimeout(() => autoDownloadAll(data.files), 2000);
-      return;
-    }
-    if (data.status === 'error') {
-      addLog('err','Error: '+(data.error||'Unknown error'));
-      setStatus('error','Failed');
-      document.getElementById('submit-btn').disabled = false;
-      document.getElementById('submit-btn').textContent = 'Generate Reconciliation →';
-      return;
-    }
-    setTimeout(() => pollJob(jobId), 1500);
-  } catch(e) {
-    setTimeout(() => pollJob(jobId), 3000);
+// GSTR-1 only form
+document.getElementById('g1-form').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const gstin=document.getElementById('g1-gstin').value.trim().toUpperCase();
+  const cname=document.getElementById('g1-name').value.trim();
+  const fy=document.getElementById('g1-fy').value.trim();
+  if(!gstin||gstin.length!==15){alert('Enter valid 15-char GSTIN');return;}
+  if(!cname){alert('Enter company name');return;}
+  if(!(zoneFiles['g1r1']||[]).length){alert('Upload at least one GSTR-1 ZIP');return;}
+  if(!isFullVersion){
+    alert('⚠️ GSTR-1 Full Detail requires Full Version.\n\nGo to Plans tab to upgrade.');return;
+  }
+  const fd=new FormData();
+  fd.append('gstin',gstin);fd.append('client_name',cname);
+  fd.append('fy',fy);fd.append('license_key',currentLicense);fd.append('mode','gstr1only');
+  (zoneFiles['g1r1']||[]).forEach(f=>fd.append('files_r1',f));
+  (zoneFiles['g1r2b']||[]).forEach(f=>fd.append('files_r2b',f));
+  (zoneFiles['g1cust']||[]).forEach(f=>fd.append('files_cust',f));
+  await startJob(fd,'g1','Generate GSTR-1 Full Detail Excel →');
+});
+
+async function startJob(fd,prefix,btnLabel){
+  document.getElementById(prefix+'-prog').style.display='block';
+  const dlEl=document.getElementById(prefix+'-dl');if(dlEl)dlEl.style.display='none';
+  document.getElementById(prefix+'-log').innerHTML='';
+  document.getElementById(prefix+'-bar').style.width='0%';
+  const btn=document.getElementById(prefix+'-submit');
+  btn.disabled=true;btn.textContent='Uploading...';
+  try{
+    const res=await fetch('/api/upload',{method:'POST',body:fd});
+    const data=await res.json();
+    if(!data.job_id)throw new Error(data.error||'Upload failed');
+    addLog(prefix,'info','Files uploaded. Processing...');
+    btn.textContent='Processing...';
+    document.getElementById('ds-jobid').value=data.job_id;
+    pollJob(data.job_id,prefix,btnLabel);
+  }catch(err){
+    addLog(prefix,'err','Error: '+err.message);
+    setBadge(prefix,'err','Failed');
+    btn.disabled=false;btn.textContent=btnLabel;
   }
 }
 
-function addLog(type, msg) {
-  const box = document.getElementById('log-box');
-  const line = document.createElement('div');
-  line.className = type;
-  line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
-  box.appendChild(line);
-  box.scrollTop = box.scrollHeight;
+async function pollJob(jobId,prefix,btnLabel){
+  try{
+    const res=await fetch('/api/job/'+jobId);
+    const data=await res.json();
+    if(data.logs)data.logs.forEach(l=>addLog(prefix,l.type,l.msg));
+    if(data.progress!==undefined)document.getElementById(prefix+'-bar').style.width=data.progress+'%';
+    if(data.dl_status&&Object.keys(data.dl_status).length)renderDlStatus(data.dl_status,jobId);
+    if(data.status==='done'){
+      setBadge(prefix,'done','Complete');
+      document.getElementById(prefix+'-bar').style.width='100%';
+      const btn=document.getElementById(prefix+'-submit');btn.disabled=false;btn.textContent=btnLabel;
+      showDownloads(prefix,jobId,data.files);
+      return;
+    }
+    if(data.status==='error'){
+      addLog(prefix,'err','Error: '+(data.error||'Unknown'));
+      setBadge(prefix,'err','Failed');
+      const btn=document.getElementById(prefix+'-submit');btn.disabled=false;btn.textContent=btnLabel;
+      return;
+    }
+    setTimeout(()=>pollJob(jobId,prefix,btnLabel),1500);
+  }catch(e){setTimeout(()=>pollJob(jobId,prefix,btnLabel),3000);}
 }
-function setStatus(type, label) {
-  const b = document.getElementById('status-badge');
-  b.className = 'status-badge status-'+type;
-  b.textContent = label;
-  if (type !== 'processing') b.classList.remove('pulse');
+
+function addLog(prefix,type,msg){
+  const box=document.getElementById(prefix+'-log');if(!box)return;
+  const l=document.createElement('div');l.className=type;
+  l.textContent='['+new Date().toLocaleTimeString()+'] '+msg;
+  box.appendChild(l);box.scrollTop=box.scrollHeight;
 }
-function showDownloads(jobId, files) {
-  currentFiles = files;
-  document.getElementById('downloads-section').style.display = 'block';
-  document.getElementById('auto-download-section').style.display = 'block';
-  const grid = document.getElementById('dl-grid');
-  const icons = {'ANNUAL':'📊','GSTR3BR1':'📋','GSTR3BR2A':'📈','GSTR1_FULL':'📑','B2B':'🏢','SUMMARY':'📋'};
-  files.forEach(f => {
-    const icon = Object.entries(icons).find(([k])=>f.name.includes(k))?.[1] || '📁';
-    const card = document.createElement('div');
-    card.className = 'dl-card';
-    card.innerHTML = `<div style="font-size:1.8rem">${icon}</div>
-      <div class="dl-name">${f.name}</div>
-      <div class="dl-size">${f.size}</div>
-      <a href="/api/download/${jobId}/${encodeURIComponent(f.name)}" class="btn-dl" download id="dl-${f.name}">Download ↓</a>`;
+function setBadge(prefix,type,label){
+  const b=document.getElementById(prefix+'-badge');if(!b)return;
+  b.className='sbadge s-'+type;b.textContent=label;
+  if(type!=='proc')b.classList.remove('pulse');
+}
+function showDownloads(prefix,jobId,files){
+  const sec=document.getElementById(prefix+'-dl');
+  const grid=document.getElementById(prefix+'-dl-grid');
+  if(!sec||!grid)return;
+  sec.style.display='block';grid.innerHTML='';
+  const icons={'ANNUAL':'📊','GSTR3BR1':'📋','GSTR3BR2A':'📈','GSTR1_FULL':'📑','B2B':'🏢','RECONCIL':'📊'};
+  files.forEach(f=>{
+    const icon=Object.entries(icons).find(([k])=>f.name.toUpperCase().includes(k))?.[1]||'📁';
+    const card=document.createElement('div');card.className='dlcard';
+    card.innerHTML=`<div style="font-size:1.5rem">${icon}</div>
+      <div class="dl-name">${f.name}</div><div class="dl-size">${f.size}</div>
+      <a href="/api/download/${jobId}/${encodeURIComponent(f.name)}" class="btn-dl" download>Download ↓</a>`;
     grid.appendChild(card);
   });
 }
 
-// ── Auto Download ────────────────────────────────────────────────
-function autoDownloadAll(files) {
-  files.forEach((f, i) => {
-    setTimeout(() => {
-      const link = document.getElementById('dl-' + f.name);
-      if (link) link.click();
-    }, i * 500);
+// Download Status
+const MONTHS=['April','May','June','July','August','September','October','November','December','January','February','March'];
+const RETS=['GSTR1','GSTR1A','GSTR2B','GSTR2A','GSTR3B'];
+
+function renderDlStatus(dlStatus,jobId){
+  const result=document.getElementById('ds-result');
+  result.style.display='block';
+  document.getElementById('ds-title').textContent=jobId||'—';
+  const tbody=document.getElementById('ds-tbody');tbody.innerHTML='';
+  let totalOk=0,totalFail=0,totalPend=0;
+  MONTHS.forEach(mon=>{
+    const tr=document.createElement('tr');
+    let rowOk=0,rowFail=0,rowPend=0;
+    let td=`<td>${mon}</td>`;
+    RETS.forEach(rt=>{
+      const val=(dlStatus[mon+'_'+rt]||'SKIP').toUpperCase();
+      let cls,txt;
+      if(val==='OK'||val==='DONE'){cls='c-ok';txt='✓ OK';rowOk++;totalOk++;}
+      else if(['TILE_FAIL','NOT_FOUND','TILE_NOT_FOUND','GEN_FAIL','ERR'].some(t=>val.includes(t)))
+        {cls='c-fail';txt='✗ Fail';rowFail++;totalFail++;}
+      else if(val==='TRIGGERED'||val==='PENDING')
+        {cls='c-pend';txt='⋯';rowPend++;totalPend++;}
+      else{cls='c-skip';txt='—';}
+      td+=`<td class="${cls}">${txt}</td>`;
+    });
+    const rs=rowFail>0?`<span style="color:var(--red)">${rowFail} failed</span>`:
+              rowOk===5?`<span style="color:var(--green)">All OK</span>`:
+              rowOk>0?`<span style="color:var(--orange)">${rowOk}/5 OK</span>`:
+              `<span style="color:var(--muted)">—</span>`;
+    td+=`<td>${rs}</td>`;
+    tr.innerHTML=td;tbody.appendChild(tr);
   });
+  document.getElementById('ds-summary').innerHTML=
+    `Total: <strong style="color:var(--green)">${totalOk} ✓ OK</strong> &nbsp; `+
+    `<strong style="color:var(--red)">${totalFail} ✗ Failed</strong> &nbsp; `+
+    `<strong style="color:var(--orange)">${totalPend} ⋯ Pending</strong> &nbsp; `+
+    `out of ${MONTHS.length*RETS.length} expected`;
 }
 
-function downloadAll() {
-  if (currentFiles.length > 0) {
-    autoDownloadAll(currentFiles);
+async function loadDownloadStatus(){
+  const jobId=document.getElementById('ds-jobid').value.trim();
+  if(jobId){
+    document.getElementById('ds-prog').style.display='block';
+    try{
+      const res=await fetch('/api/job/'+jobId);
+      const data=await res.json();
+      if(data.error){alert('Job not found: '+jobId);return;}
+      if(data.logs)data.logs.forEach(l=>addLog('ds',l.type,l.msg));
+      if(data.progress!==undefined)document.getElementById('ds-bar').style.width=data.progress+'%';
+      const status=data.dl_status&&Object.keys(data.dl_status).length
+        ? data.dl_status : buildStatusFromFiles(data.files||[]);
+      renderDlStatus(status,jobId);
+      setBadge('ds',data.status==='done'?'done':data.status==='error'?'err':'proc',
+               data.status==='done'?'Complete':data.status==='error'?'Failed':'Running');
+    }catch(e){alert('Error: '+e.message);}
+    return;
   }
+  const masterFiles=(zoneFiles['master']||[]);
+  if(!masterFiles.length){alert('Enter a Job ID or upload a Master Report Excel');return;}
+  const fd=new FormData();masterFiles.forEach(f=>fd.append('master_file',f));
+  try{
+    const res=await fetch('/api/parse_master',{method:'POST',body:fd});
+    const data=await res.json();
+    if(data.dl_status)renderDlStatus(data.dl_status,'Master Report');
+    else alert('Parse error: '+(data.error||'Unknown'));
+  }catch(e){alert('Upload error: '+e.message);}
+}
+
+function buildStatusFromFiles(files){
+  const status={};
+  MONTHS.forEach(m=>RETS.forEach(r=>{
+    const found=files.some(f=>f.name.includes(r)&&f.name.includes(m));
+    status[m+'_'+r]=found?'OK':'SKIP';
+  }));
+  return status;
 }
 </script>
 </body>
 </html>"""
 
-# ── Routes ────────────────────────────────────────────────────────
-@app.route("/", methods=["GET"])
+# Routes
+@app.route("/")
 def index():
     return render_template_string(HTML)
+
+@app.route("/api/activate", methods=["POST"])
+@rate_limit(limit=5, window=60)
+def api_activate():
+    data = request.get_json(silent=True) or {}
+    key  = data.get("license_key","").strip()
+    result = validate_license(key)
+    if result["valid"]:
+        return jsonify(success=True, customer=result.get("customer"),
+                       plan=result.get("plan"), expires_at=result.get("expires_at"))
+    return jsonify(success=False, reason=result.get("reason","Invalid key"))
 
 @app.route("/api/upload", methods=["POST"])
 @rate_limit(limit=20, window=60)
 def api_upload():
     _cleanup_old_jobs()
+    gstin       = request.form.get("gstin","").strip().upper()
+    client_name = request.form.get("client_name","").strip()
+    fy          = request.form.get("fy","2025-26").strip()
+    license_key = request.form.get("license_key","").strip()
+    mode        = request.form.get("mode","recon")
 
-    gstin       = request.form.get("gstin", "").strip().upper()
-    client_name = request.form.get("client_name", "").strip()
-    fy          = request.form.get("fy", "2025-26").strip()
+    lic     = validate_license(license_key)
+    is_full = lic["valid"] and lic.get("plan") == "full"
 
     if not gstin or len(gstin) != 15:
         return jsonify(error="Invalid GSTIN"), 400
@@ -509,7 +792,6 @@ def api_upload():
     job_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save uploaded files
     saved = {k: [] for k in ("r1","r2b","r2a","r3b","cust")}
     for zone in saved:
         for fobj in request.files.getlist(f"files_{zone}"):
@@ -521,26 +803,24 @@ def api_upload():
             fobj.save(str(dest))
             saved[zone].append(str(dest))
 
+    if not is_full and len(saved["r1"]) > 3:
+        shutil.rmtree(str(job_dir), ignore_errors=True)
+        shutil.rmtree(str(out_dir), ignore_errors=True)
+        return jsonify(error="Trial: Max 3 GSTR-1 files."), 403
+
     with jobs_lock:
         jobs[job_id] = {
-            "status":      "queued",
-            "progress":    0,
-            "logs":        [],
-            "files":       [],
-            "error":       None,
-            "gstin":       gstin,
-            "client_name": client_name,
-            "fy":          fy,
-            "job_dir":     str(job_dir),
-            "out_dir":     str(out_dir),
-            "saved":       saved,
-            "is_full":     True,
+            "status":"queued","progress":0,"logs":[],"files":[],
+            "error":None,"gstin":gstin,"client_name":client_name,
+            "fy":fy,"job_dir":str(job_dir),"out_dir":str(out_dir),
+            "saved":saved,"is_full":is_full,"mode":mode,"dl_status":{},
         }
 
-    threading.Thread(target=run_reconciliation, args=(job_id,), daemon=True).start()
-    return jsonify(job_id=job_id, is_full=True)
+    target = run_gstr1_only if mode == "gstr1only" else run_reconciliation
+    threading.Thread(target=target, args=(job_id,), daemon=True).start()
+    return jsonify(job_id=job_id, is_full=is_full)
 
-@app.route("/api/job/<job_id>", methods=["GET"])
+@app.route("/api/job/<job_id>")
 @rate_limit(limit=120, window=60)
 def api_job(job_id):
     with jobs_lock:
@@ -549,245 +829,128 @@ def api_job(job_id):
         return jsonify(error="Job not found"), 404
     new_logs = job["logs"][:]
     job["logs"] = []
-    return jsonify(
-        status   = job["status"],
-        progress = job["progress"],
-        logs     = new_logs,
-        files    = job["files"],
-        error    = job["error"],
-        is_full  = job.get("is_full", True),
-    )
+    return jsonify(status=job["status"], progress=job["progress"],
+                   logs=new_logs, files=job["files"],
+                   error=job["error"], is_full=job.get("is_full",False),
+                   dl_status=job.get("dl_status",{}))
 
-@app.route("/api/download/<job_id>/<filename>", methods=["GET"])
+@app.route("/api/download/<job_id>/<filename>")
 @rate_limit(limit=30, window=60)
 def api_download(job_id, filename):
-    # Strict filename check — no path traversal possible
-    if not re.match(r'^[\w\-. ()]+\.(xlsx|pdf|zip)$', filename):
+    if not re.match(r'^[\w\-. ()]+\.(xlsx|pdf)$', filename):
         abort(400)
     fpath = OUTPUT_DIR / job_id / filename
     if not fpath.exists() or not fpath.is_file():
         abort(404)
     return send_file(str(fpath), as_attachment=True, download_name=filename)
 
-# ── GSTR-3B PDF Extraction ────────────────────────────────────────
-def extract_3b_pdf(pdf_path):
-    """
-    Robust GSTR-3B PDF extraction — line-by-line scan.
-    Handles portal PDF quirks: 'L0', 'I0', split rows, stray chars.
-    Returns ALL fields from Tables 3.1, 3.1(c), 4, 5.1, 6.1.
-    """
-    result = {
-        # Meta
-        "gstin":"","legal_name":"","trade_name":"","period":"","year":"","arn":"","arn_date":"",
-        # 3.1(a) Outward taxable
-        "taxable":0.,"o_igst":0.,"o_cgst":0.,"o_sgst":0.,"o_cess":0.,
-        # 3.1(b) Zero rated
-        "zero_taxable":0.,"zero_igst":0.,
-        # 3.1(c) Nil / Exempt
-        "nil_exempt":0.,
-        # 3.1(d) RCM inward
-        "rcm_taxable":0.,"rcm_igst":0.,"rcm_cgst":0.,"rcm_sgst":0.,
-        # 3.1(e) Non-GST
-        "non_gst":0.,
-        # 4A ITC available
-        "itc_import_goods":0.,"itc_import_svc":0.,"itc_rcm":0.,"itc_isd":0.,
-        "itc_igst":0.,"itc_cgst":0.,"itc_sgst":0.,"itc_cess":0.,
-        # 4B ITC reversed
-        "rev_igst":0.,"rev_cgst":0.,"rev_sgst":0.,
-        # 4C Net ITC
-        "net_itc_igst":0.,"net_itc_cgst":0.,"net_itc_sgst":0.,
-        # 5.1
-        "interest_igst":0.,"interest_cgst":0.,"interest_sgst":0.,
-        "late_fee_cgst":0.,"late_fee_sgst":0.,
-        # 6.1 Tax paid
-        "tax_paid_igst":0.,"tax_paid_cgst":0.,"tax_paid_sgst":0.,
-    }
-    if not pdf_path.exists():
-        return result
-    import re
-    text = ""
+@app.route("/api/parse_master", methods=["POST"])
+@rate_limit(limit=10, window=60)
+def api_parse_master():
+    fobj = request.files.get("master_file")
+    if not fobj:
+        return jsonify(error="No file"), 400
+    tmp = Path(tempfile.gettempdir()) / f"master_{uuid.uuid4().hex[:8]}.xlsx"
     try:
-        import pdfplumber
-        with pdfplumber.open(str(pdf_path)) as pdf2:
-            text = "\n".join(p.extract_text() or "" for p in pdf2.pages)
-    except ImportError:
-        try:
-            import PyPDF2
-            with open(str(pdf_path),"rb") as f2:
-                r2 = PyPDF2.PdfReader(f2)
-                text = "\n".join(p.extract_text() or "" for p in r2.pages)
+        fobj.save(str(tmp))
+        import openpyxl
+        wb = openpyxl.load_workbook(str(tmp), read_only=True, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return jsonify(error="Empty file"), 400
+        headers = [str(c or "").strip().upper() for c in rows[0]]
+        col = {h: i for i, h in enumerate(headers)}
+        # flexible column detection
+        def _col(*names):
+            for n in names:
+                if n in col: return col[n]
+            return -1
+        MONTH_C  = _col("MONTH","PERIOD","MONTH YEAR")
+        R1_C     = _col("GSTR-1","GSTR1","R1")
+        R1A_C    = _col("GSTR-1A","GSTR1A","R1A")
+        R2B_C    = _col("GSTR-2B","GSTR2B","R2B")
+        R2A_C    = _col("GSTR-2A","GSTR2A","R2A")
+        R3B_C    = _col("GSTR-3B","GSTR3B","R3B")
+        dl_status = {}
+        for row in rows[1:]:
+            try:
+                if MONTH_C < 0: continue
+                month_raw = str(row[MONTH_C] or "").strip()
+                if not month_raw or month_raw.lower() in ("none","nan",""): continue
+                mon = month_raw.split()[0]  # "April 2025" → "April"
+                def _st(idx):
+                    if idx < 0 or idx >= len(row): return "SKIP"
+                    return str(row[idx] or "SKIP").strip().upper()
+                dl_status[f"{mon}_GSTR1"]  = _st(R1_C)
+                dl_status[f"{mon}_GSTR1A"] = _st(R1A_C)
+                dl_status[f"{mon}_GSTR2B"] = _st(R2B_C)
+                dl_status[f"{mon}_GSTR2A"] = _st(R2A_C)
+                dl_status[f"{mon}_GSTR3B"] = _st(R3B_C)
+            except: continue
+        wb.close()
+        return jsonify(dl_status=dl_status)
+    except Exception as e:
+        return jsonify(error=str(e)), 500
+    finally:
+        try: tmp.unlink(missing_ok=True)
         except: pass
-    except Exception: pass
-    if not text:
-        return result
 
-    def _n(s):
-        """Convert string to float, handling L0/I0 portal artifacts."""
-        try:
-            return float(re.sub(r"[^\d.\-]","",str(s).replace("L","").replace("I","").replace(",","")))
-        except: return 0.0
+# ── Month helpers ─────────────────────────────────────────────────
+MONTHS_MAP = {
+    "april":"April","may":"May","june":"June","july":"July","august":"August",
+    "september":"September","october":"October","november":"November",
+    "december":"December","january":"January","february":"February","march":"March",
+    "04":"April","05":"May","06":"June","07":"July","08":"August",
+    "09":"September","10":"October","11":"November","12":"December",
+    "01":"January","02":"February","03":"March",
+}
 
-    def nums_on_line(line):
-        """Extract all decimal numbers from a single PDF line."""
-        clean = re.sub(r"[LI](\d)", r"\1", line)
-        return [_n(n) for n in re.findall(r"-?\d[\d,]*\.\d*", clean)]
+def _fy_months(fy):
+    s = int(fy.split("-")[0]); e = s + 1
+    return {"April":str(s),"May":str(s),"June":str(s),"July":str(s),
+            "August":str(s),"September":str(s),"October":str(s),"November":str(s),
+            "December":str(s),"January":str(e),"February":str(e),"March":str(e)}
 
-    lines = text.split("\n")
-    in_section_4  = False
-    in_section_6  = False
-    past_51_header = False
+def _detect_month(fpath, FY_MONTHS):
+    name = Path(fpath).stem.lower()
+    for part in re.split(r'[_\-\s]', name):
+        if part in MONTHS_MAP:
+            mon = MONTHS_MAP[part]
+            return mon, FY_MONTHS.get(mon, list(FY_MONTHS.values())[0])
+    try:
+        with zipfile.ZipFile(fpath) as z:
+            for jn in z.namelist():
+                if jn.endswith(".json"):
+                    with z.open(jn) as jf:
+                        d = json.load(jf)
+                        fp = re.sub(r'[^0-9]','', d.get("fp",""))
+                        if len(fp) == 6:
+                            mon = MONTHS_MAP.get(fp[:2])
+                            if mon: return mon, fp[2:]
+    except: pass
+    return None, None
 
-    for i, line in enumerate(lines):
-        lo   = line.lower().strip()
-        nums = nums_on_line(line)
+def _find_engine(name):
+    for loc in [
+        Path(__file__).parent / name,
+        Path(os.getcwd()) / name,
+        Path(os.path.expanduser("~")) / "Desktop" / name,
+        Path(os.path.expanduser("~")) / "Downloads" / name,
+    ]:
+        if loc.exists(): return loc
+    return None
 
-        # -- Meta fields --------------------------------------------
-        if "gstin of the supplier" in lo:
-            parts = re.split(r"supplier\s*", line, flags=re.I)
-            if len(parts) > 1: result["gstin"] = parts[-1].strip()
-        elif "2(a)." in line and "legal name" in lo:
-            result["legal_name"] = re.sub(r"2\(a\)\..*?person\s*","",line,flags=re.I).strip()
-        elif "2(b)." in line and "trade name" in lo:
-            result["trade_name"] = re.sub(r"2\(b\)\.\s*Trade name,?\s*if any\s*","",line,flags=re.I).strip()
-        elif re.match(r"Year\s+\d{4}", line):
-            result["year"] = line.replace("Year","").strip()
-        elif re.match(r"Period\s+[A-Za-z]", line) and "supply" not in lo:
-            result["period"] = line.replace("Period","").strip()
-        elif "2(c)." in line and "arn" in lo and "nil" not in lo and "exempt" not in lo:
-            result["arn"] = re.sub(r"2\(c\)\.\s*ARN\s*","",line,flags=re.I).strip()
-        elif "2(d)." in line and "date of arn" in lo:
-            result["arn_date"] = re.sub(r"2\(d\)\.\s*Date of ARN\s*","",line,flags=re.I).strip()
-
-        # -- Section flags ------------------------------------------
-        elif re.search(r"4\.?\s*eligible itc|table.*4|^4\.\s", lo):
-            in_section_4 = True; in_section_6 = False
-        elif re.search(r"6\.?1.*payment of tax|payment of tax", lo):
-            in_section_6 = True; in_section_4 = False
-        elif re.search(r"5\.?1.*interest.*late fee|interest.*late fee.*previous", lo):
-            past_51_header = True
-
-        # -- 3.1(a) Outward taxable ---------------------------------
-        elif re.search(r"\(a\).*outward taxable", lo) and "(b)" not in lo:
-            combined = line
-            if len(nums) < 4 and i+1 < len(lines):
-                combined = line + " " + lines[i+1]
-                nums = nums_on_line(combined)
-            if len(nums) >= 4:
-                result["taxable"] = nums[0]
-                result["o_igst"]  = nums[1]
-                result["o_cgst"]  = nums[2]
-                result["o_sgst"]  = nums[3]
-                if len(nums) >= 5: result["o_cess"] = nums[4]
-
-        # -- 3.1(b) Zero rated --------------------------------------
-        elif re.search(r"\(b\).*zero rated", lo):
-            if len(nums) >= 1: result["zero_taxable"] = nums[0]
-            if len(nums) >= 2: result["zero_igst"]    = nums[1]
-
-        # -- 3.1(c) Nil / Exempt ------------------------------------
-        elif re.search(r"^\(c[\s\)]", lo) and re.search(r"nil|exempt", lo):
-            if nums: result["nil_exempt"] = nums[0]
-
-        # -- 3.1(d) Inward supplies liable to RCM -------------------
-        elif re.search(r"\(d\).*inward.*reverse charge|\(d\).*reverse charge.*inward", lo):
-            if len(nums) >= 4:
-                result["rcm_taxable"] = nums[0]
-                result["rcm_igst"]    = nums[1]
-                result["rcm_cgst"]    = nums[2]
-                result["rcm_sgst"]    = nums[3]
-
-        # -- 3.1(e) Non-GST -----------------------------------------
-        elif re.search(r"\(e\).*non.?gst", lo):
-            if nums: result["non_gst"] = nums[0]
-
-        # -- Table 4: ITC -------------------------------------------
-        elif re.search(r"\(1\).*import of goods", lo):
-            if len(nums) >= 1: result["itc_import_goods"] = nums[0]
-        elif re.search(r"\(2\).*import of services", lo):
-            if len(nums) >= 1: result["itc_import_svc"] = nums[0]
-        elif re.search(r"\(3\).*reverse charge.*other than.*1.*2|\(3\).*inward.*reverse charge.*other", lo):
-            if len(nums) >= 1: result["itc_rcm"] = nums[0]
-        elif re.search(r"\(4\).*isd|\(4\).*inward.*isd", lo):
-            if len(nums) >= 1: result["itc_isd"] = nums[0]
-        elif re.search(r"\(5\).*all other itc", lo):
-            if len(nums) >= 3:
-                result["itc_igst"] = nums[0]
-                result["itc_cgst"] = nums[1]
-                result["itc_sgst"] = nums[2]
-                if len(nums) >= 4: result["itc_cess"] = nums[3]
-
-        elif re.search(r"\(1\).*rules 38.*42|\(1\).*as per rules", lo):
-            if len(nums) >= 3:
-                result["rev_igst"] = nums[0]
-                result["rev_cgst"] = nums[1]
-                result["rev_sgst"] = nums[2]
-
-        elif re.search(r"net itc available|^c\..*net itc", lo):
-            if len(nums) >= 3:
-                result["net_itc_igst"] = nums[0]
-                result["net_itc_cgst"] = nums[1]
-                result["net_itc_sgst"] = nums[2]
-
-        # -- 5.1 Interest Paid --------------------------------------
-        elif re.search(r"^interest paid|interest paid\s", lo):
-            if len(nums) >= 3:
-                result["interest_igst"] = nums[0]
-                result["interest_cgst"] = nums[1]
-                result["interest_sgst"] = nums[2]
-            elif len(nums) == 2:
-                result["interest_cgst"] = nums[0]
-                result["interest_sgst"] = nums[1]
-
-        # -- 5.1 Late fee -------------------------------------------
-        elif re.search(r"late fee", lo) and "5.1" not in lo and "interest and late" not in lo:
-            late_nums = [n for n in nums if n > 0]
-            if len(late_nums) >= 2:
-                result["late_fee_cgst"] = late_nums[0]
-                result["late_fee_sgst"] = late_nums[1]
-            elif len(late_nums) == 1:
-                result["late_fee_cgst"] = late_nums[0]
-
-        # -- 6.1 Tax paid rows --------------------------------------
-        elif in_section_6:
-            if re.match(r"central\s*(tax)?", lo) and len(nums) >= 3:
-                tp = nums[0]
-                candidates = [n for n in nums[2:] if 0 < n < tp*2]
-                if candidates:
-                    result["tax_paid_cgst"] = candidates[-2] if len(candidates)>=2 else candidates[0]
-            elif re.match(r"state|ut\s*(tax)?", lo) and len(nums) >= 3:
-                tp = nums[0]
-                candidates = [n for n in nums[2:] if 0 < n < tp*2]
-                if candidates:
-                    result["tax_paid_sgst"] = candidates[-2] if len(candidates)>=2 else candidates[0]
-            elif re.match(r"integrated\s*(tax)?", lo) and len(nums) >= 3:
-                tp = nums[0]
-                candidates = [n for n in nums[2:] if 0 < n < tp*2]
-                if candidates:
-                    result["tax_paid_igst"] = candidates[-2] if len(candidates)>=2 else candidates[0]
-
-    # Fallback: derive ITC from net if 4A(5) was zero
-    if result["itc_cgst"] == 0 and result["net_itc_cgst"] > 0:
-        result["itc_cgst"] = result["net_itc_cgst"]
-        result["itc_sgst"] = result["net_itc_sgst"]
-        result["itc_igst"] = result["net_itc_igst"]
-
-    return result
-
-# ── Background worker ─────────────────────────────────────────────
+# ── Worker: Reconciliation + GSTR-1 detail ────────────────────────
 def run_reconciliation(job_id):
     def log(msg, t="info"):
-        with jobs_lock:
-            jobs[job_id]["logs"].append({"type": t, "msg": msg})
-    def set_progress(p):
-        with jobs_lock:
-            jobs[job_id]["progress"] = p
+        with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
+    def prog(p):
+        with jobs_lock: jobs[job_id]["progress"] = p
+    def set_dl(key, val):
+        with jobs_lock: jobs[job_id]["dl_status"][key] = val
 
     try:
-        import zipfile as _zf
-        from openpyxl import Workbook, load_workbook
-        from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
-        from openpyxl.utils import get_column_letter
-
         job         = jobs[job_id]
         gstin       = job["gstin"]
         client_name = job["client_name"]
@@ -795,226 +958,149 @@ def run_reconciliation(job_id):
         job_dir     = Path(job["job_dir"])
         out_dir     = Path(job["out_dir"])
         saved       = job["saved"]
+        is_full     = job.get("is_full", False)
+        FY_MONTHS   = _fy_months(fy)
 
-        log(f"Starting reconciliation for {client_name} ({gstin}) FY {fy}")
-        log("⭐ FULL VERSION — All features enabled")
-        set_progress(5)
+        log(f"Reconciliation: {client_name} ({gstin}) FY {fy}")
+        log("⭐ FULL VERSION" if is_full else "🎯 TRIAL — watermark will be applied")
+        prog(5)
 
-        # Month maps
-        MONTHS_MAP = {
-            "april":"April","may":"May","june":"June","july":"July","august":"August",
-            "september":"September","october":"October","november":"November",
-            "december":"December","january":"January","february":"February","march":"March",
-            "04":"April","05":"May","06":"June","07":"July","08":"August",
-            "09":"September","10":"October","11":"November","12":"December",
-            "01":"January","02":"February","03":"March",
-        }
-        start_yr = int(fy.split("-")[0]); end_yr = start_yr + 1
-        FY_MONTHS = {
-            "April":str(start_yr),"May":str(start_yr),"June":str(start_yr),
-            "July":str(start_yr),"August":str(start_yr),"September":str(start_yr),
-            "October":str(start_yr),"November":str(start_yr),"December":str(start_yr),
-            "January":str(end_yr),"February":str(end_yr),"March":str(end_yr),
-        }
-
-        def detect_month_from_zip(zpath):
-            name = Path(zpath).stem.lower()
-            for part in re.split(r'[_\-\s]', name):
-                if part in MONTHS_MAP:
-                    mon = MONTHS_MAP[part]
-                    return mon, FY_MONTHS.get(mon, str(start_yr))
-            try:
-                with _zf.ZipFile(zpath) as z:
-                    for jn in z.namelist():
-                        if jn.endswith(".json"):
-                            with z.open(jn) as jf:
-                                d = __import__("json").load(jf)
-                                fp = re.sub(r'[^0-9]','',d.get("fp",""))
-                                if len(fp) == 6:
-                                    mon = MONTHS_MAP.get(fp[:2])
-                                    if mon: return mon, fp[2:]
-            except: pass
-            return None, None
-
-        # Rename uploaded files to standard names
-        log("Processing GSTR-1 files...")
+        # Rename files to standard names & update dl_status
+        log("Renaming uploaded files...")
         for fpath in saved["r1"]:
-            mon, yr = detect_month_from_zip(fpath)
+            mon, yr = _detect_month(fpath, FY_MONTHS)
             if mon:
                 dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except OSError: shutil.copy2(fpath, str(dest))
-                log(f"  GSTR-1: {mon} {yr}")
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-1: {mon} {yr}"); set_dl(f"{mon}_GSTR1", "OK")
+            else:
+                log(f"  ⚠ Cannot detect month: {Path(fpath).name}", "warn")
 
-        set_progress(15)
-        log("Processing GSTR-2B files...")
         for fpath in saved["r2b"]:
-            name = Path(fpath).stem.lower()
-            for part in re.split(r'[_\-\s]', name):
-                if part in MONTHS_MAP:
-                    mon = MONTHS_MAP[part]; yr = FY_MONTHS.get(mon, str(start_yr))
-                    dest = job_dir / f"GSTR2B_{mon}_{yr}.xlsx"
-                    if not dest.exists():
-                        try: Path(fpath).rename(dest)
-                        except OSError: shutil.copy2(fpath, str(dest))
-                    log(f"  GSTR-2B: {mon} {yr}"); break
-
-        log("Processing GSTR-2A files...")
-        for fpath in saved["r2a"]:
-            name = Path(fpath).stem.lower(); ext = Path(fpath).suffix.lower()
-            for part in re.split(r'[_\-\s]', name):
-                if part in MONTHS_MAP:
-                    mon = MONTHS_MAP[part]; yr = FY_MONTHS.get(mon, str(start_yr))
-                    dest = job_dir / f"GSTR2A_{mon}_{yr}{ext}"
-                    if not dest.exists():
-                        try: Path(fpath).rename(dest)
-                        except OSError: shutil.copy2(fpath, str(dest))
-                    log(f"  GSTR-2A: {mon} {yr}"); break
-
-        # Process GSTR-3B PDFs with extraction
-        gstr3b_data = {}
-        log("Processing GSTR-3B PDFs...")
-        for fpath in saved["r3b"]:
-            name = Path(fpath).stem.lower()
-            mon = None; yr = None
-            for part in re.split(r'[_\-\s]', name):
-                if part in MONTHS_MAP:
-                    mon = MONTHS_MAP[part]; yr = FY_MONTHS.get(mon, str(start_yr))
-                    break
+            mon, yr = _detect_month(fpath, FY_MONTHS)
             if mon:
-                dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
+                dest = job_dir / f"GSTR2B_{mon}_{yr}.xlsx"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except OSError: shutil.copy2(fpath, str(dest))
-                # Extract data from PDF
-                log(f"  Extracting GSTR-3B: {mon} {yr}...")
-                pdf_data = extract_3b_pdf(dest)
-                gstr3b_data[f"{mon}_{yr}"] = pdf_data
-                log(f"    ✓ Taxable: {pdf_data['taxable']:,.2f}, ITC: {pdf_data['net_itc_cgst']+pdf_data['net_itc_sgst']+pdf_data['net_itc_igst']:,.2f}")
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-2B: {mon} {yr}"); set_dl(f"{mon}_GSTR2B", "OK")
 
-        # Process customer names file
-        if saved["cust"]:
+        for fpath in saved["r2a"]:
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                ext  = Path(fpath).suffix.lower()
+                dest = job_dir / f"GSTR2A_{mon}_{yr}{ext}"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-2A: {mon} {yr}"); set_dl(f"{mon}_GSTR2A", "OK")
+
+        if is_full:
+            for fpath in saved["r3b"]:
+                mon, yr = _detect_month(fpath, FY_MONTHS)
+                if mon:
+                    dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
+                    if not dest.exists():
+                        try: Path(fpath).rename(dest)
+                        except: shutil.copy2(fpath, str(dest))
+                    log(f"  GSTR-3B: {mon} {yr}"); set_dl(f"{mon}_GSTR3B", "OK")
+        else:
+            if saved["r3b"]: log("⚠ GSTR-3B skipped (Full Version only)", "warn")
+
+        if is_full:
             for fpath in saved["cust"]:
                 dest = job_dir / "customer_names.xlsx"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except OSError: shutil.copy2(fpath, str(dest))
-                log("  Customer names Excel loaded"); break
+                    except: shutil.copy2(fpath, str(dest))
+                log("  Customer names loaded"); break
+        else:
+            if saved["cust"]: log("⚠ Customer names skipped (Full Version only)", "warn")
 
-        set_progress(25)
-        log("File preparation complete. Running reconciliation engine...")
+        prog(25)
 
-        # ── Load the engine (works with both plain and PyArmor-protected scripts) ──
-        import importlib.util, logging as _logging
-        suite_path = Path(__file__).parent / "gst_suite_final.py"
-        if not suite_path.exists():
-            raise FileNotFoundError(
-                "gst_suite_final.py not found. Place it in the same folder as app.py.")
+        # Load reconciliation engine
+        suite_path = _find_engine("gst_suite_final.py")
+        if not suite_path:
+            raise FileNotFoundError("gst_suite_final.py not found. Place it alongside app.py.")
 
-        spec = importlib.util.spec_from_file_location("gst_suite", str(suite_path))
-        gst  = importlib.util.module_from_spec(spec)
+        log("Loading reconciliation engine...")
+        import importlib.util as _ilu, logging as _lg
+        spec = _ilu.spec_from_file_location("gst_suite", str(suite_path))
+        gst  = _ilu.module_from_spec(spec)
         spec.loader.exec_module(gst)
 
-        # Patch FY/MONTHS if not 2025-26
+        s = int(fy.split("-")[0]); e = s + 1
         gst.FY_LABEL = fy
         gst.MONTHS = [
-            ("April","04",str(start_yr)),("May","05",str(start_yr)),
-            ("June","06",str(start_yr)),("July","07",str(start_yr)),
-            ("August","08",str(start_yr)),("September","09",str(start_yr)),
-            ("October","10",str(start_yr)),("November","11",str(start_yr)),
-            ("December","12",str(start_yr)),("January","01",str(end_yr)),
-            ("February","02",str(end_yr)),("March","03",str(end_yr)),
+            ("April","04",str(s)),("May","05",str(s)),("June","06",str(s)),
+            ("July","07",str(s)),("August","08",str(s)),("September","09",str(s)),
+            ("October","10",str(s)),("November","11",str(s)),("December","12",str(s)),
+            ("January","01",str(e)),("February","02",str(e)),("March","03",str(e)),
         ]
 
-        _log = _logging.getLogger(f"gst_web_{job_id}")
-        _log.setLevel(_logging.DEBUG)
-        class WebLogHandler(_logging.Handler):
-            def emit(self, record):
-                t = "err" if record.levelno >= _logging.WARNING else "info"
-                log(self.format(record), t)
-        _log.addHandler(WebLogHandler())
+        _log = _lg.getLogger(f"gst_web_{job_id}")
+        _log.setLevel(_lg.DEBUG)
+        class WL(_lg.Handler):
+            def emit(self, r):
+                log(self.format(r), "err" if r.levelno >= _lg.WARNING else "info")
+        _log.addHandler(WL())
 
-        set_progress(30)
-        log("Running write_annual_reconciliation...")
+        prog(30)
+        log("Running annual reconciliation...")
         gst.write_annual_reconciliation(str(job_dir), client_name, gstin, _log)
-        set_progress(70)
+        prog(65)
 
-        # GSTR-1 detailed extraction
-        extract_path = Path(__file__).parent / "gstr1_extract.py"
-        if extract_path.exists():
-            log("Running GSTR-1 detailed extraction...")
+        # GSTR-1 Full Detail — always runs when ZIPs are present
+        extract_path = _find_engine("gstr1_extract.py")
+        gstr1_zips   = list(job_dir.glob("GSTR1_*.zip"))
+
+        if extract_path and gstr1_zips:
+            log(f"Running GSTR-1 detail extraction ({len(gstr1_zips)} months)...")
             try:
-                spec2 = importlib.util.spec_from_file_location("gstr1_extract", str(extract_path))
-                gstr1 = importlib.util.module_from_spec(spec2)
+                spec2 = _ilu.spec_from_file_location("gstr1_extract", str(extract_path))
+                gstr1 = _ilu.module_from_spec(spec2)
                 spec2.loader.exec_module(gstr1)
                 out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
                 gstr1.extract_gstr1_to_excel(str(job_dir), str(out_xl))
-                log(f"  GSTR-1 detail: {out_xl.name}")
+                log(f"  ✓ GSTR-1 detail saved: {out_xl.name}", "ok")
             except Exception as e:
-                log(f"  GSTR-1 extraction warning: {e}", "warn")
+                log(f"  ⚠ GSTR-1 extraction error: {e}", "warn")
+        elif not extract_path:
+            log("⚠ gstr1_extract.py not found — GSTR-1 detail skipped", "warn")
+        elif not gstr1_zips:
+            log("ℹ No GSTR-1 ZIPs uploaded — GSTR-1 detail skipped")
 
-        # Create GSTR-3B Summary Excel if PDFs were extracted
-        if gstr3b_data:
-            log("Creating GSTR-3B Summary sheet...")
-            try:
-                wb3b = Workbook()
-                wb3b.remove(wb3b.active)
-                ws = wb3b.create_sheet("GSTR3B_Summary")
-                
-                # Headers
-                headers = ["Month", "Year", "Taxable Value", "IGST", "CGST", "SGST", 
-                          "Net ITC IGST", "Net ITC CGST", "Net ITC SGST", 
-                          "Tax Paid IGST", "Tax Paid CGST", "Tax Paid SGST"]
-                for col, h in enumerate(headers, 1):
-                    c = ws.cell(row=1, column=col, value=h)
-                    c.font = Font(bold=True)
-                
-                # Data rows
-                row = 2
-                for key, data in sorted(gstr3b_data.items()):
-                    mon, yr = key.split("_")
-                    ws.cell(row=row, column=1, value=mon)
-                    ws.cell(row=row, column=2, value=yr)
-                    ws.cell(row=row, column=3, value=data.get("taxable", 0))
-                    ws.cell(row=row, column=4, value=data.get("o_igst", 0))
-                    ws.cell(row=row, column=5, value=data.get("o_cgst", 0))
-                    ws.cell(row=row, column=6, value=data.get("o_sgst", 0))
-                    ws.cell(row=row, column=7, value=data.get("net_itc_igst", 0))
-                    ws.cell(row=row, column=8, value=data.get("net_itc_cgst", 0))
-                    ws.cell(row=row, column=9, value=data.get("net_itc_sgst", 0))
-                    ws.cell(row=row, column=10, value=data.get("tax_paid_igst", 0))
-                    ws.cell(row=row, column=11, value=data.get("tax_paid_cgst", 0))
-                    ws.cell(row=row, column=12, value=data.get("tax_paid_sgst", 0))
-                    row += 1
-                
-                out_3b = job_dir / f"GSTR3B_SUMMARY_{client_name.replace(' ','_')}.xlsx"
-                wb3b.save(str(out_3b))
-                log(f"  GSTR-3B Summary: {out_3b.name}")
-            except Exception as e:
-                log(f"  GSTR-3B summary warning: {e}", "warn")
-
-        set_progress(80)
+        prog(85)
         log("Collecting output files...")
 
         output_files = []
-        for fp in Path(job_dir).glob("*.xlsx"):
+        for fp in sorted(job_dir.glob("*.xlsx")):
+            if not is_full:
+                try:
+                    from openpyxl import load_workbook
+                    wb = load_workbook(str(fp))
+                    for ws in wb.worksheets:
+                        apply_trial_watermark(ws)
+                    wb.save(str(fp))
+                except Exception as e:
+                    log(f"  Watermark error: {e}", "warn")
             dest_fp = out_dir / fp.name
             shutil.copy2(str(fp), str(dest_fp))
-            size_kb = dest_fp.stat().st_size // 1024
-            output_files.append({"name": fp.name, "size": f"{size_kb} KB"})
-            log(f"  Output: {fp.name} ({size_kb} KB)", "ok")
+            sz = dest_fp.stat().st_size // 1024
+            output_files.append({"name": fp.name, "size": f"{sz} KB"})
+            log(f"  ✓ {fp.name} ({sz} KB)", "ok")
 
         if not output_files:
-            raise RuntimeError("No output files generated. Check uploaded files.")
+            raise RuntimeError("No output files generated. Check that uploaded files contain valid data.")
 
-        set_progress(100)
+        prog(100)
         log(f"Done! {len(output_files)} file(s) ready.", "ok")
-
         with jobs_lock:
             jobs[job_id]["status"] = "done"
             jobs[job_id]["files"]  = output_files
-
         _cleanup_job_files(job_id)
 
     except Exception as exc:
@@ -1028,28 +1114,121 @@ def run_reconciliation(job_id):
         _cleanup_job_files(job_id)
 
 
-# ── Startup ───────────────────────────────────────────────────────
+# ── Worker: GSTR-1 Detail only (Tab 2) ───────────────────────────
+def run_gstr1_only(job_id):
+    def log(msg, t="info"):
+        with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
+    def prog(p):
+        with jobs_lock: jobs[job_id]["progress"] = p
+
+    try:
+        job         = jobs[job_id]
+        client_name = job["client_name"]
+        fy          = job["fy"]
+        job_dir     = Path(job["job_dir"])
+        out_dir     = Path(job["out_dir"])
+        saved       = job["saved"]
+        FY_MONTHS   = _fy_months(fy)
+
+        log(f"GSTR-1 Full Detail: {client_name} FY {fy}")
+        prog(5)
+
+        log("Renaming GSTR-1 ZIPs to standard names...")
+        for fpath in saved["r1"]:
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  ✓ GSTR-1: {mon} {yr}")
+            else:
+                log(f"  ⚠ Cannot detect month: {Path(fpath).name}", "warn")
+
+        # Copy 2B/2A for name lookup
+        for fpath in saved["r2b"] + saved["r2a"]:
+            dest = job_dir / Path(fpath).name
+            if not dest.exists():
+                try: Path(fpath).rename(dest)
+                except: shutil.copy2(fpath, str(dest))
+
+        for fpath in saved["cust"]:
+            dest = job_dir / "customer_names.xlsx"
+            if not dest.exists():
+                try: Path(fpath).rename(dest)
+                except: shutil.copy2(fpath, str(dest))
+            break
+
+        prog(20)
+        gstr1_zips = list(job_dir.glob("GSTR1_*.zip"))
+        if not gstr1_zips:
+            raise RuntimeError(
+                "No GSTR1_*.zip files found after renaming. "
+                "Make sure filenames contain the month name (e.g. GSTR1_April_2025.zip).")
+
+        extract_path = _find_engine("gstr1_extract.py")
+        if not extract_path:
+            raise FileNotFoundError("gstr1_extract.py not found. Place it alongside app.py.")
+
+        log(f"Starting extraction ({len(gstr1_zips)} months found)...")
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("gstr1_extract", str(extract_path))
+        gstr1_mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(gstr1_mod)
+
+        prog(30)
+        out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
+        gstr1_mod.extract_gstr1_to_excel(str(job_dir), str(out_xl))
+        prog(90)
+
+        output_files = []
+        for fp in sorted(job_dir.glob("*.xlsx")):
+            dest_fp = out_dir / fp.name
+            shutil.copy2(str(fp), str(dest_fp))
+            sz = dest_fp.stat().st_size // 1024
+            output_files.append({"name": fp.name, "size": f"{sz} KB"})
+            log(f"  ✓ {fp.name} ({sz} KB)", "ok")
+
+        if not output_files:
+            raise RuntimeError("No output files generated.")
+
+        prog(100)
+        log(f"Done! {len(output_files)} file(s) ready.", "ok")
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = output_files
+        _cleanup_job_files(job_id)
+
+    except Exception as exc:
+        import traceback
+        log(f"Error: {exc}", "err")
+        for line in traceback.format_exc().split('\n'):
+            if line.strip(): log(f"  {line}", "err")
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"]  = str(exc)
+        _cleanup_job_files(job_id)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n  ============================================================")
-    print(f"   GST Reconciliation Web App — PROTECTED FULL VERSION")
+    print(f"   GST Reconciliation Portal v3")
     print(f"  ============================================================")
-    print(f"   Upload dir  : {UPLOAD_DIR}")
-    print(f"   Output dir  : {OUTPUT_DIR}")
-    print(f"   Suite file  : {Path(__file__).parent / 'gst_suite_final.py'}")
-    print(f"   Extract file: {Path(__file__).parent / 'gstr1_extract.py'}")
-    print(f"   File TTL    : {JOB_TTL_S // 3600}h (auto-deleted after)")
-    print(f"   Features    : GSTR-3B PDF extraction, Auto-download")
-    print(f"\n   Open your browser:  http://localhost:{port}")
-    print(f"   Press Ctrl+C to stop")
+    print(f"   Upload dir    : {UPLOAD_DIR}")
+    print(f"   Output dir    : {OUTPUT_DIR}")
+    suite = _find_engine("gst_suite_final.py")
+    ext   = _find_engine("gstr1_extract.py")
+    print(f"   Suite engine  : {suite or '⚠  NOT FOUND — place gst_suite_final.py here'}")
+    print(f"   GSTR-1 engine : {ext   or '⚠  NOT FOUND — place gstr1_extract.py here'}")
+    print(f"   License DB    : {_license_db()}")
+    print(f"\n   Open: http://localhost:{port}")
     print(f"  ============================================================\n")
 
-    import socket as _sock
+    import socket as _s
     for _p in [port, 5001, 5002, 8080]:
         try:
-            s = _sock.socket(); s.bind(("", _p)); s.close()
-            port = _p; break
+            s = _s.socket(); s.bind(("",_p)); s.close(); port=_p; break
         except OSError: continue
 
-    print(f"  Server starting on port {port}...")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
