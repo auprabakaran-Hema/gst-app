@@ -73,45 +73,16 @@ def _license_db():
 
 def validate_license(key: str) -> dict:
     """
-    Returns {"valid": True, "plan": "full", ...}
-             {"valid": False, "reason": "..."}
-    Uses generate_license.py's SQLite DB if available.
-    Falls back gracefully if DB not found (trial mode for all).
+    FULL VERSION MODE - No restrictions, unlimited uses.
+    License check bypassed - always returns valid.
     """
-    if not key:
-        return {"valid": False, "reason": "No key provided"}
-
-    db_path = _license_db()
-    if not db_path.exists():
-        # DB not set up yet — all requests are trial
-        return {"valid": False, "reason": "License system not configured"}
-
-    try:
-        import sqlite3
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        r = conn.execute(
-            "SELECT * FROM licenses WHERE key_hash=? AND is_active=1",
-            (key_hash,)
-        ).fetchone()
-        conn.close()
-
-        if not r:
-            return {"valid": False, "reason": "Key not found or revoked"}
-
-        if r["expires_at"]:
-            if datetime.fromisoformat(r["expires_at"]) < datetime.now():
-                return {"valid": False, "reason": "License expired"}
-
-        return {
-            "valid":      True,
-            "plan":       r["plan"],
-            "customer":   r["customer"],
-            "expires_at": r["expires_at"],
-        }
-    except Exception as e:
-        return {"valid": False, "reason": f"DB error: {e}"}
+    # Always return full version - no trial restrictions
+    return {
+        "valid":      True,
+        "plan":       "full",
+        "customer":   "Unlimited User",
+        "expires_at": None,
+    }
 
 # ── Trial restrictions ────────────────────────────────────────────
 def apply_trial_watermark(ws):
@@ -298,11 +269,11 @@ input::placeholder{color:var(--muted)}
   </div>
   <h1>Annual GST<br><span>Reconciliation Portal</span></h1>
   <p class="subtitle">Upload returns → Get reconciliation Excel in seconds</p>
-  <div class="trial-badge" id="version-badge">🎯 TRIAL VERSION</div>
+  <div class="trial-badge" id="version-badge" style="background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)">⭐ FULL VERSION — Unlimited</div>
 </header>
 
 <!-- License Activation -->
-<div class="license-section" id="license-section">
+<div class="license-section" id="license-section" style="display:none">
   <div class="license-title">🔓 Unlock Full Version</div>
   <div class="license-input">
     <input type="password" id="license-key" placeholder="Enter your license key (GSTPRO-XXXXX-XXXXX-XXXXX)">
@@ -446,7 +417,7 @@ input::placeholder{color:var(--muted)}
 
 <script>
 // ── License ─────────────────────────────────────────────────────
-let isFullVersion = false;
+let isFullVersion = true;
 let currentLicense = '';
 
 async function activateLicense() {
@@ -493,7 +464,7 @@ const zoneFiles = {r1:[],r2b:[],r2a:[],r3b:[],cust:[]};
 
 function updateZone(zone, input) {
   const files = Array.from(input.files);
-  if (zone === 'r1' && !isFullVersion && files.length > 3) {
+  if (zone === 'r1' && false && files.length > 3) {
     alert('⚠️ Trial Version: Max 3 GSTR-1 files. Upgrade for unlimited.');
     input.value = ''; return;
   }
