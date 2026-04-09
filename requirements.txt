@@ -3,3 +3,4 @@ openpyxl>=3.1
 pandas>=2.0
 selenium>=4.0
 webdriver-manager>=4.0
+Gunicorn
