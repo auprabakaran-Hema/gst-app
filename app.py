@@ -1,11 +1,10 @@
 """
-GST Reconciliation Web App — SECURE EDITION
-============================================
-• License keys stored in SQLite (hashed) — no hardcoded keys
-• Rate limiting on all API endpoints
-• Uploaded files auto-deleted after 2 hours
-• Source scripts are never served to clients
-• Works with PyArmor-protected gst_suite_final.py / gstr1_extract.py
+GST Reconciliation Web App — PROTECTED EDITION (No Trial, Full Features)
+========================================================================
+• Scripts protected: gst_suite_final.py (encoded), gstr1_extract.py (PyArmor)
+• Full version: No restrictions, unlimited uses
+• GSTR-3B PDF extraction enabled
+• Automatic download features included
 """
 import os, sys, json, zipfile, re, time, shutil, uuid, threading, hashlib
 from pathlib import Path
@@ -66,36 +65,15 @@ def rate_limit(limit=10, window=60):
         return wrapped
     return decorator
 
-# ── License validation (uses generate_license.py DB) ─────────────
-def _license_db():
-    """Path to licenses.db — same folder as app.py."""
-    return Path(__file__).parent / "licenses.db"
-
+# ── License validation (FULL VERSION - No Restrictions) ───────────
 def validate_license(key: str) -> dict:
-    """
-    FULL VERSION MODE - No restrictions, unlimited uses.
-    License check bypassed - always returns valid.
-    """
-    # Always return full version - no trial restrictions
+    """FULL VERSION MODE - No restrictions, unlimited uses."""
     return {
         "valid":      True,
         "plan":       "full",
-        "customer":   "Unlimited User",
+        "customer":   "Full Version User",
         "expires_at": None,
     }
-
-# ── Trial restrictions ────────────────────────────────────────────
-def apply_trial_watermark(ws):
-    try:
-        from openpyxl.styles import Font
-        ws.insert_rows(1)
-        c = ws.cell(row=1, column=1)
-        c.value = "=== TRIAL VERSION — Upgrade at gst-recon.com ==="
-        c.font = Font(name="Arial", bold=True, color="FF0000", size=12)
-        ws.merge_cells(start_row=1, start_column=1,
-                       end_row=1, end_column=ws.max_column)
-    except:
-        pass
 
 # ── Cleanup ───────────────────────────────────────────────────────
 def _cleanup_old_jobs():
@@ -110,7 +88,7 @@ def _cleanup_old_jobs():
         pass
 
 def _cleanup_job_files(job_id: str):
-    """Delete upload files for a completed job immediately (outputs kept until TTL)."""
+    """Delete upload files for a completed job immediately."""
     try:
         up = UPLOAD_DIR / job_id
         if up.exists():
@@ -126,7 +104,6 @@ def block_script_access():
         abort(403)
 
 # ── HTML (embedded) ───────────────────────────────────────────────
-# (Same template as before — updated license input placeholder only)
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -159,9 +136,9 @@ h1{font-size:clamp(1.8rem,4vw,2.8rem);font-weight:800;line-height:1.1;letter-spa
 h1 span{background:linear-gradient(135deg,var(--accent),var(--accent2));
   -webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .subtitle{color:var(--muted);font-size:.95rem;margin-top:.75rem;font-family:var(--mono)}
-.trial-badge{display:inline-flex;align-items:center;gap:.4rem;padding:.4rem 1rem;
+.version-badge{display:inline-flex;align-items:center;gap:.4rem;padding:.4rem 1rem;
   border-radius:100px;font-size:.8rem;font-weight:700;font-family:var(--mono);margin-top:1rem;
-  background:rgba(255,215,0,.15);color:var(--gold);border:1px solid rgba(255,215,0,.4)}
+  background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
   padding:1.75rem;margin-bottom:1.5rem;transition:border-color .2s}
 .card:hover{border-color:rgba(0,229,255,.3)}
@@ -195,15 +172,6 @@ input::placeholder{color:var(--muted)}
   letter-spacing:.06em;color:var(--accent2);margin-bottom:.75rem}
 .name-info{font-size:.78rem;color:var(--muted);font-family:var(--mono);line-height:1.6}
 .name-info strong{color:var(--text)}
-.license-section{background:linear-gradient(135deg,rgba(0,229,255,.1),rgba(124,58,237,.1));
-  border:1px solid var(--accent);border-radius:12px;padding:1.25rem;margin-bottom:1.5rem}
-.license-title{font-size:.9rem;font-weight:700;color:var(--gold);margin-bottom:.75rem}
-.license-input{display:flex;gap:.5rem}
-.license-input input{flex:1}
-.btn-license{padding:.65rem 1rem;background:var(--gold);border:none;border-radius:8px;
-  color:#000;font-weight:700;font-size:.8rem;cursor:pointer}
-.license-msg{font-size:.78rem;margin-top:.5rem;font-family:var(--mono)}
-.license-msg.ok{color:var(--green)}.license-msg.err{color:var(--red)}
 .btn-submit{width:100%;padding:1rem;background:linear-gradient(135deg,var(--accent),var(--accent2));
   border:none;border-radius:12px;color:#000;font-family:var(--sans);font-size:1rem;
   font-weight:800;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;
@@ -229,6 +197,10 @@ input::placeholder{color:var(--muted)}
   border-radius:8px;color:var(--accent);font-family:var(--mono);font-size:.8rem;
   cursor:pointer;text-decoration:none;display:inline-block;transition:background .15s}
 .btn-dl:hover{background:rgba(0,229,255,.1)}
+.btn-auto-dl{padding:.5rem 1rem;background:var(--green);border:none;
+  border-radius:8px;color:#000;font-family:var(--mono);font-size:.8rem;
+  cursor:pointer;margin-top:.5rem;font-weight:600}
+.btn-auto-dl:hover{background:#00c853}
 .status-badge{display:inline-flex;align-items:center;gap:.4rem;padding:.3rem .75rem;
   border-radius:100px;font-size:.75rem;font-weight:700;font-family:var(--mono)}
 .status-processing{background:rgba(255,109,0,.15);color:var(--orange);border:1px solid rgba(255,109,0,.4)}
@@ -241,22 +213,9 @@ input::placeholder{color:var(--muted)}
   color:#000;font-weight:800;font-size:.8rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .step-text{font-size:.88rem;color:var(--muted);line-height:1.5}
 .step-text strong{color:var(--text)}
-.pricing-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}
-@media(max-width:600px){.pricing-grid{grid-template-columns:1fr}}
-.pricing-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;
-  padding:1.5rem;text-align:center}
-.pricing-card.featured{border-color:var(--gold);background:rgba(255,215,0,.05)}
-.pricing-title{font-size:1.1rem;font-weight:700;margin-bottom:.5rem}
-.pricing-price{font-size:2rem;font-weight:800;color:var(--accent);margin-bottom:.5rem}
-.pricing-price span{font-size:.9rem;color:var(--muted);font-weight:400}
-.pricing-features{list-style:none;text-align:left;margin:1rem 0}
-.pricing-features li{font-size:.85rem;color:var(--muted);padding:.3rem 0;border-bottom:1px solid var(--border)}
-.pricing-features li:last-child{border-bottom:none}
-.pricing-features li::before{content:'✓ ';color:var(--green)}
-.pricing-features li.x::before{content:'✗ ';color:var(--red)}
-.btn-buy{width:100%;padding:.75rem;background:var(--accent);border:none;border-radius:8px;
-  color:#000;font-weight:700;cursor:pointer;transition:all .15s}
-.btn-buy:hover{background:var(--accent2);color:#fff}
+.auto-download-section{background:var(--surface2);border:1px solid var(--green);border-radius:12px;
+  padding:1rem;margin-top:1rem}
+.auto-download-title{font-size:.8rem;font-weight:700;color:var(--green);margin-bottom:.5rem}
 </style>
 </head>
 <body>
@@ -269,21 +228,8 @@ input::placeholder{color:var(--muted)}
   </div>
   <h1>Annual GST<br><span>Reconciliation Portal</span></h1>
   <p class="subtitle">Upload returns → Get reconciliation Excel in seconds</p>
-  <div class="trial-badge" id="version-badge" style="background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)">⭐ FULL VERSION — Unlimited</div>
+  <div class="version-badge">⭐ FULL VERSION — Unlimited Access</div>
 </header>
-
-<!-- License Activation -->
-<div class="license-section" id="license-section" style="display:none">
-  <div class="license-title">🔓 Unlock Full Version</div>
-  <div class="license-input">
-    <input type="password" id="license-key" placeholder="Enter your license key (GSTPRO-XXXXX-XXXXX-XXXXX)">
-    <button class="btn-license" onclick="activateLicense()">Activate</button>
-  </div>
-  <div class="license-msg" id="license-msg"></div>
-  <p style="color:var(--muted);font-size:.75rem;margin-top:.5rem">
-    Don't have a key? <a href="#pricing" style="color:var(--gold)">Buy Full Version →</a>
-  </p>
-</div>
 
 <!-- Instructions -->
 <div class="card">
@@ -331,14 +277,14 @@ input::placeholder{color:var(--muted)}
       <input type="file" multiple accept=".zip,.xlsx" data-zone="r2a" onchange="updateZone('r2a',this)">
     </div>
     <div class="drop-zone" id="zone-r3b">
-      <div class="drop-icon">📄</div><div class="drop-label">GSTR-3B</div>
-      <div class="drop-hint">PDF files</div>
+      <div class="drop-icon">📄</div><div class="drop-label">GSTR-3B PDF</div>
+      <div class="drop-hint">PDF files (auto-extract)</div>
       <div class="drop-count" id="count-r3b">No files</div>
       <input type="file" multiple accept=".pdf" data-zone="r3b" onchange="updateZone('r3b',this)">
     </div>
   </div>
   <div class="name-lookup">
-    <div class="name-lookup-title">Customer Name Lookup (Full Version Only)</div>
+    <div class="name-lookup-title">Customer Name Lookup (Optional)</div>
     <div class="drop-zone" id="zone-cust" style="min-height:80px;flex-direction:row;justify-content:flex-start;gap:1rem;padding:1rem">
       <div class="drop-icon" style="font-size:1.5rem">👥</div>
       <div>
@@ -373,101 +319,26 @@ input::placeholder{color:var(--muted)}
 <div class="card" id="downloads-section">
   <div class="card-title">Downloads Ready</div>
   <div class="dl-grid" id="dl-grid"></div>
+  <div class="auto-download-section" id="auto-download-section" style="display:none">
+    <div class="auto-download-title">📥 Auto-Download</div>
+    <p style="color:var(--muted);font-size:.75rem;margin-bottom:.5rem">All files will download automatically</p>
+    <button class="btn-auto-dl" onclick="downloadAll()">Download All Files</button>
+  </div>
   <p style="color:var(--muted);font-size:.75rem;margin-top:1rem;font-family:var(--mono)">
     ⏳ Files are available for 2 hours after generation.
-  </p>
-</div>
-
-<!-- Pricing -->
-<div class="card" id="pricing">
-  <div class="card-title">Choose Your Plan</div>
-  <div class="pricing-grid">
-    <div class="pricing-card">
-      <div class="pricing-title">🎯 Trial</div>
-      <div class="pricing-price">FREE</div>
-      <ul class="pricing-features">
-        <li>Max 3 months GSTR-1</li>
-        <li>Watermarked output</li>
-        <li class="x">No GSTR-3B PDF extract</li>
-        <li class="x">No customer lookup</li>
-      </ul>
-      <button class="btn-buy" disabled>Current Plan</button>
-    </div>
-    <div class="pricing-card featured">
-      <div class="pricing-title">⭐ Full Version</div>
-      <div class="pricing-price">₹4,999<span>/year</span></div>
-      <ul class="pricing-features">
-        <li>Unlimited months</li>
-        <li>Clean output (no watermark)</li>
-        <li>GSTR-3B PDF extraction</li>
-        <li>Customer name lookup</li>
-        <li>Priority support</li>
-        <li>Free updates</li>
-      </ul>
-      <button class="btn-buy" onclick="buyFullVersion()">Buy Now</button>
-    </div>
-  </div>
-  <p style="color:var(--muted);font-size:.8rem;text-align:center;margin-top:1rem">
-    💳 UPI / Bank Transfer / Razorpay<br>
-    📧 Contact: gstrecon@example.com | WhatsApp: +91-XXXXXXXXXX
   </p>
 </div>
 
 </div><!-- /container -->
 
 <script>
-// ── License ─────────────────────────────────────────────────────
-let isFullVersion = true;
-let currentLicense = '';
-
-async function activateLicense() {
-  const key = document.getElementById('license-key').value.trim();
-  const msg = document.getElementById('license-msg');
-  if (!key) { msg.textContent = 'Please enter a license key.'; msg.className='license-msg err'; return; }
-  msg.textContent = 'Checking...'; msg.className='license-msg';
-
-  try {
-    const r = await fetch('/api/activate', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({license_key: key})
-    });
-    const d = await r.json();
-    if (d.success) {
-      isFullVersion = true;
-      currentLicense = key;
-      const badge = document.getElementById('version-badge');
-      badge.textContent = '⭐ FULL VERSION' + (d.customer ? ' — ' + d.customer : '');
-      badge.style.background = 'rgba(0,230,118,.15)';
-      badge.style.color = 'var(--green)';
-      badge.style.border = '1px solid rgba(0,230,118,.4)';
-      document.getElementById('license-section').style.display = 'none';
-      msg.textContent = ''; 
-      const exp = d.expires_at ? ' (expires ' + d.expires_at.split('T')[0] + ')' : '';
-      alert('✅ Full Version Activated!' + (d.customer ? '\nWelcome, ' + d.customer + '!' : '') + exp);
-    } else {
-      msg.textContent = '✗ ' + (d.reason || 'Invalid key. Please check and try again.');
-      msg.className = 'license-msg err';
-    }
-  } catch(e) {
-    msg.textContent = '✗ Server error. Please try again.';
-    msg.className = 'license-msg err';
-  }
-}
-
-function buyFullVersion() {
-  alert('📧 To purchase Full Version:\n\n1. Contact: gstrecon@example.com\n2. WhatsApp: +91-XXXXXXXXXX\n3. Payment: UPI / Bank Transfer\n\nLicense key sent to your email after payment.');
-}
-
 // ── File zones ───────────────────────────────────────────────────
 const zoneFiles = {r1:[],r2b:[],r2a:[],r3b:[],cust:[]};
+let currentJobId = '';
+let currentFiles = [];
 
 function updateZone(zone, input) {
   const files = Array.from(input.files);
-  if (zone === 'r1' && false && files.length > 3) {
-    alert('⚠️ Trial Version: Max 3 GSTR-1 files. Upgrade for unlimited.');
-    input.value = ''; return;
-  }
   zoneFiles[zone] = files;
   const countEl = document.getElementById('count-'+zone);
   const zoneEl  = document.getElementById('zone-'+zone);
@@ -503,7 +374,6 @@ document.getElementById('main-form').addEventListener('submit', async e => {
   fd.append('gstin', gstin);
   fd.append('client_name', cname);
   fd.append('fy', fy);
-  fd.append('license_key', currentLicense);
   for (const [zone, files] of Object.entries(zoneFiles))
     files.forEach(f => fd.append('files_'+zone, f));
 
@@ -514,11 +384,13 @@ document.getElementById('main-form').addEventListener('submit', async e => {
   document.getElementById('dl-grid').innerHTML = '';
   document.getElementById('log-box').innerHTML = '';
   document.getElementById('progress-bar').style.width = '0%';
+  document.getElementById('auto-download-section').style.display = 'none';
 
   try {
     const res  = await fetch('/api/upload', {method:'POST', body:fd});
     const data = await res.json();
     if (!data.job_id) throw new Error(data.error || 'Upload failed');
+    currentJobId = data.job_id;
     addLog('info', 'Files uploaded. Starting reconciliation...');
     document.getElementById('submit-btn').textContent = 'Processing...';
     pollJob(data.job_id);
@@ -544,6 +416,8 @@ async function pollJob(jobId) {
       document.getElementById('submit-btn').disabled = false;
       document.getElementById('submit-btn').textContent = 'Generate Reconciliation →';
       showDownloads(jobId, data.files);
+      // Auto-download after 2 seconds
+      setTimeout(() => autoDownloadAll(data.files), 2000);
       return;
     }
     if (data.status === 'error') {
@@ -574,9 +448,11 @@ function setStatus(type, label) {
   if (type !== 'processing') b.classList.remove('pulse');
 }
 function showDownloads(jobId, files) {
+  currentFiles = files;
   document.getElementById('downloads-section').style.display = 'block';
+  document.getElementById('auto-download-section').style.display = 'block';
   const grid = document.getElementById('dl-grid');
-  const icons = {'ANNUAL':'📊','GSTR3BR1':'📋','GSTR3BR2A':'📈','GSTR1_FULL':'📑','B2B':'🏢'};
+  const icons = {'ANNUAL':'📊','GSTR3BR1':'📋','GSTR3BR2A':'📈','GSTR1_FULL':'📑','B2B':'🏢','SUMMARY':'📋'};
   files.forEach(f => {
     const icon = Object.entries(icons).find(([k])=>f.name.includes(k))?.[1] || '📁';
     const card = document.createElement('div');
@@ -584,9 +460,25 @@ function showDownloads(jobId, files) {
     card.innerHTML = `<div style="font-size:1.8rem">${icon}</div>
       <div class="dl-name">${f.name}</div>
       <div class="dl-size">${f.size}</div>
-      <a href="/api/download/${jobId}/${encodeURIComponent(f.name)}" class="btn-dl" download>Download ↓</a>`;
+      <a href="/api/download/${jobId}/${encodeURIComponent(f.name)}" class="btn-dl" download id="dl-${f.name}">Download ↓</a>`;
     grid.appendChild(card);
   });
+}
+
+// ── Auto Download ────────────────────────────────────────────────
+function autoDownloadAll(files) {
+  files.forEach((f, i) => {
+    setTimeout(() => {
+      const link = document.getElementById('dl-' + f.name);
+      if (link) link.click();
+    }, i * 500);
+  });
+}
+
+function downloadAll() {
+  if (currentFiles.length > 0) {
+    autoDownloadAll(currentFiles);
+  }
 }
 </script>
 </body>
@@ -597,21 +489,6 @@ function showDownloads(jobId, files) {
 def index():
     return render_template_string(HTML)
 
-@app.route("/api/activate", methods=["POST"])
-@rate_limit(limit=5, window=60)   # max 5 activation attempts per minute per IP
-def api_activate():
-    data = request.get_json(silent=True) or {}
-    key  = data.get("license_key", "").strip()
-    result = validate_license(key)
-    if result["valid"]:
-        return jsonify(
-            success    = True,
-            customer   = result.get("customer"),
-            plan       = result.get("plan"),
-            expires_at = result.get("expires_at"),
-        )
-    return jsonify(success=False, reason=result.get("reason", "Invalid key"))
-
 @app.route("/api/upload", methods=["POST"])
 @rate_limit(limit=20, window=60)
 def api_upload():
@@ -620,10 +497,6 @@ def api_upload():
     gstin       = request.form.get("gstin", "").strip().upper()
     client_name = request.form.get("client_name", "").strip()
     fy          = request.form.get("fy", "2025-26").strip()
-    license_key = request.form.get("license_key", "").strip()
-
-    lic    = validate_license(license_key)
-    is_full = lic["valid"] and lic.get("plan") == "full"
 
     if not gstin or len(gstin) != 15:
         return jsonify(error="Invalid GSTIN"), 400
@@ -648,12 +521,6 @@ def api_upload():
             fobj.save(str(dest))
             saved[zone].append(str(dest))
 
-    # Enforce trial limit server-side (can't be bypassed from browser)
-    if not is_full and len(saved["r1"]) > 3:
-        shutil.rmtree(str(job_dir), ignore_errors=True)
-        shutil.rmtree(str(out_dir), ignore_errors=True)
-        return jsonify(error="Trial Version: Maximum 3 GSTR-1 files allowed."), 403
-
     with jobs_lock:
         jobs[job_id] = {
             "status":      "queued",
@@ -667,11 +534,11 @@ def api_upload():
             "job_dir":     str(job_dir),
             "out_dir":     str(out_dir),
             "saved":       saved,
-            "is_full":     is_full,
+            "is_full":     True,
         }
 
     threading.Thread(target=run_reconciliation, args=(job_id,), daemon=True).start()
-    return jsonify(job_id=job_id, is_full=is_full)
+    return jsonify(job_id=job_id, is_full=True)
 
 @app.route("/api/job/<job_id>", methods=["GET"])
 @rate_limit(limit=120, window=60)
@@ -688,19 +555,223 @@ def api_job(job_id):
         logs     = new_logs,
         files    = job["files"],
         error    = job["error"],
-        is_full  = job.get("is_full", False),
+        is_full  = job.get("is_full", True),
     )
 
 @app.route("/api/download/<job_id>/<filename>", methods=["GET"])
 @rate_limit(limit=30, window=60)
 def api_download(job_id, filename):
     # Strict filename check — no path traversal possible
-    if not re.match(r'^[\w\-. ()]+\.xlsx$|^[\w\-. ()]+\.pdf$', filename):
+    if not re.match(r'^[\w\-. ()]+\.(xlsx|pdf|zip)$', filename):
         abort(400)
     fpath = OUTPUT_DIR / job_id / filename
     if not fpath.exists() or not fpath.is_file():
         abort(404)
     return send_file(str(fpath), as_attachment=True, download_name=filename)
+
+# ── GSTR-3B PDF Extraction ────────────────────────────────────────
+def extract_3b_pdf(pdf_path):
+    """
+    Robust GSTR-3B PDF extraction — line-by-line scan.
+    Handles portal PDF quirks: 'L0', 'I0', split rows, stray chars.
+    Returns ALL fields from Tables 3.1, 3.1(c), 4, 5.1, 6.1.
+    """
+    result = {
+        # Meta
+        "gstin":"","legal_name":"","trade_name":"","period":"","year":"","arn":"","arn_date":"",
+        # 3.1(a) Outward taxable
+        "taxable":0.,"o_igst":0.,"o_cgst":0.,"o_sgst":0.,"o_cess":0.,
+        # 3.1(b) Zero rated
+        "zero_taxable":0.,"zero_igst":0.,
+        # 3.1(c) Nil / Exempt
+        "nil_exempt":0.,
+        # 3.1(d) RCM inward
+        "rcm_taxable":0.,"rcm_igst":0.,"rcm_cgst":0.,"rcm_sgst":0.,
+        # 3.1(e) Non-GST
+        "non_gst":0.,
+        # 4A ITC available
+        "itc_import_goods":0.,"itc_import_svc":0.,"itc_rcm":0.,"itc_isd":0.,
+        "itc_igst":0.,"itc_cgst":0.,"itc_sgst":0.,"itc_cess":0.,
+        # 4B ITC reversed
+        "rev_igst":0.,"rev_cgst":0.,"rev_sgst":0.,
+        # 4C Net ITC
+        "net_itc_igst":0.,"net_itc_cgst":0.,"net_itc_sgst":0.,
+        # 5.1
+        "interest_igst":0.,"interest_cgst":0.,"interest_sgst":0.,
+        "late_fee_cgst":0.,"late_fee_sgst":0.,
+        # 6.1 Tax paid
+        "tax_paid_igst":0.,"tax_paid_cgst":0.,"tax_paid_sgst":0.,
+    }
+    if not pdf_path.exists():
+        return result
+    import re
+    text = ""
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(pdf_path)) as pdf2:
+            text = "\n".join(p.extract_text() or "" for p in pdf2.pages)
+    except ImportError:
+        try:
+            import PyPDF2
+            with open(str(pdf_path),"rb") as f2:
+                r2 = PyPDF2.PdfReader(f2)
+                text = "\n".join(p.extract_text() or "" for p in r2.pages)
+        except: pass
+    except Exception: pass
+    if not text:
+        return result
+
+    def _n(s):
+        """Convert string to float, handling L0/I0 portal artifacts."""
+        try:
+            return float(re.sub(r"[^\d.\-]","",str(s).replace("L","").replace("I","").replace(",","")))
+        except: return 0.0
+
+    def nums_on_line(line):
+        """Extract all decimal numbers from a single PDF line."""
+        clean = re.sub(r"[LI](\d)", r"\1", line)
+        return [_n(n) for n in re.findall(r"-?\d[\d,]*\.\d*", clean)]
+
+    lines = text.split("\n")
+    in_section_4  = False
+    in_section_6  = False
+    past_51_header = False
+
+    for i, line in enumerate(lines):
+        lo   = line.lower().strip()
+        nums = nums_on_line(line)
+
+        # -- Meta fields --------------------------------------------
+        if "gstin of the supplier" in lo:
+            parts = re.split(r"supplier\s*", line, flags=re.I)
+            if len(parts) > 1: result["gstin"] = parts[-1].strip()
+        elif "2(a)." in line and "legal name" in lo:
+            result["legal_name"] = re.sub(r"2\(a\)\..*?person\s*","",line,flags=re.I).strip()
+        elif "2(b)." in line and "trade name" in lo:
+            result["trade_name"] = re.sub(r"2\(b\)\.\s*Trade name,?\s*if any\s*","",line,flags=re.I).strip()
+        elif re.match(r"Year\s+\d{4}", line):
+            result["year"] = line.replace("Year","").strip()
+        elif re.match(r"Period\s+[A-Za-z]", line) and "supply" not in lo:
+            result["period"] = line.replace("Period","").strip()
+        elif "2(c)." in line and "arn" in lo and "nil" not in lo and "exempt" not in lo:
+            result["arn"] = re.sub(r"2\(c\)\.\s*ARN\s*","",line,flags=re.I).strip()
+        elif "2(d)." in line and "date of arn" in lo:
+            result["arn_date"] = re.sub(r"2\(d\)\.\s*Date of ARN\s*","",line,flags=re.I).strip()
+
+        # -- Section flags ------------------------------------------
+        elif re.search(r"4\.?\s*eligible itc|table.*4|^4\.\s", lo):
+            in_section_4 = True; in_section_6 = False
+        elif re.search(r"6\.?1.*payment of tax|payment of tax", lo):
+            in_section_6 = True; in_section_4 = False
+        elif re.search(r"5\.?1.*interest.*late fee|interest.*late fee.*previous", lo):
+            past_51_header = True
+
+        # -- 3.1(a) Outward taxable ---------------------------------
+        elif re.search(r"\(a\).*outward taxable", lo) and "(b)" not in lo:
+            combined = line
+            if len(nums) < 4 and i+1 < len(lines):
+                combined = line + " " + lines[i+1]
+                nums = nums_on_line(combined)
+            if len(nums) >= 4:
+                result["taxable"] = nums[0]
+                result["o_igst"]  = nums[1]
+                result["o_cgst"]  = nums[2]
+                result["o_sgst"]  = nums[3]
+                if len(nums) >= 5: result["o_cess"] = nums[4]
+
+        # -- 3.1(b) Zero rated --------------------------------------
+        elif re.search(r"\(b\).*zero rated", lo):
+            if len(nums) >= 1: result["zero_taxable"] = nums[0]
+            if len(nums) >= 2: result["zero_igst"]    = nums[1]
+
+        # -- 3.1(c) Nil / Exempt ------------------------------------
+        elif re.search(r"^\(c[\s\)]", lo) and re.search(r"nil|exempt", lo):
+            if nums: result["nil_exempt"] = nums[0]
+
+        # -- 3.1(d) Inward supplies liable to RCM -------------------
+        elif re.search(r"\(d\).*inward.*reverse charge|\(d\).*reverse charge.*inward", lo):
+            if len(nums) >= 4:
+                result["rcm_taxable"] = nums[0]
+                result["rcm_igst"]    = nums[1]
+                result["rcm_cgst"]    = nums[2]
+                result["rcm_sgst"]    = nums[3]
+
+        # -- 3.1(e) Non-GST -----------------------------------------
+        elif re.search(r"\(e\).*non.?gst", lo):
+            if nums: result["non_gst"] = nums[0]
+
+        # -- Table 4: ITC -------------------------------------------
+        elif re.search(r"\(1\).*import of goods", lo):
+            if len(nums) >= 1: result["itc_import_goods"] = nums[0]
+        elif re.search(r"\(2\).*import of services", lo):
+            if len(nums) >= 1: result["itc_import_svc"] = nums[0]
+        elif re.search(r"\(3\).*reverse charge.*other than.*1.*2|\(3\).*inward.*reverse charge.*other", lo):
+            if len(nums) >= 1: result["itc_rcm"] = nums[0]
+        elif re.search(r"\(4\).*isd|\(4\).*inward.*isd", lo):
+            if len(nums) >= 1: result["itc_isd"] = nums[0]
+        elif re.search(r"\(5\).*all other itc", lo):
+            if len(nums) >= 3:
+                result["itc_igst"] = nums[0]
+                result["itc_cgst"] = nums[1]
+                result["itc_sgst"] = nums[2]
+                if len(nums) >= 4: result["itc_cess"] = nums[3]
+
+        elif re.search(r"\(1\).*rules 38.*42|\(1\).*as per rules", lo):
+            if len(nums) >= 3:
+                result["rev_igst"] = nums[0]
+                result["rev_cgst"] = nums[1]
+                result["rev_sgst"] = nums[2]
+
+        elif re.search(r"net itc available|^c\..*net itc", lo):
+            if len(nums) >= 3:
+                result["net_itc_igst"] = nums[0]
+                result["net_itc_cgst"] = nums[1]
+                result["net_itc_sgst"] = nums[2]
+
+        # -- 5.1 Interest Paid --------------------------------------
+        elif re.search(r"^interest paid|interest paid\s", lo):
+            if len(nums) >= 3:
+                result["interest_igst"] = nums[0]
+                result["interest_cgst"] = nums[1]
+                result["interest_sgst"] = nums[2]
+            elif len(nums) == 2:
+                result["interest_cgst"] = nums[0]
+                result["interest_sgst"] = nums[1]
+
+        # -- 5.1 Late fee -------------------------------------------
+        elif re.search(r"late fee", lo) and "5.1" not in lo and "interest and late" not in lo:
+            late_nums = [n for n in nums if n > 0]
+            if len(late_nums) >= 2:
+                result["late_fee_cgst"] = late_nums[0]
+                result["late_fee_sgst"] = late_nums[1]
+            elif len(late_nums) == 1:
+                result["late_fee_cgst"] = late_nums[0]
+
+        # -- 6.1 Tax paid rows --------------------------------------
+        elif in_section_6:
+            if re.match(r"central\s*(tax)?", lo) and len(nums) >= 3:
+                tp = nums[0]
+                candidates = [n for n in nums[2:] if 0 < n < tp*2]
+                if candidates:
+                    result["tax_paid_cgst"] = candidates[-2] if len(candidates)>=2 else candidates[0]
+            elif re.match(r"state|ut\s*(tax)?", lo) and len(nums) >= 3:
+                tp = nums[0]
+                candidates = [n for n in nums[2:] if 0 < n < tp*2]
+                if candidates:
+                    result["tax_paid_sgst"] = candidates[-2] if len(candidates)>=2 else candidates[0]
+            elif re.match(r"integrated\s*(tax)?", lo) and len(nums) >= 3:
+                tp = nums[0]
+                candidates = [n for n in nums[2:] if 0 < n < tp*2]
+                if candidates:
+                    result["tax_paid_igst"] = candidates[-2] if len(candidates)>=2 else candidates[0]
+
+    # Fallback: derive ITC from net if 4A(5) was zero
+    if result["itc_cgst"] == 0 and result["net_itc_cgst"] > 0:
+        result["itc_cgst"] = result["net_itc_cgst"]
+        result["itc_sgst"] = result["net_itc_sgst"]
+        result["itc_igst"] = result["net_itc_igst"]
+
+    return result
 
 # ── Background worker ─────────────────────────────────────────────
 def run_reconciliation(job_id):
@@ -713,6 +784,10 @@ def run_reconciliation(job_id):
 
     try:
         import zipfile as _zf
+        from openpyxl import Workbook, load_workbook
+        from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
+
         job         = jobs[job_id]
         gstin       = job["gstin"]
         client_name = job["client_name"]
@@ -720,11 +795,9 @@ def run_reconciliation(job_id):
         job_dir     = Path(job["job_dir"])
         out_dir     = Path(job["out_dir"])
         saved       = job["saved"]
-        is_full     = job.get("is_full", False)
 
         log(f"Starting reconciliation for {client_name} ({gstin}) FY {fy}")
-        log("⭐ FULL VERSION — All features enabled" if is_full
-            else "🎯 TRIAL VERSION — Watermark applied")
+        log("⭐ FULL VERSION — All features enabled")
         set_progress(5)
 
         # Month maps
@@ -799,30 +872,35 @@ def run_reconciliation(job_id):
                         except OSError: shutil.copy2(fpath, str(dest))
                     log(f"  GSTR-2A: {mon} {yr}"); break
 
-        if is_full:
-            log("Processing GSTR-3B PDFs...")
-            for fpath in saved["r3b"]:
-                name = Path(fpath).stem.lower()
-                for part in re.split(r'[_\-\s]', name):
-                    if part in MONTHS_MAP:
-                        mon = MONTHS_MAP[part]; yr = FY_MONTHS.get(mon, str(start_yr))
-                        dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
-                        if not dest.exists():
-                            try: Path(fpath).rename(dest)
-                            except OSError: shutil.copy2(fpath, str(dest))
-                        log(f"  GSTR-3B: {mon} {yr}"); break
-        else:
-            if saved["r3b"]: log("⚠️ GSTR-3B PDFs skipped (Full Version only)", "warn")
+        # Process GSTR-3B PDFs with extraction
+        gstr3b_data = {}
+        log("Processing GSTR-3B PDFs...")
+        for fpath in saved["r3b"]:
+            name = Path(fpath).stem.lower()
+            mon = None; yr = None
+            for part in re.split(r'[_\-\s]', name):
+                if part in MONTHS_MAP:
+                    mon = MONTHS_MAP[part]; yr = FY_MONTHS.get(mon, str(start_yr))
+                    break
+            if mon:
+                dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except OSError: shutil.copy2(fpath, str(dest))
+                # Extract data from PDF
+                log(f"  Extracting GSTR-3B: {mon} {yr}...")
+                pdf_data = extract_3b_pdf(dest)
+                gstr3b_data[f"{mon}_{yr}"] = pdf_data
+                log(f"    ✓ Taxable: {pdf_data['taxable']:,.2f}, ITC: {pdf_data['net_itc_cgst']+pdf_data['net_itc_sgst']+pdf_data['net_itc_igst']:,.2f}")
 
-        if is_full:
+        # Process customer names file
+        if saved["cust"]:
             for fpath in saved["cust"]:
                 dest = job_dir / "customer_names.xlsx"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
                     except OSError: shutil.copy2(fpath, str(dest))
                 log("  Customer names Excel loaded"); break
-        else:
-            if saved["cust"]: log("⚠️ Customer names skipped (Full Version only)", "warn")
 
         set_progress(25)
         log("File preparation complete. Running reconciliation engine...")
@@ -876,20 +954,51 @@ def run_reconciliation(job_id):
             except Exception as e:
                 log(f"  GSTR-1 extraction warning: {e}", "warn")
 
+        # Create GSTR-3B Summary Excel if PDFs were extracted
+        if gstr3b_data:
+            log("Creating GSTR-3B Summary sheet...")
+            try:
+                wb3b = Workbook()
+                wb3b.remove(wb3b.active)
+                ws = wb3b.create_sheet("GSTR3B_Summary")
+                
+                # Headers
+                headers = ["Month", "Year", "Taxable Value", "IGST", "CGST", "SGST", 
+                          "Net ITC IGST", "Net ITC CGST", "Net ITC SGST", 
+                          "Tax Paid IGST", "Tax Paid CGST", "Tax Paid SGST"]
+                for col, h in enumerate(headers, 1):
+                    c = ws.cell(row=1, column=col, value=h)
+                    c.font = Font(bold=True)
+                
+                # Data rows
+                row = 2
+                for key, data in sorted(gstr3b_data.items()):
+                    mon, yr = key.split("_")
+                    ws.cell(row=row, column=1, value=mon)
+                    ws.cell(row=row, column=2, value=yr)
+                    ws.cell(row=row, column=3, value=data.get("taxable", 0))
+                    ws.cell(row=row, column=4, value=data.get("o_igst", 0))
+                    ws.cell(row=row, column=5, value=data.get("o_cgst", 0))
+                    ws.cell(row=row, column=6, value=data.get("o_sgst", 0))
+                    ws.cell(row=row, column=7, value=data.get("net_itc_igst", 0))
+                    ws.cell(row=row, column=8, value=data.get("net_itc_cgst", 0))
+                    ws.cell(row=row, column=9, value=data.get("net_itc_sgst", 0))
+                    ws.cell(row=row, column=10, value=data.get("tax_paid_igst", 0))
+                    ws.cell(row=row, column=11, value=data.get("tax_paid_cgst", 0))
+                    ws.cell(row=row, column=12, value=data.get("tax_paid_sgst", 0))
+                    row += 1
+                
+                out_3b = job_dir / f"GSTR3B_SUMMARY_{client_name.replace(' ','_')}.xlsx"
+                wb3b.save(str(out_3b))
+                log(f"  GSTR-3B Summary: {out_3b.name}")
+            except Exception as e:
+                log(f"  GSTR-3B summary warning: {e}", "warn")
+
         set_progress(80)
         log("Collecting output files...")
 
         output_files = []
         for fp in Path(job_dir).glob("*.xlsx"):
-            if not is_full:
-                try:
-                    from openpyxl import load_workbook
-                    wb = load_workbook(str(fp))
-                    for ws in wb.worksheets:
-                        apply_trial_watermark(ws)
-                    wb.save(str(fp))
-                except Exception as e:
-                    log(f"  Watermark error: {e}", "warn")
             dest_fp = out_dir / fp.name
             shutil.copy2(str(fp), str(dest_fp))
             size_kb = dest_fp.stat().st_size // 1024
@@ -906,7 +1015,6 @@ def run_reconciliation(job_id):
             jobs[job_id]["status"] = "done"
             jobs[job_id]["files"]  = output_files
 
-        # Delete upload files immediately — keep outputs until TTL
         _cleanup_job_files(job_id)
 
     except Exception as exc:
@@ -924,13 +1032,14 @@ def run_reconciliation(job_id):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n  ============================================================")
-    print(f"   GST Reconciliation Web App — SECURE EDITION")
+    print(f"   GST Reconciliation Web App — PROTECTED FULL VERSION")
     print(f"  ============================================================")
     print(f"   Upload dir  : {UPLOAD_DIR}")
     print(f"   Output dir  : {OUTPUT_DIR}")
     print(f"   Suite file  : {Path(__file__).parent / 'gst_suite_final.py'}")
-    print(f"   License DB  : {_license_db()}")
+    print(f"   Extract file: {Path(__file__).parent / 'gstr1_extract.py'}")
     print(f"   File TTL    : {JOB_TTL_S // 3600}h (auto-deleted after)")
+    print(f"   Features    : GSTR-3B PDF extraction, Auto-download")
     print(f"\n   Open your browser:  http://localhost:{port}")
     print(f"   Press Ctrl+C to stop")
     print(f"  ============================================================\n")

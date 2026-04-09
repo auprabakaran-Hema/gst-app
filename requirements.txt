@@ -4,3 +4,5 @@ openpyxl
 pandas
 selenium
 webdriver-manager
+pdfplumber
+PyPDF2
