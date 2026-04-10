@@ -61,43 +61,7 @@ def rate_limit(limit=10, window=60):
         return wrapped
     return decorator
 
-def _license_db():
-    return Path(__file__).parent / "licenses.db"
-
-def validate_license(key):
-    if not key:
-        return {"valid": False, "reason": "No key"}
-    db_path = _license_db()
-    if not db_path.exists():
-        return {"valid": False, "reason": "License system not configured"}
-    try:
-        import sqlite3
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        r = conn.execute(
-            "SELECT * FROM licenses WHERE key_hash=? AND is_active=1", (key_hash,)
-        ).fetchone()
-        conn.close()
-        if not r:
-            return {"valid": False, "reason": "Key not found or revoked"}
-        if r["expires_at"]:
-            if datetime.fromisoformat(r["expires_at"]) < datetime.now():
-                return {"valid": False, "reason": "License expired"}
-        return {"valid": True, "plan": r["plan"], "customer": r["customer"], "expires_at": r["expires_at"]}
-    except Exception as e:
-        return {"valid": False, "reason": f"DB error: {e}"}
-
-def apply_trial_watermark(ws):
-    try:
-        from openpyxl.styles import Font
-        ws.insert_rows(1)
-        c = ws.cell(row=1, column=1)
-        c.value = "=== TRIAL VERSION — Upgrade at gst-recon.com ==="
-        c.font = Font(name="Arial", bold=True, color="FF0000", size=12)
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ws.max_column)
-    except:
-        pass
+# License removed — full access for all users
 
 def _cleanup_old_jobs():
     try:
@@ -283,28 +247,14 @@ input::placeholder{color:var(--muted)}
   </div>
   <h1>Annual GST <span>Reconciliation Portal</span></h1>
   <p class="subtitle">Upload returns → Instant reconciliation + GSTR-1 full detail</p>
-  <div class="vbadge" id="vbadge">🎯 TRIAL VERSION</div>
+  <div class="vbadge" style="background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)">⭐ FULL ACCESS</div>
 </header>
-
-<!-- License -->
-<div class="lic-box" id="lic-box">
-  <div class="lic-title">🔓 Unlock Full Version</div>
-  <div class="lic-row">
-    <input type="password" id="lic-key" placeholder="GSTPRO-XXXXX-XXXXX-XXXXX">
-    <button class="btn-lic" onclick="activateLicense()">Activate</button>
-  </div>
-  <div class="lic-msg" id="lic-msg"></div>
-  <p style="color:var(--muted);font-size:.68rem;margin-top:.35rem">
-    No key? <a href="#" onclick="switchTab('pricing',event)" style="color:var(--gold)">Buy Full Version →</a>
-  </p>
-</div>
 
 <!-- TABS -->
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('recon',event)">📊 Reconciliation</button>
   <button class="tab-btn" onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
   <button class="tab-btn" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
-  <button class="tab-btn" onclick="switchTab('pricing',event)">💳 Plans</button>
 </div>
 
 <!-- ══ TAB 1: RECONCILIATION ══ -->
@@ -455,45 +405,6 @@ input::placeholder{color:var(--muted)}
 </div>
 
 <!-- ══ TAB 4: PRICING ══ -->
-<div class="tab-pane" id="tab-pricing">
-<div class="card">
-  <div class="card-title">Choose Your Plan</div>
-  <div class="pgrid">
-    <div class="pcard">
-      <div class="ptitle">🎯 Trial</div>
-      <div class="pprice">FREE</div>
-      <ul class="pfeats">
-        <li>Max 3 months GSTR-1</li>
-        <li>Annual Reconciliation Excel</li>
-        <li>Watermarked output</li>
-        <li class="x">No GSTR-3B PDF extract</li>
-        <li class="x">No customer name lookup</li>
-        <li class="x">No GSTR-1 Full Detail</li>
-        <li class="x">No Download Status</li>
-      </ul>
-      <button class="btn-buy" disabled>Current Plan</button>
-    </div>
-    <div class="pcard feat">
-      <div class="ptitle">⭐ Full Version</div>
-      <div class="pprice">₹4,999<span>/year</span></div>
-      <ul class="pfeats">
-        <li>Unlimited months</li>
-        <li>Annual Reconciliation (clean)</li>
-        <li>GSTR-3B PDF extraction</li>
-        <li>Customer name auto-lookup</li>
-        <li><strong>GSTR-1 Full Detail — 13 sheets</strong></li>
-        <li>Download Status Dashboard</li>
-        <li>Priority support + updates</li>
-      </ul>
-      <button class="btn-buy" onclick="buyNow()">Buy Now</button>
-    </div>
-  </div>
-  <p style="color:var(--muted);font-size:.75rem;text-align:center;margin-top:.85rem">
-    💳 UPI / Bank Transfer / Razorpay &nbsp;|&nbsp; 📧 gstrecon@example.com
-  </p>
-</div>
-</div>
-
 </div><!-- /container -->
 <script>
 // Tabs
@@ -509,41 +420,10 @@ function switchTab(name, e){
   document.getElementById('tab-'+name).classList.add('active');
 }
 
-// License
-let isFullVersion=false, currentLicense='';
-async function activateLicense(){
-  const key=document.getElementById('lic-key').value.trim();
-  const msg=document.getElementById('lic-msg');
-  if(!key){msg.textContent='Please enter a key.';msg.className='lic-msg err';return;}
-  msg.textContent='Checking...';msg.className='lic-msg';
-  try{
-    const r=await fetch('/api/activate',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({license_key:key})});
-    const d=await r.json();
-    if(d.success){
-      isFullVersion=true;currentLicense=key;
-      const b=document.getElementById('vbadge');
-      b.textContent='⭐ FULL VERSION'+(d.customer?' — '+d.customer:'');
-      b.style.cssText='background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)';
-      document.getElementById('lic-box').style.display='none';
-      msg.textContent='';
-      alert('✅ Full Version Activated!'+(d.customer?'\nWelcome, '+d.customer+'!':''));
-    }else{msg.textContent='✗ '+(d.reason||'Invalid key.');msg.className='lic-msg err';}
-  }catch(e){msg.textContent='✗ Server error.';msg.className='lic-msg err';}
-}
-function buyNow(){
-  alert('📧 Purchase Full Version:\n\n1. Email: gstrecon@example.com\n2. WhatsApp: +91-XXXXXXXXXX\n3. UPI / Bank Transfer\n\nKey sent by email after payment.');
-}
-
 // File zones
 const zoneFiles={};
 function updateZone(zone,input){
   const files=Array.from(input.files);
-  if(zone==='r1'&&!isFullVersion&&files.length>3){
-    alert('⚠️ Trial: Max 3 GSTR-1 files. Upgrade for unlimited.');
-    input.value='';return;
-  }
   zoneFiles[zone]=files;
   const cnt=document.getElementById('cnt-'+zone);
   const el=document.getElementById('zone-'+zone);
@@ -573,7 +453,7 @@ document.getElementById('recon-form').addEventListener('submit',async e=>{
   if(!hasFiles){alert('Upload at least one return file');return;}
   const fd=new FormData();
   fd.append('gstin',gstin);fd.append('client_name',cname);
-  fd.append('fy',fy);fd.append('license_key',currentLicense);fd.append('mode','recon');
+  fd.append('fy',fy);fd.append('mode','recon');
   for(const z of['r1','r2b','r2a','r3b','cust'])(zoneFiles[z]||[]).forEach(f=>fd.append('files_'+z,f));
   await startJob(fd,'r','Generate Reconciliation + GSTR-1 Detail →');
 });
@@ -587,12 +467,9 @@ document.getElementById('g1-form').addEventListener('submit',async e=>{
   if(!gstin||gstin.length!==15){alert('Enter valid 15-char GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
   if(!(zoneFiles['g1r1']||[]).length){alert('Upload at least one GSTR-1 ZIP');return;}
-  if(!isFullVersion){
-    alert('⚠️ GSTR-1 Full Detail requires Full Version.\n\nGo to Plans tab to upgrade.');return;
-  }
   const fd=new FormData();
   fd.append('gstin',gstin);fd.append('client_name',cname);
-  fd.append('fy',fy);fd.append('license_key',currentLicense);fd.append('mode','gstr1only');
+  fd.append('fy',fy);fd.append('mode','gstr1only');
   (zoneFiles['g1r1']||[]).forEach(f=>fd.append('files_r1',f));
   (zoneFiles['g1r2b']||[]).forEach(f=>fd.append('files_r2b',f));
   (zoneFiles['g1cust']||[]).forEach(f=>fd.append('files_cust',f));
@@ -757,17 +634,6 @@ function buildStatusFromFiles(files){
 def index():
     return render_template_string(HTML)
 
-@app.route("/api/activate", methods=["POST"])
-@rate_limit(limit=5, window=60)
-def api_activate():
-    data = request.get_json(silent=True) or {}
-    key  = data.get("license_key","").strip()
-    result = validate_license(key)
-    if result["valid"]:
-        return jsonify(success=True, customer=result.get("customer"),
-                       plan=result.get("plan"), expires_at=result.get("expires_at"))
-    return jsonify(success=False, reason=result.get("reason","Invalid key"))
-
 @app.route("/api/upload", methods=["POST"])
 @rate_limit(limit=20, window=60)
 def api_upload():
@@ -775,11 +641,8 @@ def api_upload():
     gstin       = request.form.get("gstin","").strip().upper()
     client_name = request.form.get("client_name","").strip()
     fy          = request.form.get("fy","2025-26").strip()
-    license_key = request.form.get("license_key","").strip()
-    mode        = request.form.get("mode","recon")
-
-    lic     = validate_license(license_key)
-    is_full = lic["valid"] and lic.get("plan") == "full"
+    mode = request.form.get("mode","recon")
+    is_full = True  # Full access for all users
 
     if not gstin or len(gstin) != 15:
         return jsonify(error="Invalid GSTIN"), 400
@@ -802,11 +665,6 @@ def api_upload():
             dest = job_dir / safe_name
             fobj.save(str(dest))
             saved[zone].append(str(dest))
-
-    if not is_full and len(saved["r1"]) > 3:
-        shutil.rmtree(str(job_dir), ignore_errors=True)
-        shutil.rmtree(str(out_dir), ignore_errors=True)
-        return jsonify(error="Trial: Max 3 GSTR-1 files."), 403
 
     with jobs_lock:
         jobs[job_id] = {
@@ -831,7 +689,7 @@ def api_job(job_id):
     job["logs"] = []
     return jsonify(status=job["status"], progress=job["progress"],
                    logs=new_logs, files=job["files"],
-                   error=job["error"], is_full=job.get("is_full",False),
+                   error=job["error"], is_full=True,
                    dl_status=job.get("dl_status",{}))
 
 @app.route("/api/download/<job_id>/<filename>")
@@ -958,11 +816,11 @@ def run_reconciliation(job_id):
         job_dir     = Path(job["job_dir"])
         out_dir     = Path(job["out_dir"])
         saved       = job["saved"]
-        is_full     = job.get("is_full", False)
+        is_full     = True  # Full access
         FY_MONTHS   = _fy_months(fy)
 
         log(f"Reconciliation: {client_name} ({gstin}) FY {fy}")
-        log("⭐ FULL VERSION" if is_full else "🎯 TRIAL — watermark will be applied")
+        log("⭐ FULL ACCESS — All features enabled")
         prog(5)
 
         # Rename files to standard names & update dl_status
@@ -997,27 +855,21 @@ def run_reconciliation(job_id):
                     except: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-2A: {mon} {yr}"); set_dl(f"{mon}_GSTR2A", "OK")
 
-        if is_full:
-            for fpath in saved["r3b"]:
-                mon, yr = _detect_month(fpath, FY_MONTHS)
-                if mon:
-                    dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
-                    if not dest.exists():
-                        try: Path(fpath).rename(dest)
-                        except: shutil.copy2(fpath, str(dest))
-                    log(f"  GSTR-3B: {mon} {yr}"); set_dl(f"{mon}_GSTR3B", "OK")
-        else:
-            if saved["r3b"]: log("⚠ GSTR-3B skipped (Full Version only)", "warn")
-
-        if is_full:
-            for fpath in saved["cust"]:
-                dest = job_dir / "customer_names.xlsx"
+        for fpath in saved["r3b"]:
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
                     except: shutil.copy2(fpath, str(dest))
-                log("  Customer names loaded"); break
-        else:
-            if saved["cust"]: log("⚠ Customer names skipped (Full Version only)", "warn")
+                log(f"  GSTR-3B: {mon} {yr}"); set_dl(f"{mon}_GSTR3B", "OK")
+
+        for fpath in saved["cust"]:
+            dest = job_dir / "customer_names.xlsx"
+            if not dest.exists():
+                try: Path(fpath).rename(dest)
+                except: shutil.copy2(fpath, str(dest))
+            log("  Customer names loaded"); break
 
         prog(25)
 
@@ -1078,15 +930,6 @@ def run_reconciliation(job_id):
 
         output_files = []
         for fp in sorted(job_dir.glob("*.xlsx")):
-            if not is_full:
-                try:
-                    from openpyxl import load_workbook
-                    wb = load_workbook(str(fp))
-                    for ws in wb.worksheets:
-                        apply_trial_watermark(ws)
-                    wb.save(str(fp))
-                except Exception as e:
-                    log(f"  Watermark error: {e}", "warn")
             dest_fp = out_dir / fp.name
             shutil.copy2(str(fp), str(dest_fp))
             sz = dest_fp.stat().st_size // 1024
@@ -1213,22 +1056,14 @@ def run_gstr1_only(job_id):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n  ============================================================")
-    print(f"   GST Reconciliation Portal v3")
+    print(f"   GST Reconciliation Portal v4 — FULL ACCESS")
     print(f"  ============================================================")
     print(f"   Upload dir    : {UPLOAD_DIR}")
     print(f"   Output dir    : {OUTPUT_DIR}")
     suite = _find_engine("gst_suite_final.py")
     ext   = _find_engine("gstr1_extract.py")
-    print(f"   Suite engine  : {suite or '⚠  NOT FOUND — place gst_suite_final.py here'}")
-    print(f"   GSTR-1 engine : {ext   or '⚠  NOT FOUND — place gstr1_extract.py here'}")
-    print(f"   License DB    : {_license_db()}")
+    print(f"   Suite engine  : {suite or '⚠  NOT FOUND'}")
+    print(f"   GSTR-1 engine : {ext   or '⚠  NOT FOUND'}")
     print(f"\n   Open: http://localhost:{port}")
     print(f"  ============================================================\n")
-
-    import socket as _s
-    for _p in [port, 5001, 5002, 8080]:
-        try:
-            s = _s.socket(); s.bind(("",_p)); s.close(); port=_p; break
-        except OSError: continue
-
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

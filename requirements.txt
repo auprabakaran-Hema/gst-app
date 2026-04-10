@@ -1,8 +1,7 @@
-flask
-gunicorn
-openpyxl
-pandas
-selenium
-webdriver-manager
-pdfplumber
-PyPDF2
+flask>=3.0
+gunicorn>=21.0
+openpyxl>=3.1
+pandas>=2.0
+pdfplumber>=0.10
+PyPDF2>=3.0
+werkzeug>=3.0
