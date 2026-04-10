@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: gst-recon-portal
+    env: python
+    region: singapore
+    buildCommand: |
+      apt-get update -qq && apt-get install -y -qq chromium-browser chromium-driver
+      pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 2 --timeout 300 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: GST_HEADLESS
+        value: "true"
+      - key: PYTHON_VERSION
+        value: 3.11.0
