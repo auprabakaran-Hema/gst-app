@@ -1,11 +1,11 @@
 """
-GST Reconciliation Web App — v3 COMPLETE
-=========================================
+GST Reconciliation Web App — v4 COMPLETE with Auto-Download
+===========================================================
 FIXES:
-  1. GSTR-1 Reconciliation — dedicated tab in portal
-  2. GSTR-1 extraction always runs & path fixed
-  3. Auto-download status dashboard (all returns × 12 months)
-  4. Secure license (SQLite + SHA-256)
+  1. Removed PyArmor dependency - using clean Python code
+  2. Added GST Portal auto-download functionality
+  3. GSTR-1 Reconciliation with 13-sheet extraction
+  4. Auto-download status dashboard
   5. Rate limiting + file cleanup
 """
 import os, sys, json, zipfile, re, time, shutil, uuid, threading, hashlib
@@ -60,8 +60,6 @@ def rate_limit(limit=10, window=60):
             return f(*args, **kwargs)
         return wrapped
     return decorator
-
-# License removed — full access for all users
 
 def _cleanup_old_jobs():
     try:
@@ -174,6 +172,10 @@ input::placeholder{color:var(--muted)}
   transition:transform .15s,box-shadow .15s;margin-top:.35rem}
 .btn-sub:hover{transform:translateY(-2px);box-shadow:0 8px 26px rgba(0,229,255,.28)}
 .btn-sub:disabled{opacity:.42;cursor:not-allowed;transform:none}
+.btn-sec{width:100%;padding:.6rem;background:var(--surface2);border:1px solid var(--accent);
+  border-radius:7px;color:var(--accent);font-family:var(--sans);font-size:.8rem;
+  font-weight:700;cursor:pointer;transition:all .15s;margin-top:.5rem}
+.btn-sec:hover{background:rgba(0,229,255,.1)}
 .prog-wrap{display:none}
 .pbar-wrap{background:var(--surface2);border-radius:100px;height:6px;overflow:hidden;margin:.7rem 0}
 .pbar{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
@@ -215,23 +217,6 @@ input::placeholder{color:var(--muted)}
 .c-pend{color:var(--orange)}
 .c-skip{color:var(--muted)}
 
-/* Pricing */
-.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:.85rem;margin-top:.75rem}
-@media(max-width:600px){.pgrid{grid-template-columns:1fr}}
-.pcard{background:var(--surface2);border:1px solid var(--border);border-radius:11px;
-  padding:1.3rem;text-align:center}
-.pcard.feat{border-color:var(--gold);background:rgba(255,215,0,.03)}
-.ptitle{font-size:.95rem;font-weight:700;margin-bottom:.35rem}
-.pprice{font-size:1.7rem;font-weight:800;color:var(--accent);margin-bottom:.35rem}
-.pprice span{font-size:.82rem;color:var(--muted);font-weight:400}
-.pfeats{list-style:none;text-align:left;margin:.75rem 0}
-.pfeats li{font-size:.78rem;color:var(--muted);padding:.22rem 0;border-bottom:1px solid var(--border)}
-.pfeats li:last-child{border:none}
-.pfeats li::before{content:'✓ ';color:var(--green)}
-.pfeats li.x::before{content:'✗ ';color:var(--red)}
-.btn-buy{width:100%;padding:.6rem;background:var(--accent);border:none;border-radius:7px;
-  color:#000;font-weight:700;cursor:pointer;transition:all .15s}
-.btn-buy:hover{background:var(--accent2);color:#fff}
 .info-pills{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.85rem}
 .pill{padding:.25rem .65rem;background:var(--surface2);border:1px solid var(--border);
   border-radius:100px;font-size:.68rem;color:var(--muted);font-family:var(--mono)}
@@ -247,14 +232,15 @@ input::placeholder{color:var(--muted)}
   </div>
   <h1>Annual GST <span>Reconciliation Portal</span></h1>
   <p class="subtitle">Upload returns → Instant reconciliation + GSTR-1 full detail</p>
-  <div class="vbadge" style="background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)">⭐ FULL ACCESS</div>
+  <div class="vbadge" style="background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.4)">⭐ FULL ACCESS - Auto Download Enabled</div>
 </header>
 
 <!-- TABS -->
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('recon',event)">📊 Reconciliation</button>
   <button class="tab-btn" onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
-  <button class="tab-btn" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
+  <button class="tab-btn" onclick="switchTab('download',event)">⬇️ Auto Download</button>
+  <button class="tab-btn" onclick="switchTab('dlstatus',event)">🔄 Status</button>
 </div>
 
 <!-- ══ TAB 1: RECONCILIATION ══ -->
@@ -318,7 +304,6 @@ input::placeholder{color:var(--muted)}
   <p style="color:var(--muted);font-size:.8rem;line-height:1.6">
     Upload all GSTR-1 ZIP files. Customer names are auto-looked up from GSTR-2B/2A.
     Optionally add a <strong style="color:var(--text)">customer_names.xlsx</strong> for local lookup.
-    <strong style="color:var(--gold)"> Full Version only.</strong>
   </p>
 </div>
 <form id="g1-form">
@@ -357,18 +342,55 @@ input::placeholder{color:var(--muted)}
 </div>
 </div>
 
-<!-- ══ TAB 3: DOWNLOAD STATUS ══ -->
+<!-- ══ TAB 3: AUTO DOWNLOAD ══ -->
+<div class="tab-pane" id="tab-download">
+<div class="card">
+  <div class="card-title">Auto Download from GST Portal</div>
+  <p style="color:var(--muted);font-size:.8rem;line-height:1.6;margin-bottom:1rem">
+    Login to GST Portal and automatically download all returns for the financial year.
+    Requires valid GST Portal credentials. Chrome browser must be installed.
+  </p>
+  <div class="info-pills">
+    <span class="pill">GSTR-1</span><span class="pill">GSTR-2B</span>
+    <span class="pill">GSTR-2A</span><span class="pill">GSTR-3B</span>
+  </div>
+</div>
+<form id="dl-form">
+<div class="card">
+  <div class="card-title">GST Portal Credentials</div>
+  <div class="form-grid">
+    <div class="fg"><label>GSTIN *</label><input type="text" id="dl-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
+    <div class="fg"><label>Financial Year *</label><input type="text" id="dl-fy" value="2025-26" required></div>
+    <div class="fg"><label>GST Portal Username *</label><input type="text" id="dl-user" placeholder="your@email.com" required></div>
+    <div class="fg"><label>GST Portal Password *</label><input type="password" id="dl-pass" placeholder="••••••••" required></div>
+  </div>
+  <p style="color:var(--orange);font-size:.7rem;margin-top:.75rem;font-family:var(--mono)">
+    ⚠️ Note: You may need to enter CAPTCHA manually when browser opens
+  </p>
+</div>
+<div class="card"><button type="submit" class="btn-sub" id="dl-submit">Start Auto Download →</button></div>
+</form>
+<div class="card prog-wrap" id="dl-prog">
+  <div class="card-title">Downloading from GST Portal <span class="sbadge s-proc pulse" id="dl-badge">Running</span></div>
+  <div class="pbar-wrap"><div class="pbar" id="dl-bar"></div></div>
+  <div class="logbox" id="dl-log"></div>
+</div>
+<div class="card dl-wrap" id="dl-dl">
+  <div class="card-title">Downloaded Files</div>
+  <div class="dl-grid" id="dl-dl-grid"></div>
+</div>
+</div>
+
+<!-- ══ TAB 4: DOWNLOAD STATUS ══ -->
 <div class="tab-pane" id="tab-dlstatus">
 <div class="card">
-  <div class="card-title">Auto-Download Status — All Returns × 12 Months</div>
+  <div class="card-title">Download Status — All Returns × 12 Months</div>
   <p style="color:var(--muted);font-size:.78rem;line-height:1.6;margin-bottom:.85rem">
-    After running <strong style="color:var(--text)">gst_suite_final.py</strong> (auto-download),
-    upload the generated <strong style="color:var(--text)">MASTER_REPORT.xlsx</strong> to see
-    which returns were downloaded OK and which failed. Or paste a live Job ID from the Reconciliation tab.
+    View which returns were downloaded OK and which failed. Paste a Job ID to check status.
   </p>
   <div class="form-grid" style="margin-bottom:.85rem">
     <div class="fg">
-      <label>Live Job ID (from Reconciliation tab)</label>
+      <label>Job ID</label>
       <input type="text" id="ds-jobid" placeholder="e.g. a3f2c9b1">
     </div>
     <div class="fg">
@@ -397,14 +419,8 @@ input::placeholder{color:var(--muted)}
   </div>
   <div id="ds-summary" style="margin-top:.65rem;font-size:.75rem;font-family:var(--mono);color:var(--muted)"></div>
 </div>
-<div class="card prog-wrap" id="ds-prog">
-  <div class="card-title">Live Job Progress <span class="sbadge s-proc pulse" id="ds-badge">Running</span></div>
-  <div class="pbar-wrap"><div class="pbar" id="ds-bar"></div></div>
-  <div class="logbox" id="ds-log"></div>
-</div>
 </div>
 
-<!-- ══ TAB 4: PRICING ══ -->
 </div><!-- /container -->
 <script>
 // Tabs
@@ -412,7 +428,6 @@ function switchTab(name, e){
   if(e) e.preventDefault();
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
-  // find clicked button
   if(e && e.currentTarget) e.currentTarget.classList.add('active');
   else document.querySelectorAll('.tab-btn').forEach(b=>{
     if(b.getAttribute('onclick')&&b.getAttribute('onclick').includes("'"+name+"'")) b.classList.add('active');
@@ -476,6 +491,22 @@ document.getElementById('g1-form').addEventListener('submit',async e=>{
   await startJob(fd,'g1','Generate GSTR-1 Full Detail Excel →');
 });
 
+// Auto Download form
+document.getElementById('dl-form').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const gstin=document.getElementById('dl-gstin').value.trim().toUpperCase();
+  const fy=document.getElementById('dl-fy').value.trim();
+  const username=document.getElementById('dl-user').value.trim();
+  const password=document.getElementById('dl-pass').value;
+  if(!gstin||gstin.length!==15){alert('Enter valid 15-char GSTIN');return;}
+  if(!username){alert('Enter GST Portal username');return;}
+  if(!password){alert('Enter GST Portal password');return;}
+  const fd=new FormData();
+  fd.append('gstin',gstin);fd.append('fy',fy);
+  fd.append('username',username);fd.append('password',password);
+  await startDownloadJob(fd);
+});
+
 async function startJob(fd,prefix,btnLabel){
   document.getElementById(prefix+'-prog').style.display='block';
   const dlEl=document.getElementById(prefix+'-dl');if(dlEl)dlEl.style.display='none';
@@ -495,6 +526,28 @@ async function startJob(fd,prefix,btnLabel){
     addLog(prefix,'err','Error: '+err.message);
     setBadge(prefix,'err','Failed');
     btn.disabled=false;btn.textContent=btnLabel;
+  }
+}
+
+async function startDownloadJob(fd){
+  const prefix='dl';
+  document.getElementById(prefix+'-prog').style.display='block';
+  document.getElementById(prefix+'-dl').style.display='none';
+  document.getElementById(prefix+'-log').innerHTML='';
+  document.getElementById(prefix+'-bar').style.width='0%';
+  const btn=document.getElementById(prefix+'-submit');
+  btn.disabled=true;btn.textContent='Starting download...';
+  try{
+    const res=await fetch('/api/download_gst',{method:'POST',body:fd});
+    const data=await res.json();
+    if(!data.job_id)throw new Error(data.error||'Download failed');
+    addLog(prefix,'info','Download job started...');
+    btn.textContent='Downloading...';
+    pollJob(data.job_id,prefix,'Start Auto Download →');
+  }catch(err){
+    addLog(prefix,'err','Error: '+err.message);
+    setBadge(prefix,'err','Failed');
+    btn.disabled=false;btn.textContent='Start Auto Download →';
   }
 }
 
@@ -538,7 +591,7 @@ function showDownloads(prefix,jobId,files){
   const grid=document.getElementById(prefix+'-dl-grid');
   if(!sec||!grid)return;
   sec.style.display='block';grid.innerHTML='';
-  const icons={'ANNUAL':'📊','GSTR3BR1':'📋','GSTR3BR2A':'📈','GSTR1_FULL':'📑','B2B':'🏢','RECONCIL':'📊'};
+  const icons={'ANNUAL':'📊','GSTR3BR1':'📋','GSTR3BR2A':'📈','GSTR1_FULL':'📑','B2B':'🏢','RECONCIL':'📊','GSTR1':'📋','GSTR2B':'🏦','GSTR2A':'📊','GSTR3B':'📄'};
   files.forEach(f=>{
     const icon=Object.entries(icons).find(([k])=>f.name.toUpperCase().includes(k))?.[1]||'📁';
     const card=document.createElement('div');card.className='dlcard';
@@ -591,18 +644,13 @@ function renderDlStatus(dlStatus,jobId){
 async function loadDownloadStatus(){
   const jobId=document.getElementById('ds-jobid').value.trim();
   if(jobId){
-    document.getElementById('ds-prog').style.display='block';
     try{
       const res=await fetch('/api/job/'+jobId);
       const data=await res.json();
       if(data.error){alert('Job not found: '+jobId);return;}
-      if(data.logs)data.logs.forEach(l=>addLog('ds',l.type,l.msg));
-      if(data.progress!==undefined)document.getElementById('ds-bar').style.width=data.progress+'%';
       const status=data.dl_status&&Object.keys(data.dl_status).length
         ? data.dl_status : buildStatusFromFiles(data.files||[]);
       renderDlStatus(status,jobId);
-      setBadge('ds',data.status==='done'?'done':data.status==='error'?'err':'proc',
-               data.status==='done'?'Complete':data.status==='error'?'Failed':'Running');
     }catch(e){alert('Error: '+e.message);}
     return;
   }
@@ -642,7 +690,7 @@ def api_upload():
     client_name = request.form.get("client_name","").strip()
     fy          = request.form.get("fy","2025-26").strip()
     mode = request.form.get("mode","recon")
-    is_full = True  # Full access for all users
+    is_full = True
 
     if not gstin or len(gstin) != 15:
         return jsonify(error="Invalid GSTIN"), 400
@@ -678,6 +726,40 @@ def api_upload():
     threading.Thread(target=target, args=(job_id,), daemon=True).start()
     return jsonify(job_id=job_id, is_full=is_full)
 
+
+@app.route("/api/download_gst", methods=["POST"])
+@rate_limit(limit=5, window=300)
+def api_download_gst():
+    """Start GST Portal auto-download job"""
+    _cleanup_old_jobs()
+    gstin = request.form.get("gstin", "").strip().upper()
+    fy = request.form.get("fy", "2025-26").strip()
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "")
+    
+    if not gstin or len(gstin) != 15:
+        return jsonify(error="Invalid GSTIN"), 400
+    if not username or not password:
+        return jsonify(error="Username and password required"), 400
+    
+    job_id = str(uuid.uuid4())[:8]
+    job_dir = UPLOAD_DIR / job_id
+    out_dir = OUTPUT_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "queued", "progress": 0, "logs": [], "files": [],
+            "error": None, "gstin": gstin, "fy": fy,
+            "job_dir": str(job_dir), "out_dir": str(out_dir),
+            "dl_status": {}, "mode": "download"
+        }
+    
+    threading.Thread(target=run_gst_download, args=(job_id, gstin, username, password, fy, str(out_dir)), daemon=True).start()
+    return jsonify(job_id=job_id)
+
+
 @app.route("/api/job/<job_id>")
 @rate_limit(limit=120, window=60)
 def api_job(job_id):
@@ -695,7 +777,7 @@ def api_job(job_id):
 @app.route("/api/download/<job_id>/<filename>")
 @rate_limit(limit=30, window=60)
 def api_download(job_id, filename):
-    if not re.match(r'^[\w\-. ()]+\.(xlsx|pdf)$', filename):
+    if not re.match(r'^[\w\-. ()]+\.(xlsx|pdf|zip)$', filename):
         abort(400)
     fpath = OUTPUT_DIR / job_id / filename
     if not fpath.exists() or not fpath.is_file():
@@ -719,7 +801,6 @@ def api_parse_master():
             return jsonify(error="Empty file"), 400
         headers = [str(c or "").strip().upper() for c in rows[0]]
         col = {h: i for i, h in enumerate(headers)}
-        # flexible column detection
         def _col(*names):
             for n in names:
                 if n in col: return col[n]
@@ -736,7 +817,7 @@ def api_parse_master():
                 if MONTH_C < 0: continue
                 month_raw = str(row[MONTH_C] or "").strip()
                 if not month_raw or month_raw.lower() in ("none","nan",""): continue
-                mon = month_raw.split()[0]  # "April 2025" → "April"
+                mon = month_raw.split()[0]
                 def _st(idx):
                     if idx < 0 or idx >= len(row): return "SKIP"
                     return str(row[idx] or "SKIP").strip().upper()
@@ -753,6 +834,7 @@ def api_parse_master():
     finally:
         try: tmp.unlink(missing_ok=True)
         except: pass
+
 
 # ── Month helpers ─────────────────────────────────────────────────
 MONTHS_MAP = {
@@ -799,6 +881,123 @@ def _find_engine(name):
         if loc.exists(): return loc
     return None
 
+
+# ── Worker: GST Portal Download ───────────────────────────────────
+def run_gst_download(job_id, gstin, username, password, fy, out_dir):
+    """Download GST returns from portal"""
+    def log(msg, t="info"):
+        with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
+    def prog(p):
+        with jobs_lock: jobs[job_id]["progress"] = p
+    def set_dl(key, val):
+        with jobs_lock: jobs[job_id]["dl_status"][key] = val
+    
+    try:
+        log(f"Starting GST Portal download for {gstin}, FY {fy}")
+        prog(5)
+        
+        # Try to import gst_downloader
+        try:
+            from gst_downloader import GSTPortalDownloader
+        except ImportError as e:
+            log(f"GST Downloader not available: {e}", "warn")
+            log("Please install selenium: pip install selenium", "warn")
+            raise RuntimeError("Auto-download requires selenium. Install with: pip install selenium")
+        
+        prog(10)
+        downloader = GSTPortalDownloader(username, password, out_dir)
+        
+        log("Logging into GST Portal...")
+        prog(15)
+        
+        if not downloader.login():
+            raise RuntimeError("GST Portal login failed. Check credentials and CAPTCHA.")
+        
+        log("Login successful! Starting downloads...")
+        prog(20)
+        
+        # Generate periods
+        periods = downloader._get_periods_for_fy(fy)
+        total_periods = len(periods)
+        downloaded_files = []
+        
+        for idx, (month_name, period_code, fp) in enumerate(periods):
+            progress = 20 + int((idx / total_periods) * 70)
+            prog(progress)
+            
+            log(f"Processing {month_name}...")
+            
+            # Download GSTR-1
+            try:
+                file = downloader.download_gstr1(gstin, period_code, fp)
+                if file:
+                    downloaded_files.append({"name": file.name, "size": f"{file.stat().st_size//1024} KB"})
+                    set_dl(f"{month_name}_GSTR1", "OK")
+                    log(f"  ✓ GSTR-1 downloaded: {file.name}")
+                else:
+                    set_dl(f"{month_name}_GSTR1", "NOT_FOUND")
+            except Exception as e:
+                log(f"  ✗ GSTR-1 failed: {e}", "err")
+                set_dl(f"{month_name}_GSTR1", "FAIL")
+            
+            # Download GSTR-2B
+            try:
+                file = downloader.download_gstr2b(gstin, period_code)
+                if file:
+                    downloaded_files.append({"name": file.name, "size": f"{file.stat().st_size//1024} KB"})
+                    set_dl(f"{month_name}_GSTR2B", "OK")
+                    log(f"  ✓ GSTR-2B downloaded: {file.name}")
+                else:
+                    set_dl(f"{month_name}_GSTR2B", "NOT_FOUND")
+            except Exception as e:
+                log(f"  ✗ GSTR-2B failed: {e}", "err")
+                set_dl(f"{month_name}_GSTR2B", "FAIL")
+            
+            # Download GSTR-2A
+            try:
+                file = downloader.download_gstr2a(gstin, period_code)
+                if file:
+                    downloaded_files.append({"name": file.name, "size": f"{file.stat().st_size//1024} KB"})
+                    set_dl(f"{month_name}_GSTR2A", "OK")
+                    log(f"  ✓ GSTR-2A downloaded: {file.name}")
+                else:
+                    set_dl(f"{month_name}_GSTR2A", "NOT_FOUND")
+            except Exception as e:
+                log(f"  ✗ GSTR-2A failed: {e}", "err")
+                set_dl(f"{month_name}_GSTR2A", "FAIL")
+            
+            # Download GSTR-3B
+            try:
+                file = downloader.download_gstr3b(gstin, period_code)
+                if file:
+                    downloaded_files.append({"name": file.name, "size": f"{file.stat().st_size//1024} KB"})
+                    set_dl(f"{month_name}_GSTR3B", "OK")
+                    log(f"  ✓ GSTR-3B downloaded: {file.name}")
+                else:
+                    set_dl(f"{month_name}_GSTR3B", "NOT_FOUND")
+            except Exception as e:
+                log(f"  ✗ GSTR-3B failed: {e}", "err")
+                set_dl(f"{month_name}_GSTR3B", "FAIL")
+        
+        downloader.close()
+        prog(100)
+        
+        log(f"Download complete! {len(downloaded_files)} files downloaded.", "ok")
+        
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"] = downloaded_files
+            
+    except Exception as exc:
+        import traceback
+        log(f"Error: {exc}", "err")
+        for line in traceback.format_exc().split('\n'):
+            if line.strip(): log(f"  {line}", "err")
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"] = str(exc)
+
+
 # ── Worker: Reconciliation + GSTR-1 detail ────────────────────────
 def run_reconciliation(job_id):
     def log(msg, t="info"):
@@ -816,7 +1015,7 @@ def run_reconciliation(job_id):
         job_dir     = Path(job["job_dir"])
         out_dir     = Path(job["out_dir"])
         saved       = job["saved"]
-        is_full     = True  # Full access
+        is_full     = True
         FY_MONTHS   = _fy_months(fy)
 
         log(f"Reconciliation: {client_name} ({gstin}) FY {fy}")
@@ -1000,7 +1199,7 @@ def run_gstr1_only(job_id):
             if not dest.exists():
                 try: Path(fpath).rename(dest)
                 except: shutil.copy2(fpath, str(dest))
-            break
+            log("  Customer names loaded"); break
 
         prog(20)
         gstr1_zips = list(job_dir.glob("GSTR1_*.zip"))
@@ -1062,8 +1261,10 @@ if __name__ == "__main__":
     print(f"   Output dir    : {OUTPUT_DIR}")
     suite = _find_engine("gst_suite_final.py")
     ext   = _find_engine("gstr1_extract.py")
+    dl    = _find_engine("gst_downloader.py")
     print(f"   Suite engine  : {suite or '⚠  NOT FOUND'}")
     print(f"   GSTR-1 engine : {ext   or '⚠  NOT FOUND'}")
+    print(f"   Downloader    : {dl    or '⚠  NOT FOUND'}")
     print(f"\n   Open: http://localhost:{port}")
     print(f"  ============================================================\n")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
