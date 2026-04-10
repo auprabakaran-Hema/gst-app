@@ -761,7 +761,7 @@ def api_download_gst():
 
 
 @app.route("/api/job/<job_id>")
-@rate_limit(limit=120, window=60)
+@rate_limit(limit=300, window=60)
 def api_job(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
@@ -775,7 +775,7 @@ def api_job(job_id):
                    dl_status=job.get("dl_status",{}))
 
 @app.route("/api/download/<job_id>/<filename>")
-@rate_limit(limit=30, window=60)
+@rate_limit(limit=100, window=60)
 def api_download(job_id, filename):
     if not re.match(r'^[\w\-. ()]+\.(xlsx|pdf|zip)$', filename):
         abort(400)
@@ -906,84 +906,62 @@ def run_gst_download(job_id, gstin, username, password, fy, out_dir):
         
         prog(10)
         downloader = GSTPortalDownloader(username, password, out_dir)
-        
-        log("Logging into GST Portal...")
+        downloader.fy_label = fy
+
+        # Note: CAPTCHA wait is needed — set via env var GST_CAPTCHA_WAIT (default 30s)
+        downloader.captcha_wait = int(os.environ.get("GST_CAPTCHA_WAIT", "30"))
+
+        log(f"Opening browser ({downloader.browser_name or 'Edge/Chrome'})...")
+        log(f"Browser: Edge preferred, Chrome fallback")
+        log("Navigating to GST Portal login...")
         prog(15)
-        
+
         if not downloader.login():
-            raise RuntimeError("GST Portal login failed. Check credentials and CAPTCHA.")
-        
-        log("Login successful! Starting downloads...")
+            raise RuntimeError(
+                "GST Portal login failed. "
+                "Check credentials. CAPTCHA must be entered manually in the browser window.")
+
+        log("Login successful! Starting downloads via Services→Returns→Returns Dashboard...")
         prog(20)
-        
-        # Generate periods
-        periods = downloader._get_periods_for_fy(fy)
-        total_periods = len(periods)
+
+        # Download all 12 months
+        start_yr = int(fy.split("-")[0]); end_yr = start_yr + 1
+        MONTH_LIST = [
+            ("April",str(start_yr)),("May",str(start_yr)),("June",str(start_yr)),
+            ("July",str(start_yr)),("August",str(start_yr)),("September",str(start_yr)),
+            ("October",str(start_yr)),("November",str(start_yr)),("December",str(start_yr)),
+            ("January",str(end_yr)),("February",str(end_yr)),("March",str(end_yr)),
+        ]
         downloaded_files = []
-        
-        for idx, (month_name, period_code, fp) in enumerate(periods):
-            progress = 20 + int((idx / total_periods) * 70)
+        total = len(MONTH_LIST)
+
+        for idx, (month_name, year) in enumerate(MONTH_LIST):
+            progress = 20 + int((idx / total) * 75)
             prog(progress)
-            
-            log(f"Processing {month_name}...")
-            
-            # Download GSTR-1
+            log(f"Processing {month_name} {year}...")
             try:
-                file = downloader.download_gstr1(gstin, period_code, fp)
-                if file:
-                    downloaded_files.append({"name": file.name, "size": f"{file.stat().st_size//1024} KB"})
-                    set_dl(f"{month_name}_GSTR1", "OK")
-                    log(f"  ✓ GSTR-1 downloaded: {file.name}")
-                else:
-                    set_dl(f"{month_name}_GSTR1", "NOT_FOUND")
-            except Exception as e:
-                log(f"  ✗ GSTR-1 failed: {e}", "err")
-                set_dl(f"{month_name}_GSTR1", "FAIL")
-            
-            # Download GSTR-2B
-            try:
-                file = downloader.download_gstr2b(gstin, period_code)
-                if file:
-                    downloaded_files.append({"name": file.name, "size": f"{file.stat().st_size//1024} KB"})
-                    set_dl(f"{month_name}_GSTR2B", "OK")
-                    log(f"  ✓ GSTR-2B downloaded: {file.name}")
-                else:
-                    set_dl(f"{month_name}_GSTR2B", "NOT_FOUND")
-            except Exception as e:
-                log(f"  ✗ GSTR-2B failed: {e}", "err")
-                set_dl(f"{month_name}_GSTR2B", "FAIL")
-            
-            # Download GSTR-2A
-            try:
-                file = downloader.download_gstr2a(gstin, period_code)
-                if file:
-                    downloaded_files.append({"name": file.name, "size": f"{file.stat().st_size//1024} KB"})
-                    set_dl(f"{month_name}_GSTR2A", "OK")
-                    log(f"  ✓ GSTR-2A downloaded: {file.name}")
-                else:
-                    set_dl(f"{month_name}_GSTR2A", "NOT_FOUND")
-            except Exception as e:
-                log(f"  ✗ GSTR-2A failed: {e}", "err")
-                set_dl(f"{month_name}_GSTR2A", "FAIL")
-            
-            # Download GSTR-3B
-            try:
-                file = downloader.download_gstr3b(gstin, period_code)
-                if file:
-                    downloaded_files.append({"name": file.name, "size": f"{file.stat().st_size//1024} KB"})
-                    set_dl(f"{month_name}_GSTR3B", "OK")
-                    log(f"  ✓ GSTR-3B downloaded: {file.name}")
-                else:
-                    set_dl(f"{month_name}_GSTR3B", "NOT_FOUND")
-            except Exception as e:
-                log(f"  ✗ GSTR-3B failed: {e}", "err")
-                set_dl(f"{month_name}_GSTR3B", "FAIL")
-        
+                results = downloader.download_month(month_name, year,
+                    returns_todo=["GSTR1","GSTR2B","GSTR2A","GSTR3B"])
+                for rtype, fpath in results.items():
+                    if fpath and fpath.exists():
+                        downloaded_files.append({
+                            "name": fpath.name,
+                            "size": f"{fpath.stat().st_size//1024} KB"
+                        })
+                        set_dl(f"{month_name}_{rtype}", "OK")
+                        log(f"  ✓ {rtype}: {fpath.name}", "ok")
+                    else:
+                        set_dl(f"{month_name}_{rtype}", "NOT_FOUND")
+                        log(f"  - {rtype}: not available for {month_name}", "warn")
+            except Exception as _me:
+                log(f"  ✗ {month_name} error: {_me}", "err")
+                for rt in ("GSTR1","GSTR2B","GSTR2A","GSTR3B"):
+                    set_dl(f"{month_name}_{rt}", "ERR")
+
         downloader.close()
         prog(100)
-        
         log(f"Download complete! {len(downloaded_files)} files downloaded.", "ok")
-        
+
         with jobs_lock:
             jobs[job_id]["status"] = "done"
             jobs[job_id]["files"] = downloaded_files
@@ -1090,6 +1068,12 @@ def run_reconciliation(job_id):
             ("July","07",str(s)),("August","08",str(s)),("September","09",str(s)),
             ("October","10",str(s)),("November","11",str(s)),("December","12",str(s)),
             ("January","01",str(e)),("February","02",str(e)),("March","03",str(e)),
+        ]
+        # Set FY_MONTHS for the separate reconciled workbooks
+        gst.FY_MONTHS = [
+            f"April {s}",f"May {s}",f"June {s}",f"July {s}",
+            f"August {s}",f"September {s}",f"October {s}",f"November {s}",
+            f"December {s}",f"January {e}",f"February {e}",f"March {e}",
         ]
 
         _log = _lg.getLogger(f"gst_web_{job_id}")

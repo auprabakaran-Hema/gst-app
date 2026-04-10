@@ -9,6 +9,8 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 import openpyxl
+FY_LABEL = "2025-26"
+FY_MONTHS = []
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import pandas as pd
@@ -82,7 +84,140 @@ def write_annual_reconciliation(input_dir: str, client_name: str, gstin: str, lo
     output_file = input_path / f"ANNUAL_RECON_{client_name.replace(' ', '_')}.xlsx"
     wb.save(output_file)
     log(f"Reconciliation report saved: {output_file}")
-    
+
+    # ── Save GSTR3B vs R1 Reconciled Summary ───────────────────────
+    try:
+        wb_r1 = Workbook(); wb_r1.remove(wb_r1.active)
+        for q_name, q_months in [
+            ("Q1 - APR-JUN", FY_MONTHS[:3]),
+            ("Q2 - JUL-SEP", FY_MONTHS[3:6]),
+            ("Q3 - OCT-DEC", FY_MONTHS[6:9]),
+            ("Q4 - JAN-MAR", FY_MONTHS[9:12]),
+            ("Annual - APR-MAR", FY_MONTHS),
+        ]:
+            ws_r1 = wb_r1.create_sheet(q_name)
+            # Title
+            ws_r1.merge_cells("A1:H1")
+            ws_r1["A1"] = f"{FY_LABEL}  {client_name}  GSTIN: {gstin}  GSTR-3B Vs GSTR-1 RECONCILED"
+            ws_r1["A1"].font = Font(bold=True, size=10)
+            # Headers row 4
+            for ci, hdr in enumerate(["",""]+[m for m in q_months]+
+                                      (["Quarter"] if len(q_months)<12 else ["Annual"]),1):
+                ws_r1.cell(row=4,column=ci+2,value=hdr).font=Font(bold=True,size=9)
+            # Sub-headers row 5
+            for ci in range(3, 3+len(q_months)+1):
+                ws_r1.cell(row=5,column=ci,value="Taxable").font=Font(bold=True,size=8)
+            # Data rows
+            ROWS = [
+                ("GSTR-3B", "3.1(a) - Outward taxable (other than zero/nil/exempt)", "3b_31a"),
+                ("GSTR-3B", "3.1(b) - Outward taxable (zero rated)", "3b_zero"),
+                ("GSTR-3B", "3.1(c) - Other outward (nil rated, exempted)", "3b_nil"),
+                ("GSTR-3B", "3.1(e) - Non GST outward supplies", "zero"),
+                (None, "Total from GSTR-3B (A)", "tot_3b"),
+                (None, None, None),
+                ("GSTR-1", "B2B Supplies", "r1_b2b"),
+                ("GSTR-1", "B2C Small Supplies", "r1_b2cs"),
+                ("GSTR-1", "Nil Rated / Exempt Supplies", "r1_nil"),
+                ("GSTR-1", "Credit/Debit Notes (Net)", "r1_cdn"),
+                (None, "Total from GSTR-1 (B)", "tot_r1"),
+                (None, None, None),
+                (None, "Difference (A - B)", "diff"),
+            ]
+            row = 6
+            for sect, part, key in ROWS:
+                if key is None: row+=1; continue
+                ws_r1.cell(row=row,column=1,value=sect or "").font=Font(size=9)
+                ws_r1.cell(row=row,column=2,value=part or "").font=Font(size=9)
+                q_tot = 0.0
+                for ci, mon in enumerate(q_months):
+                    r1_tx = sum(i.get("taxable_value",0) for i in gstr1_data if i.get("month_year")==mon)
+                    r1_tax = sum(i.get("igst",0)+i.get("cgst",0)+i.get("sgst",0) for i in gstr1_data if i.get("month_year")==mon)
+                    b3_tx = sum(d.get("taxable_value",0) for d in gstr3b_data if d.get("month_year")==mon)
+                    b3_tax = sum(d.get("igst",0)+d.get("cgst",0)+d.get("sgst",0) for d in gstr3b_data if d.get("month_year")==mon)
+                    nil_v = sum(i.get("taxable_value",0) for i in gstr1_data
+                                if i.get("month_year")==mon and i.get("supply_type","").upper() in ("NIL","EXEMPT","NILL"))
+                    b2b_tx = sum(i.get("taxable_value",0) for i in gstr1_data
+                                 if i.get("month_year")==mon and i.get("supply_type","").upper() not in ("NIL","EXEMPT","NILL","B2CS"))
+                    b2cs_tx= sum(i.get("taxable_value",0) for i in gstr1_data
+                                 if i.get("month_year")==mon and "B2CS" in i.get("supply_type","").upper())
+                    if   key=="3b_31a":  v=round(b3_tx,2)
+                    elif key=="3b_zero": v=0.0
+                    elif key=="3b_nil":  v=round(nil_v,2)
+                    elif key=="tot_3b":  v=round(b3_tx,2)
+                    elif key=="r1_b2b":  v=round(b2b_tx,2)
+                    elif key=="r1_b2cs": v=round(b2cs_tx,2)
+                    elif key=="r1_nil":  v=round(nil_v,2)
+                    elif key=="r1_cdn":  v=0.0
+                    elif key=="tot_r1":  v=round(r1_tx,2)
+                    elif key=="diff":    v=round(b3_tx-r1_tx,2)
+                    else: v=0.0
+                    cv=ws_r1.cell(row=row,column=3+ci,value=v)
+                    cv.number_format="#,##0.00"
+                    if key in ("tot_3b","tot_r1","diff"): cv.font=Font(bold=True,size=9)
+                    else: cv.font=Font(size=9)
+                    q_tot+=v if key!="diff" else 0
+                    if key=="diff":
+                        cv.fill=PatternFill("solid",fgColor=("C6EFCE" if v==0 else ("FFC7CE" if abs(v)>100 else "FFEB9C")))
+                row+=1
+            ws_r1.column_dimensions["A"].width=20; ws_r1.column_dimensions["B"].width=55
+            for ci in range(3, 3+len(q_months)+2):
+                ws_r1.column_dimensions[get_column_letter(ci)].width=15
+
+        p_r1 = input_path / f"{gstin}_GSTR3BR1_RECONCILED_Summary_{FY_LABEL}.xlsx"
+        wb_r1.save(str(p_r1)); log(f"GSTR3B-R1 Reconciled saved: {p_r1.name}")
+    except Exception as _e:
+        log(f"Warning: GSTR3BR1 workbook error: {_e}")
+
+    # ── Save GSTR3B vs 2A Reconciled Summary ───────────────────────
+    try:
+        wb_r2a = Workbook(); wb_r2a.remove(wb_r2a.active)
+        for q_name, q_months in [
+            ("Q1 - APR-JUN", FY_MONTHS[:3]),
+            ("Q2 - JUL-SEP", FY_MONTHS[3:6]),
+            ("Q3 - OCT-DEC", FY_MONTHS[6:9]),
+            ("Q4 - JAN-MAR", FY_MONTHS[9:12]),
+            ("Annual - APR-MAR", FY_MONTHS),
+        ]:
+            ws_r2a = wb_r2a.create_sheet(q_name)
+            ws_r2a.merge_cells("A1:H1")
+            ws_r2a["A1"] = f"{FY_LABEL}  {client_name}  GSTIN: {gstin}  GSTR-3B Vs GSTR-2A RECONCILED"
+            ws_r2a["A1"].font = Font(bold=True, size=10)
+            ROWS_2A = [
+                ("GSTR-3B ITC", "4A(5) All Other ITC", "3b_itc"),
+                ("GSTR-3B ITC", "4C Net ITC Available", "3b_net_itc"),
+                (None, "Total ITC from GSTR-3B (A)", "tot_3b"),
+                (None, None, None),
+                ("GSTR-2A ITC", "Total ITC from GSTR-2A", "r2a_itc"),
+                (None, "Difference (2A − 3B)", "diff"),
+            ]
+            row = 6
+            for sect, part, key in ROWS_2A:
+                if key is None: row+=1; continue
+                ws_r2a.cell(row=row,column=1,value=sect or "").font=Font(size=9)
+                ws_r2a.cell(row=row,column=2,value=part or "").font=Font(size=9)
+                for ci, mon in enumerate(q_months):
+                    b3_itc = sum(d.get("cgst",0)+d.get("sgst",0)+d.get("igst",0) for d in gstr3b_data if d.get("month_year")==mon)
+                    r2a_itc= sum(d.get("cgst",0)+d.get("sgst",0)+d.get("igst",0) for d in gstr2a_data if d.get("month_year")==mon)
+                    if   key in ("3b_itc","3b_net_itc","tot_3b"): v=round(b3_itc,2)
+                    elif key=="r2a_itc": v=round(r2a_itc,2)
+                    elif key=="diff":    v=round(r2a_itc-b3_itc,2)
+                    else: v=0.0
+                    cv=ws_r2a.cell(row=row,column=3+ci,value=v)
+                    cv.number_format="#,##0.00"
+                    if key in ("tot_3b","diff"): cv.font=Font(bold=True,size=9)
+                    else: cv.font=Font(size=9)
+                    if key=="diff":
+                        cv.fill=PatternFill("solid",fgColor=("C6EFCE" if abs(v)<100 else "FFC7CE"))
+                row+=1
+            ws_r2a.column_dimensions["A"].width=20; ws_r2a.column_dimensions["B"].width=45
+            for ci in range(3, 3+len(q_months)+2):
+                ws_r2a.column_dimensions[get_column_letter(ci)].width=15
+
+        p_r2a = input_path / f"{gstin}_GSTR3BR2A_RECONCILED_Summary_{FY_LABEL}.xlsx"
+        wb_r2a.save(str(p_r2a)); log(f"GSTR3B-R2A Reconciled saved: {p_r2a.name}")
+    except Exception as _e:
+        log(f"Warning: GSTR3BR2A workbook error: {_e}")
+
     return output_file
 
 
