@@ -1194,6 +1194,33 @@ function escHtml(s){
 
 // Load feedback on page open
 loadFeedback();
+
+// ── Self-Ping to Keep Render App Alive ────────────────────────────
+// Pings every 4 minutes while page is open (prevents Render free tier sleep)
+(function keepAlive(){
+  const PING_INTERVAL = 4 * 60 * 1000; // 4 minutes
+  
+  async function ping(){
+    try{
+      const res = await fetch('/health');
+      if(res.ok){
+        console.log('[KeepAlive] ✓ Ping successful at', new Date().toLocaleTimeString());
+      } else {
+        console.log('[KeepAlive] ⚠ Ping failed:', res.status);
+      }
+    }catch(e){
+      console.log('[KeepAlive] ⚠ Ping error:', e.message);
+    }
+  }
+  
+  // Ping immediately on load
+  ping();
+  
+  // Then ping every 4 minutes
+  setInterval(ping, PING_INTERVAL);
+  
+  console.log('[KeepAlive] Self-ping started - app will stay awake while this tab is open');
+})();
 </script>
 </body>
 </html>"""
