@@ -125,6 +125,7 @@ async def run_action(page, data):
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: input("  >> Press ENTER AFTER you clicked LOGIN: "))
         return {"status":"captcha_done"}
+    else:
         return {"status":"error","error":f"Unknown action: {action}"}
 
 async def main():
