@@ -14,13 +14,8 @@ from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template_string, abort
 import tempfile, platform
 
-# ── WebSocket imports ──────────────────────────────────────────────
-try:
-    from flask_sock import Sock
-    WEBSOCKET_AVAILABLE = True
-except ImportError:
-    WEBSOCKET_AVAILABLE = False
-    print("⚠️ flask-sock not installed - Auto Download feature disabled")
+# ── HTTP long-poll bridge (no WebSocket needed) ───────────────────
+WEBSOCKET_AVAILABLE = True   # always True — uses plain HTTP polling
 
 # ── Directories ───────────────────────────────────────────────────
 def _get_app_dir(subfolder):
@@ -42,18 +37,23 @@ JOB_TTL_S   = 7200
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_MB * 1024 * 1024
 
-# ── flask-sock WebSocket ───────────────────────────────────────────
-if WEBSOCKET_AVAILABLE:
-    sock = Sock(app)
+# (No WebSocket init needed — using HTTP long-poll)
 
 jobs      = {}
 jobs_lock = threading.Lock()
 
-# ── WebSocket State ───────────────────────────────────────────────
-connected_clients = set()
-browser_response = None
-response_event = threading.Event()
-ws_loop = None
+# ── HTTP Bridge State ─────────────────────────────────────────────
+# cmd_queue  : server → PC  (commands waiting to be picked up)
+# resp_queue : PC → server  (responses from PC browser)
+import queue as _queue
+_cmd_queue  = _queue.Queue()
+_resp_queue = _queue.Queue()
+_bridge_last_seen = 0       # epoch seconds of last PC poll
+_bridge_lock = threading.Lock()
+
+def _bridge_connected():
+    """True if PC polled within last 8 seconds"""
+    return (time.time() - _bridge_last_seen) < 8
 
 # ── Rate limiting ─────────────────────────────────────────────────
 _rate = {}
@@ -1384,34 +1384,27 @@ def api_feedback():
     return jsonify(success=True)
 
 # ═══════════════════════════════════════════════════════════════════
-# WEBSOCKET & AUTO DOWNLOAD FEATURE
+# HTTP LONG-POLL BRIDGE  (replaces WebSocket — works on all hosts)
 # ═══════════════════════════════════════════════════════════════════
 
-def send_browser_command(command_dict):
-    """Send command to browser (sync) and wait for response via threading.Event"""
-    global browser_response
-    response_event.clear()
-    browser_response = None
-
-    if not connected_clients:
+def send_browser_command(command_dict, timeout=45):
+    """Put a command on the queue and wait up to `timeout` s for the response."""
+    if not _bridge_connected():
         return {"status": "error", "error": "No browser connected"}
-
-    client = list(connected_clients)[0]
+    # Drain any stale response
+    while not _resp_queue.empty():
+        try: _resp_queue.get_nowait()
+        except: pass
+    _cmd_queue.put(command_dict)
     try:
-        client.send(json.dumps(command_dict))
-    except Exception as e:
-        return {"status": "error", "error": f"Send failed: {e}"}
-
-    response_event.wait(timeout=30)
-
-    if browser_response is None:
-        return {"status": "error", "error": "Timeout waiting for browser"}
-
-    return browser_response
+        resp = _resp_queue.get(timeout=timeout)
+        return resp
+    except _queue.Empty:
+        return {"status": "error", "error": "Timeout waiting for browser response"}
 
 
 class RemoteBrowser:
-    """Browser automation via WebSocket (sync, flask-sock compatible)"""
+    """Browser automation via HTTP long-poll bridge"""
 
     def _cmd(self, d):
         return send_browser_command(d)
@@ -1444,54 +1437,32 @@ class RemoteBrowser:
         return self._cmd({"action": "wait_for_navigation"})
 
 
-# ── WebSocket /ws route via flask-sock ────────────────────────────
-if WEBSOCKET_AVAILABLE:
-    @sock.route("/ws")
-    def ws_handler(ws):
-        """Handle bridge connection. Ping thread keeps Render proxy alive."""
-        global browser_response
-        print("🖥️  Browser bridge connected")
+# ── Bridge HTTP endpoints (called by browser_bridge.py on PC) ─────
 
-        # Clear stale clients, register new one
-        with jobs_lock:
-            connected_clients.clear()
-            connected_clients.add(ws)
+@app.route("/api/bridge/poll", methods=["GET"])
+def bridge_poll():
+    """PC calls this every ~3 s to signal it is alive and pick up a command."""
+    global _bridge_last_seen
+    with _bridge_lock:
+        _bridge_last_seen = time.time()
+    try:
+        cmd = _cmd_queue.get(timeout=5)   # wait up to 5 s for a command
+        return jsonify(cmd)
+    except _queue.Empty:
+        return jsonify({"action": "idle"})   # nothing to do
 
-        # Keep-alive ping every 25s (Render drops idle WS after ~55s)
-        stop_ping = threading.Event()
-        def _ping_loop():
-            while not stop_ping.wait(timeout=25):
-                try:
-                    ws.send(json.dumps({"action": "ping"}))
-                except Exception:
-                    break
-        ping_thread = threading.Thread(target=_ping_loop, daemon=True)
-        ping_thread.start()
 
-        try:
-            while True:
-                message = ws.receive(timeout=60)
-                if message is None:
-                    break
-                try:
-                    data = json.loads(message)
-                except Exception:
-                    continue
-                if data.get("status") in ("pong",) or data.get("action") == "ping":
-                    continue
-                browser_response = data
-                response_event.set()
-        except Exception:
-            pass
-        finally:
-            stop_ping.set()
-            connected_clients.discard(ws)
-            print("❌ Browser bridge disconnected")
+@app.route("/api/bridge/respond", methods=["POST"])
+def bridge_respond():
+    """PC posts the result of the last command here."""
+    data = request.get_json(silent=True) or {}
+    _resp_queue.put(data)
+    return jsonify(ok=True)
 
 # ── Browser Status API ────────────────────────────────────────────
 @app.route("/api/browser-status")
 def browser_status():
-    return jsonify(connected=len(connected_clients) > 0)
+    return jsonify(connected=_bridge_connected())
 
 # ── Auto Download API ─────────────────────────────────────────────
 @app.route("/api/auto-download", methods=["POST"])
@@ -1516,7 +1487,7 @@ def api_auto_download():
     if not username or not password:
         return jsonify(error="Username and password required"), 400
     
-    if not connected_clients:
+    if not _bridge_connected():
         return jsonify(error="No browser connected. Run browser_bridge.py on your PC first."), 400
     
     job_id = str(uuid.uuid4())[:8]
