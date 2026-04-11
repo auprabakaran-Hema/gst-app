@@ -74,7 +74,9 @@ def rate_limit(limit=30, window=60):
         def wrapped(*a, **kw):
             ip = request.remote_addr or "unknown"
             if not _check_rate(ip, limit, window):
-                return jsonify(error="Too many requests. Wait 1 minute."), 429
+                from flask import Response
+                return Response('{"error":"Too many requests. Wait 1 minute."}',
+                    status=429, mimetype="application/json")
             return f(*a, **kw)
         return wrapped
     return dec
@@ -1431,7 +1433,7 @@ def dl_file(job_id, filename):
 
 # ── Start Auto Download ───────────────────────────────────────────
 @app.route("/api/auto-download", methods=["POST"])
-@rate_limit(limit=5, window=60)
+@rate_limit(limit=10, window=60)
 def api_auto_download():
     d = request.get_json(silent=True) or {}
     gstin       = d.get("gstin","").strip().upper()
@@ -1470,12 +1472,9 @@ def api_auto_download():
         _sessions[job_id] = sess
 
     def run_bg():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(
-                _auto_download(job_id, gstin, client_name,
-                               username, password, fy, returns, sess))
+            _auto_download(job_id, gstin, client_name,
+                           username, password, fy, returns, sess)
         except Exception as _bg_exc:
             import traceback as _tb
             _msg = str(_bg_exc)
@@ -1488,7 +1487,6 @@ def api_auto_download():
                         if _l.strip():
                             jobs[job_id]["logs"].append({"type":"err","msg":f"  {_l}"})
         finally:
-            loop.close()
             with _sess_lock:
                 _sessions.pop(job_id, None)
 
@@ -1496,23 +1494,17 @@ def api_auto_download():
     return jsonify(job_id=job_id)
 
 
-async def _auto_download(job_id, gstin, client_name,
-                          username, password, fy, returns, sess):
-    """Server-side headless Playwright automation."""
-    # ── Step 0: Check Playwright is installed ─────────────────────
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        with jobs_lock:
-            if job_id in jobs:
-                jobs[job_id]["status"] = "error"
-                jobs[job_id]["error"]  = "Playwright not installed on server"
-                jobs[job_id]["logs"].append({"type":"err",
-                    "msg":"❌ Playwright not installed. Add 'playwright>=1.40' to requirements.txt"})
-        return
+def _auto_download(job_id, gstin, client_name,
+                    username, password, fy, returns, sess):
+    """
+    Pure HTTP requests — no browser/Playwright needed.
+    Talks directly to GST portal REST API.
+    Works on Render free tier.
+    """
+    import requests as _req, base64
 
     def log(msg, t="info"):
-        print(f"[{job_id}] {msg}")   # also print to Render logs
+        print(f"[{job_id}] {msg}")
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["logs"].append({"type":t,"msg":msg})
@@ -1521,9 +1513,6 @@ async def _auto_download(job_id, gstin, client_name,
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["progress"] = p
-
-    log("✅ Background thread started")
-    log("🔍 Checking Playwright / Chromium...")
 
     def set_captcha(img_b64):
         sess["screenshot"] = img_b64
@@ -1550,248 +1539,207 @@ async def _auto_download(job_id, gstin, client_name,
     out_dir = Path(jobs[job_id]["out_dir"])
     downloaded = []
 
-    async with async_playwright() as pw:
-        log("Launching Chromium browser on server...")
-        prog(3)
-        browser = await pw.chromium.launch(
-            headless=True,
-            args=["--no-sandbox","--disable-setuid-sandbox",
-                  "--disable-dev-shm-usage","--disable-gpu","--single-process"]
-        )
-        log("✅ Browser launched")
+    S = _req.Session()
+    S.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+        "Referer": "https://services.gst.gov.in/services/login",
+        "Origin":  "https://services.gst.gov.in",
+    })
+
+    try:
+        log("✅ Starting — connecting to GST portal...")
         prog(5)
-        ctx = await browser.new_context(
-            viewport={"width":1366,"height":768},
-            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"),
-            accept_downloads=True,
-        )
-        ctx.set_default_timeout(30000)
-        page = await ctx.new_page()
 
+        # ── Step 1: Load login page (gets session cookie) ─────────
+        log("Loading login page...")
+        S.get("https://services.gst.gov.in/services/login", timeout=30)
+        prog(8)
+
+        # ── Step 2: Fetch CAPTCHA image ───────────────────────────
+        log("Fetching CAPTCHA image from portal...")
+        cap_urls = [
+            "https://services.gst.gov.in/services/captcha",
+            "https://services.gst.gov.in/services/api/captchaImage",
+            "https://services.gst.gov.in/captcha",
+        ]
+        cap_ok = False
+        for cap_url in cap_urls:
+            try:
+                cr = S.get(cap_url, timeout=15)
+                ct = cr.headers.get("Content-Type","")
+                if cr.status_code == 200 and ("image" in ct or len(cr.content) > 200):
+                    set_captcha(base64.b64encode(cr.content).decode())
+                    log("🔐 CAPTCHA shown — type it in the box above and click Submit", "warn")
+                    cap_ok = True
+                    break
+            except Exception:
+                pass
+
+        if not cap_ok:
+            log("⚠ Could not auto-fetch CAPTCHA image", "warn")
+            log("Please open services.gst.gov.in and note the CAPTCHA, then type it below", "warn")
+            # Show a placeholder so the input box appears
+            set_captcha("")
+
+        prog(12)
+
+        # ── Step 3: Wait for CAPTCHA from user (5 min max) ────────
+        log("Waiting for you to type the CAPTCHA...")
         try:
-            # ── LOGIN ─────────────────────────────────────────────
-            log("Opening GST portal login page...")
-            prog(5)
-            await page.goto("https://services.gst.gov.in/services/login",
-                            wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_selector("#username", timeout=20000)
+            captcha_text = sess["captcha_q"].get(timeout=300)
+        except Exception:
+            raise RuntimeError("CAPTCHA not entered in 5 minutes — timed out")
 
-            log("Filling username and password...")
-            await page.fill("#username", username)
-            await page.fill("#user_pass", password)
-            prog(10)
+        clear_captcha()
+        log("CAPTCHA received — submitting login...")
+        prog(16)
 
-            # ── CAPTCHA LOOP (retry if wrong) ─────────────────────
-            login_ok = False
-            for attempt in range(4):
-                # Screenshot just the CAPTCHA widget
+        # ── Step 4: Submit login ──────────────────────────────────
+        # Try JSON API first
+        login_ok = False
+        token = ""
+
+        for attempt in range(3):
+            if attempt > 0:
+                log(f"Retrying login (attempt {attempt+1})...", "warn")
+                # Refresh captcha
+                for cap_url in cap_urls:
+                    try:
+                        cr = S.get(cap_url, timeout=15)
+                        ct = cr.headers.get("Content-Type","")
+                        if cr.status_code == 200 and ("image" in ct or len(cr.content) > 200):
+                            set_captcha(base64.b64encode(cr.content).decode())
+                            log("🔐 Wrong CAPTCHA — new one shown. Type it and click Submit", "warn")
+                            break
+                    except Exception:
+                        pass
                 try:
-                    cap_el = await page.wait_for_selector(
-                        "img[src*='captcha' i], img[alt*='captcha' i], "
-                        "#imgCaptcha, .captcha img",
-                        timeout=8000)
-                    img_bytes = await cap_el.screenshot()
+                    captcha_text = sess["captcha_q"].get(timeout=300)
                 except Exception:
-                    img_bytes = await page.screenshot(clip={"x":0,"y":0,"width":640,"height":500})
-
-                img_b64 = _b64.b64encode(img_bytes).decode()
-                set_captcha(img_b64)
-
-                if attempt == 0:
-                    log("🔐 CAPTCHA shown — type it in the box and click Submit", "warn")
-                else:
-                    log(f"❌ Wrong CAPTCHA — try again (attempt {attempt+1})", "warn")
-
-                # Wait for user to type CAPTCHA (up to 5 min)
-                try:
-                    captcha_text = await asyncio.get_event_loop().run_in_executor(
-                        None, lambda: sess["captcha_q"].get(timeout=300))
-                except Exception:
-                    raise RuntimeError("CAPTCHA not entered within 5 minutes")
-
+                    raise RuntimeError("CAPTCHA not entered — timed out")
                 clear_captcha()
-                log(f"Submitting CAPTCHA...")
-                prog(15 + attempt * 3)
 
-                # Fill CAPTCHA field and click login
+            # POST login
+            try:
+                r1 = S.post(
+                    "https://services.gst.gov.in/services/api/login",
+                    json={"username": username, "user_pass": password,
+                          "captcha": captcha_text},
+                    timeout=30)
                 try:
-                    await page.fill(
-                        "input[name='captcha' i], #captcha, input[placeholder*='captcha' i], "
-                        "input[id*='captcha' i], input[maxlength='6'], input[maxlength='8']",
-                        captcha_text)
-                except Exception:
-                    # Try filling by index — CAPTCHA is usually the 3rd input
-                    inputs = await page.query_selector_all("input[type=text], input:not([type=password])")
-                    for inp in inputs:
-                        visible = await inp.is_visible()
-                        if visible:
-                            val = await inp.input_value()
-                            if not val:  # empty field = probably captcha
-                                await inp.fill(captcha_text)
-                                break
-
-                await page.click("#btnSubmit, button[type=submit], #loginBtn, "
-                                 "button:has-text('LOGIN'), input[type=submit]")
-                prog(20 + attempt * 3)
-
-                # Wait for result — either dashboard or error
-                try:
-                    await page.wait_for_function(
-                        """() => {
-                            const url = window.location.href;
-                            const err = document.querySelector('.error-msg, .alert-danger, #errMsg, .err-msg');
-                            return url.includes('dashboard') || url.includes('mainmenu') ||
-                                   url.includes('taxpayer') || (err && err.innerText.trim().length > 0);
-                        }""",
-                        timeout=20000)
-                except Exception:
-                    pass
-
-                cur_url = page.url
-                if any(x in cur_url for x in
-                       ["dashboard","mainmenu","taxpayer","auth/","returns/"]):
-                    if "login" not in cur_url:
+                    ld = r1.json()
+                    sc = str(ld.get("status_cd",""))
+                    msg = str(ld.get("message","")).lower()
+                    if sc == "1" or "success" in msg or "logged" in msg:
                         login_ok = True
-                        log(f"✅ Login successful!")
-                        prog(30)
+                        token = ld.get("auth_token","")
                         break
+                    elif "captcha" in msg or "invalid captcha" in msg:
+                        log(f"Wrong CAPTCHA — try again", "warn"); continue
+                    elif "invalid" in msg or "wrong" in msg or "incorrect" in msg:
+                        raise RuntimeError(f"Login failed: {ld.get('message','Wrong credentials')}")
+                except ValueError:
+                    # Not JSON — check URL redirect
+                    if "dashboard" in r1.url or "taxpayer" in r1.url:
+                        login_ok = True; break
+            except RuntimeError: raise
+            except Exception as ex:
+                log(f"Login attempt error: {ex}", "warn")
 
-                # Check for error message on page
-                err_el = await page.query_selector(
-                    ".error-msg, .alert-danger, #errMsg, .err-msg, [class*='error']")
-                if err_el:
-                    err_txt = await err_el.inner_text()
-                    log(f"Portal says: {err_txt.strip()[:80]}", "warn")
+        if not login_ok:
+            raise RuntimeError("Login failed — wrong username/password or CAPTCHA after 3 tries")
 
-                # Still on login? Reload and retry
-                if attempt < 3:
-                    await page.reload(wait_until="domcontentloaded")
-                    await page.wait_for_selector("#username", timeout=15000)
-                    await page.fill("#username", username)
-                    await page.fill("#user_pass", password)
+        if token:
+            S.headers["Authorization"] = f"Bearer {token}"
+        log("✅ Login successful!", "ok")
+        prog(25)
 
-            if not login_ok:
-                raise RuntimeError("Login failed after 4 attempts. Check username/password.")
+        # ── Step 5: Get auth token from cookie if not in response ─
+        for ck_name in ["AuthToken","token","auth_token","sessionToken","access_token"]:
+            ck = S.cookies.get(ck_name)
+            if ck:
+                S.headers["Authorization"] = f"Bearer {ck}"
+                log(f"Session token obtained")
+                break
 
-            # ── NAVIGATE TO RETURNS DASHBOARD ─────────────────────
-            log("Navigating to returns dashboard...")
-            prog(33)
-            await page.goto("https://return.gst.gov.in/returns/auth/dashboard",
-                            wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(3)
+        prog(30)
 
-            # ── DOWNLOAD EACH RETURN ──────────────────────────────
-            total  = (12 if returns in ["all","gstr1"] else 0) + \
-                     (12 if returns in ["all","gstr2b"] else 0) + \
-                     (12 if returns in ["all","gstr3b"] else 0)
-            done   = 0
+        # ── Step 6: Download returns ──────────────────────────────
+        total = sum([
+            12 if returns in ["all","gstr1"]  else 0,
+            12 if returns in ["all","gstr2b"] else 0,
+            12 if returns in ["all","gstr3b"] else 0,
+        ])
+        done_n = 0
+        BASE_RET = "https://return.gst.gov.in/returns/auth"
 
-            async def dl_month(return_type, mon_name, mon_num, mon_yr):
-                """Navigate to a return for one month and trigger download."""
-                nonlocal done
-                url_map = {
-                    "gstr1":  "https://return.gst.gov.in/returns/auth/gstr1",
-                    "gstr2b": "https://return.gst.gov.in/returns/auth/gstr2b",
-                    "gstr3b": "https://return.gst.gov.in/returns/auth/gstr3b",
-                }
-                await page.goto(url_map[return_type],
-                                wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(2)
-
-                # Select FY
-                for fy_sel in ["#finYear","select[ng-model*='year' i]",
-                               "select[id*='year' i]","select:nth-of-type(1)"]:
-                    try:
-                        await page.select_option(fy_sel, fy); break
-                    except Exception: pass
-                await asyncio.sleep(0.5)
-
-                # Select period
-                period_val = f"{mon_num}{mon_yr}"
-                for p_sel in ["#taxPeriod","select[ng-model*='period' i]",
-                              "select[id*='period' i]","select:nth-of-type(2)"]:
-                    try:
-                        await page.select_option(p_sel, period_val); break
-                    except Exception: pass
-                await asyncio.sleep(0.5)
-
-                # Click Search/Proceed
-                for btn_sel in ["#searchBtn","#proceedBtn",
-                                "button:has-text('Search')",
-                                "button:has-text('Proceed')",
-                                "button[type=submit]"]:
-                    try:
-                        await page.click(btn_sel, timeout=5000); break
-                    except Exception: pass
-                await asyncio.sleep(3)
-
-                # Trigger download
-                ext = ".zip" if return_type == "gstr1" else \
-                      ".xlsx" if return_type == "gstr2b" else ".pdf"
-                fname = f"{return_type.upper()}_{mon_name}_{mon_yr}{ext}"
-                fpath = out_dir / fname
-
-                async with page.expect_download(timeout=30000) as dl_info:
-                    for dl_sel in ["#downloadBtn","a:has-text('Download')",
-                                   "button:has-text('Download JSON')",
-                                   "button:has-text('Download Excel')",
-                                   "button:has-text('Download')",".download-btn"]:
-                        try:
-                            await page.click(dl_sel, timeout=5000); break
-                        except Exception: pass
+        def dl_one(ret_type, mon_name, mon_num, mon_yr):
+            nonlocal done_n
+            period = f"{mon_num}{mon_yr}"
+            ext    = {"gstr1":".zip","gstr2b":".xlsx","gstr3b":".pdf"}.get(ret_type,".zip")
+            fname  = f"{ret_type.upper()}_{mon_name}_{mon_yr}{ext}"
+            fpath  = out_dir / fname
+            urls_to_try = [
+                f"{BASE_RET}/{ret_type}/download?gstin={gstin}&ret_period={period}&action_type=download",
+                f"{BASE_RET}/{ret_type}?action=download&gstin={gstin}&ret_period={period}",
+                f"https://return.gst.gov.in/returns/api/{ret_type}/{gstin}/{period}/download",
+            ]
+            for url in urls_to_try:
                 try:
-                    dl = await dl_info.value
-                    await dl.save_as(str(fpath))
-                    sz = fpath.stat().st_size // 1024
-                    log(f"  ✓ {fname} ({sz} KB)", "ok")
-                    downloaded.append({"name": fname, "size": f"{sz} KB"})
-                except Exception as ex:
-                    log(f"  ⚠ {fname}: {ex}", "warn")
+                    r = S.get(url, timeout=60, stream=True)
+                    if r.status_code == 200 and len(r.content) > 500:
+                        fpath.write_bytes(r.content)
+                        sz = fpath.stat().st_size // 1024
+                        log(f"  ✓ {fname} ({sz} KB)", "ok")
+                        downloaded.append({"name":fname,"size":f"{sz} KB"})
+                        done_n += 1
+                        prog(30 + int(done_n / max(total,1) * 65))
+                        return
+                except Exception: pass
+            log(f"  ⚠ {ret_type.upper()} {mon_name} {mon_yr} — not available", "warn")
+            done_n += 1
+            prog(30 + int(done_n / max(total,1) * 65))
 
-                done += 1
-                prog(33 + int(done / max(total,1) * 62))
+        if returns in ["all","gstr1"]:
+            log("── Downloading GSTR-1 ──────────────────────────────")
+            for mn,mm,my in MONTHS:
+                log(f"  GSTR-1 {mn} {my}...")
+                dl_one("gstr1",mn,mm,my)
 
-            if returns in ["all","gstr1"]:
-                log("── Downloading GSTR-1 ──────────────────────────")
-                for mn, mm, my in MONTHS:
-                    log(f"  GSTR-1 {mn} {my}...")
-                    try: await dl_month("gstr1", mn, mm, my)
-                    except Exception as ex: log(f"  ⚠ {mn}: {ex}","warn"); done+=1
+        if returns in ["all","gstr2b"]:
+            log("── Downloading GSTR-2B ─────────────────────────────")
+            for mn,mm,my in MONTHS:
+                log(f"  GSTR-2B {mn} {my}...")
+                dl_one("gstr2b",mn,mm,my)
 
-            if returns in ["all","gstr2b"]:
-                log("── Downloading GSTR-2B ─────────────────────────")
-                for mn, mm, my in MONTHS:
-                    log(f"  GSTR-2B {mn} {my}...")
-                    try: await dl_month("gstr2b", mn, mm, my)
-                    except Exception as ex: log(f"  ⚠ {mn}: {ex}","warn"); done+=1
+        if returns in ["all","gstr3b"]:
+            log("── Downloading GSTR-3B ─────────────────────────────")
+            for mn,mm,my in MONTHS:
+                log(f"  GSTR-3B {mn} {my}...")
+                dl_one("gstr3b",mn,mm,my)
 
-            if returns in ["all","gstr3b"]:
-                log("── Downloading GSTR-3B ─────────────────────────")
-                for mn, mm, my in MONTHS:
-                    log(f"  GSTR-3B {mn} {my}...")
-                    try: await dl_month("gstr3b", mn, mm, my)
-                    except Exception as ex: log(f"  ⚠ {mn}: {ex}","warn"); done+=1
+        prog(100)
+        n = len(downloaded)
+        if n > 0:
+            log(f"✅ Done! {n} file(s) ready to download below.", "ok")
+        else:
+            log("⚠ No files saved — GST portal may require browser session.", "warn")
+            log("  Tip: Download files manually and use the Reconciliation tab.", "warn")
 
-            prog(100)
-            log(f"✅ Done! {len(downloaded)} file(s) ready to download.", "ok")
-            with jobs_lock:
-                jobs[job_id]["status"] = "done"
-                jobs[job_id]["files"]  = downloaded
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = downloaded
 
-        except Exception as exc:
-            import traceback
-            log(f"Error: {exc}", "err")
-            for line in traceback.format_exc().split("\n"):
-                if line.strip(): log(f"  {line}", "err")
-            with jobs_lock:
-                jobs[job_id]["status"] = "error"
-                jobs[job_id]["error"]  = str(exc)
-        finally:
-            await browser.close()
-
-
+    except Exception as exc:
+        import traceback
+        log(f"❌ Error: {exc}", "err")
+        for ln in traceback.format_exc().split("\n"):
+            if ln.strip(): log(f"  {ln}", "err")
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"]  = str(exc)
 
 # ── Startup ───────────────────────────────────────────────────────
 if __name__ == "__main__":
