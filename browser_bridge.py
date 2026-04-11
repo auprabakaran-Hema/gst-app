@@ -282,6 +282,10 @@ async def main():
                         try:
                             raw    = await ws.recv()
                             data   = json.loads(raw)
+                            # Handle server keep-alive ping
+                            if data.get("action") == "ping":
+                                await ws.send(json.dumps({"status": "pong"}))
+                                continue
                             result = await run_action(data)
                             await ws.send(json.dumps(result))
 

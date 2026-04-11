@@ -1448,21 +1448,43 @@ class RemoteBrowser:
 if WEBSOCKET_AVAILABLE:
     @sock.route("/ws")
     def ws_handler(ws):
-        """Handle browser bridge connection — runs on Flask's own port"""
+        """Handle bridge connection. Ping thread keeps Render proxy alive."""
         global browser_response
-        print(f"🖥️  Browser bridge connected")
-        connected_clients.add(ws)
+        print("🖥️  Browser bridge connected")
+
+        # Clear stale clients, register new one
+        with jobs_lock:
+            connected_clients.clear()
+            connected_clients.add(ws)
+
+        # Keep-alive ping every 25s (Render drops idle WS after ~55s)
+        stop_ping = threading.Event()
+        def _ping_loop():
+            while not stop_ping.wait(timeout=25):
+                try:
+                    ws.send(json.dumps({"action": "ping"}))
+                except Exception:
+                    break
+        ping_thread = threading.Thread(target=_ping_loop, daemon=True)
+        ping_thread.start()
+
         try:
             while True:
-                message = ws.receive()        # blocks until data arrives
+                message = ws.receive(timeout=60)
                 if message is None:
                     break
-                data = json.loads(message)
+                try:
+                    data = json.loads(message)
+                except Exception:
+                    continue
+                if data.get("status") in ("pong",) or data.get("action") == "ping":
+                    continue
                 browser_response = data
                 response_event.set()
         except Exception:
             pass
         finally:
+            stop_ping.set()
             connected_clients.discard(ws)
             print("❌ Browser bridge disconnected")
 
