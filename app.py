@@ -16,11 +16,11 @@ import tempfile, platform
 
 # ── WebSocket imports ──────────────────────────────────────────────
 try:
-    import websockets
+    from flask_sock import Sock
     WEBSOCKET_AVAILABLE = True
 except ImportError:
     WEBSOCKET_AVAILABLE = False
-    print("⚠️ websockets not installed - Auto Download feature disabled")
+    print("⚠️ flask-sock not installed - Auto Download feature disabled")
 
 # ── Directories ───────────────────────────────────────────────────
 def _get_app_dir(subfolder):
@@ -41,6 +41,10 @@ JOB_TTL_S   = 7200
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_MB * 1024 * 1024
+
+# ── flask-sock WebSocket ───────────────────────────────────────────
+if WEBSOCKET_AVAILABLE:
+    sock = Sock(app)
 
 jobs      = {}
 jobs_lock = threading.Lock()
@@ -1383,91 +1387,84 @@ def api_feedback():
 # WEBSOCKET & AUTO DOWNLOAD FEATURE
 # ═══════════════════════════════════════════════════════════════════
 
-async def send_browser_command(command_dict):
-    """Send command to browser and wait for response"""
+def send_browser_command(command_dict):
+    """Send command to browser (sync) and wait for response via threading.Event"""
     global browser_response
     response_event.clear()
     browser_response = None
-    
+
     if not connected_clients:
         return {"status": "error", "error": "No browser connected"}
-    
+
     client = list(connected_clients)[0]
-    await client.send(json.dumps(command_dict))
-    
+    try:
+        client.send(json.dumps(command_dict))
+    except Exception as e:
+        return {"status": "error", "error": f"Send failed: {e}"}
+
     response_event.wait(timeout=30)
-    
+
     if browser_response is None:
         return {"status": "error", "error": "Timeout waiting for browser"}
-    
+
     return browser_response
 
+
 class RemoteBrowser:
-    """Browser automation via WebSocket"""
-    
+    """Browser automation via WebSocket (sync, flask-sock compatible)"""
+
+    def _cmd(self, d):
+        return send_browser_command(d)
+
     async def goto(self, url):
-        return await send_browser_command({"action": "goto", "url": url})
-    
+        return self._cmd({"action": "goto", "url": url})
+
     async def fill(self, selector, value):
-        return await send_browser_command({"action": "fill", "selector": selector, "value": value})
-    
+        return self._cmd({"action": "fill", "selector": selector, "value": value})
+
     async def click(self, selector):
-        return await send_browser_command({"action": "click", "selector": selector})
-    
+        return self._cmd({"action": "click", "selector": selector})
+
     async def screenshot(self):
-        return await send_browser_command({"action": "screenshot"})
-    
+        return self._cmd({"action": "screenshot"})
+
     async def wait_for_selector(self, selector, timeout=30000):
-        return await send_browser_command({"action": "wait_for_selector", "selector": selector, "timeout": timeout})
-    
+        return self._cmd({"action": "wait_for_selector", "selector": selector, "timeout": timeout})
+
     async def get_text(self, selector):
-        return await send_browser_command({"action": "get_text", "selector": selector})
-    
+        return self._cmd({"action": "get_text", "selector": selector})
+
     async def select_option(self, selector, value):
-        return await send_browser_command({"action": "select_option", "selector": selector, "value": value})
-    
+        return self._cmd({"action": "select_option", "selector": selector, "value": value})
+
     async def get_url(self):
-        return await send_browser_command({"action": "get_url"})
-    
+        return self._cmd({"action": "get_url"})
+
     async def wait_for_navigation(self):
-        return await send_browser_command({"action": "wait_for_navigation"})
+        return self._cmd({"action": "wait_for_navigation"})
 
-# ── WebSocket Server ──────────────────────────────────────────────
-async def ws_handler(websocket, path):
-    """Handle browser connection from PC"""
-    global connected_clients, browser_response
-    print(f"🖥️  Browser connected from {websocket.remote_address}")
-    connected_clients.add(websocket)
-    
-    try:
-        async for message in websocket:
-            data = json.loads(message)
-            browser_response = data
-            response_event.set()
-    except websockets.exceptions.ConnectionClosed:
-        print("❌ Browser disconnected")
-    finally:
-        connected_clients.discard(websocket)
 
-def start_websocket_server():
-    """Start WebSocket server in background"""
-    if not WEBSOCKET_AVAILABLE:
-        print("⚠️ WebSocket server not started - websockets not installed")
-        return
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    server = websockets.serve(ws_handler, "0.0.0.0", 10000)
-    print("🌐 WebSocket server started on ws://0.0.0.0:10000")
-    
-    loop.run_until_complete(server)
-    loop.run_forever()
-
-# Start WebSocket server
+# ── WebSocket /ws route via flask-sock ────────────────────────────
 if WEBSOCKET_AVAILABLE:
-    ws_thread = threading.Thread(target=start_websocket_server, daemon=True)
-    ws_thread.start()
+    @sock.route("/ws")
+    def ws_handler(ws):
+        """Handle browser bridge connection — runs on Flask's own port"""
+        global browser_response
+        print(f"🖥️  Browser bridge connected")
+        connected_clients.add(ws)
+        try:
+            while True:
+                message = ws.receive()        # blocks until data arrives
+                if message is None:
+                    break
+                data = json.loads(message)
+                browser_response = data
+                response_event.set()
+        except Exception:
+            pass
+        finally:
+            connected_clients.discard(ws)
+            print("❌ Browser bridge disconnected")
 
 # ── Browser Status API ────────────────────────────────────────────
 @app.route("/api/browser-status")

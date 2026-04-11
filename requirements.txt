@@ -1,13 +1,8 @@
-# requirements.txt - For Render deployment
-# GST Reconciliation Portal v6 with Auto Download
-
 flask>=3.0
+flask-sock>=0.7
 gunicorn>=21.0
 openpyxl>=3.1
 pandas>=2.0
 pdfplumber>=0.10
 PyPDF2>=3.0
 werkzeug>=3.0
-
-# WebSocket support for Auto Download feature
-websockets>=12.0
