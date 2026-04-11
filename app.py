@@ -1260,9 +1260,13 @@ def api_job(job_id):
         return jsonify(error="Job not found"), 404
     new_logs = job["logs"][:]
     job["logs"] = []
-    return jsonify(status=job["status"], progress=job["progress"],
-                   logs=new_logs, files=job["files"],
-                   error=job["error"], dl_status=job.get("dl_status",{}))
+    return jsonify(
+        status=job["status"], progress=job["progress"],
+        logs=new_logs, files=job["files"], error=job["error"],
+        dl_status=job.get("dl_status",{}),
+        captcha_needed=job.get("captcha_needed", False),
+        captcha_img=job.get("captcha_img", None),
+    )
 
 @app.route("/api/download/<job_id>/<filename>")
 @rate_limit(limit=30, window=60)
@@ -1472,6 +1476,17 @@ def api_auto_download():
             loop.run_until_complete(
                 _auto_download(job_id, gstin, client_name,
                                username, password, fy, returns, sess))
+        except Exception as _bg_exc:
+            import traceback as _tb
+            _msg = str(_bg_exc)
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id]["status"] = "error"
+                    jobs[job_id]["error"]  = _msg
+                    jobs[job_id]["logs"].append({"type":"err","msg":f"Fatal: {_msg}"})
+                    for _l in _tb.format_exc().split("\n"):
+                        if _l.strip():
+                            jobs[job_id]["logs"].append({"type":"err","msg":f"  {_l}"})
         finally:
             loop.close()
             with _sess_lock:
@@ -1483,17 +1498,21 @@ def api_auto_download():
 
 async def _auto_download(job_id, gstin, client_name,
                           username, password, fy, returns, sess):
-    """
-    Headless Playwright on Render server.
-    Flow:
-      1. Open GST login, fill user+pass
-      2. Screenshot CAPTCHA → send to web UI → user types it
-      3. Submit login → wait for dashboard
-      4. Navigate & download each return to OUTPUT_DIR/job_id/
-    """
-    from playwright.async_api import async_playwright
+    """Server-side headless Playwright automation."""
+    # ── Step 0: Check Playwright is installed ─────────────────────
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["status"] = "error"
+                jobs[job_id]["error"]  = "Playwright not installed on server"
+                jobs[job_id]["logs"].append({"type":"err",
+                    "msg":"❌ Playwright not installed. Add 'playwright>=1.40' to requirements.txt"})
+        return
 
     def log(msg, t="info"):
+        print(f"[{job_id}] {msg}")   # also print to Render logs
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["logs"].append({"type":t,"msg":msg})
@@ -1502,6 +1521,9 @@ async def _auto_download(job_id, gstin, client_name,
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["progress"] = p
+
+    log("✅ Background thread started")
+    log("🔍 Checking Playwright / Chromium...")
 
     def set_captcha(img_b64):
         sess["screenshot"] = img_b64
@@ -1529,11 +1551,15 @@ async def _auto_download(job_id, gstin, client_name,
     downloaded = []
 
     async with async_playwright() as pw:
+        log("Launching Chromium browser on server...")
+        prog(3)
         browser = await pw.chromium.launch(
             headless=True,
             args=["--no-sandbox","--disable-setuid-sandbox",
                   "--disable-dev-shm-usage","--disable-gpu","--single-process"]
         )
+        log("✅ Browser launched")
+        prog(5)
         ctx = await browser.new_context(
             viewport={"width":1366,"height":768},
             user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
