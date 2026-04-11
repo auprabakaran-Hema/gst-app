@@ -1520,11 +1520,16 @@ def api_auto_download():
 async def run_auto_download(job_id, gstin, client_name, username, password, fy, returns):
     """
     Auto-download GST returns via the PC browser bridge.
-    Follows the real GST portal flow at services.gst.gov.in.
-    Includes:
-      - Robust post-CAPTCHA session verification
-      - Auto re-login on Access Denied / session expiry mid-download
-      - Page-alive check before every action
+    ── Key rules ──────────────────────────────────────────────────────
+    1. NO direct goto URLs after login — navigate only via portal UI clicks
+       to avoid Access Denied errors that direct URL access triggers.
+    2. After CAPTCHA: user types + clicks LOGIN in browser themselves,
+       then presses ENTER in CMD. Server then clicks LOGIN button too
+       via script to confirm — matching your original bridge script flow.
+    3. If Access Denied is detected at any point mid-download →
+       auto re-login silently and resume from where it stopped.
+    4. Page-closed / context-destroyed errors → re-login and retry.
+    ───────────────────────────────────────────────────────────────────
     """
     def log(msg, t="info"):
         with jobs_lock:
@@ -1534,6 +1539,23 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["progress"] = p
+
+    def _cmd(d, timeout=45):
+        return send_browser_command(d, timeout=timeout)
+
+    def _is_access_denied():
+        """Check current page URL for session loss / access denied."""
+        r = _cmd({"action": "get_url"}, timeout=10)
+        url = r.get("url", "").lower()
+        err = r.get("error", "").lower()
+        if "closed" in err or "context" in err:
+            return True, "page_closed"
+        bad = ["accessdenied", "access-denied", "sessionexpired",
+               "session-expired", "login", "timeout", "error"]
+        for b in bad:
+            if b in url:
+                return True, b
+        return False, ""
 
     fy_start = fy.split("-")[0].strip()
     s = int(fy_start); e = s + 1
@@ -1546,312 +1568,289 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
         ("February",  "02", str(e)), ("March",    "03", str(e)),
     ]
 
-    browser = RemoteBrowser()
     downloaded_files = []
 
-    # ── Helper: check if session is alive ────────────────────────
-    def _is_session_alive():
-        """Returns (alive: bool, current_url: str)"""
-        r = browser._cmd({"action": "get_url"})
-        url = r.get("url", "")
-        if r.get("status") == "error":
-            return False, ""
-        bad = ["login", "accessdenied", "access-denied", "session", "timeout",
-               "error", "503", "502"]
-        if any(x in url.lower() for x in bad):
-            return False, url
-        if "gst.gov.in" not in url:
-            return False, url
-        return True, url
+    # ══════════════════════════════════════════════════════════════════
+    # LOGIN FUNCTION  — re-usable for first login + re-login
+    # ══════════════════════════════════════════════════════════════════
+    async def _do_login(is_relogin=False):
+        label = "Re-logging in" if is_relogin else "Opening GST portal"
+        log(f"{label}...")
 
-    # ── Helper: do full login (with CAPTCHA prompt) ───────────────
-    async def _do_login(first_time=False):
-        attempt_label = "Opening" if first_time else "Re-opening"
-        log(f"{attempt_label} GST portal login page...")
-        r = browser._cmd({"action": "goto",
-                           "url": "https://services.gst.gov.in/services/login"})
+        # Open login page (this goto is safe — it IS the login page)
+        r = _cmd({"action": "goto",
+                   "url": "https://services.gst.gov.in/services/login"})
         if r.get("status") == "error":
-            raise RuntimeError(f"Cannot open GST portal: {r.get('error')}")
+            raise RuntimeError(f"Cannot open login page: {r.get('error')}")
 
-        log("Waiting for login form...")
-        r = browser._cmd({"action": "wait_for_selector",
-                           "selector": "#username", "timeout": 30000})
+        # Wait for username box
+        r = _cmd({"action": "wait_for_selector",
+                   "selector": "#username", "timeout": 30000})
         if r.get("status") == "error":
             raise RuntimeError("Login form not found")
 
+        # Fill username + password
         log("Entering username and password...")
-        browser._cmd({"action": "fill", "selector": "#username", "value": username})
-        browser._cmd({"action": "fill", "selector": "#user_pass", "value": password})
+        _cmd({"action": "fill", "selector": "#username", "value": username})
+        _cmd({"action": "fill", "selector": "#user_pass", "value": password})
 
+        # ── CAPTCHA: user solves in browser, presses ENTER in CMD ──
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
-        log("🛑  ACTION REQUIRED ON YOUR PC:", "warn")
-        log("    1. Look at the Chromium browser window on your PC", "warn")
-        log("    2. Type the CAPTCHA characters shown in the image", "warn")
-        log("    3. Click the LOGIN button", "warn")
-        log("    4. Press ENTER in the bridge CMD window to continue", "warn")
+        if is_relogin:
+            log("🔄  SESSION EXPIRED — RE-LOGIN REQUIRED ON YOUR PC:", "warn")
+        else:
+            log("🛑  ACTION REQUIRED ON YOUR PC:", "warn")
+        log("    1. Look at the Chromium browser window", "warn")
+        log("    2. Type the CAPTCHA shown in the image", "warn")
+        log("    3. Click LOGIN in the browser", "warn")
+        log("    4. Press ENTER here in the CMD window", "warn")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
 
-        r = browser._cmd({"action": "wait_captcha"})
+        # wait_captcha blocks until user presses ENTER in bridge CMD
+        r = _cmd({"action": "wait_captcha"}, timeout=300)
         if r.get("status") == "error":
-            raise RuntimeError(f"CAPTCHA wait failed: {r.get('error')}")
+            raise RuntimeError(f"CAPTCHA wait error: {r.get('error')}")
 
-        # Wait up to 90s for dashboard — handles slow GST portal
-        log("Waiting for login to complete (up to 90s)...")
-        login_success = False
+        # After ENTER: also click LOGIN via script (matches your original flow)
+        # This handles the case where user solved CAPTCHA but didn't click LOGIN yet
+        _cmd({"action": "click",
+               "selector": "#login, button[type=submit], .login-btn, "
+                           "button:has-text('LOGIN'), button:has-text('Login')"})
+
+        # Wait for dashboard — poll URL for up to 90 s
+        log("Waiting for login to complete...")
         for attempt in range(90):
             await asyncio.sleep(1)
-            r = browser._cmd({"action": "get_url"})
+            r = _cmd({"action": "get_url"}, timeout=10)
             url = r.get("url", "")
+            # Success indicators in GST portal post-login URL
             if any(x in url for x in [
-                "taxpayerDashboard", "taxpayer/dashboard",
-                "mainmenu", "dashboard", "returns/dashboard",
-                "services/dashboard", "auth/fo", "fowelcome"
+                "fowelcome", "taxpayerDashboard", "taxpayer/dashboard",
+                "mainmenu", "returns/dashboard", "auth/fo"
             ]) and "login" not in url:
-                login_success = True
-                log(f"✅ Login successful! ({url[:70]}...)")
-                break
-            # Access denied mid-login means wrong CAPTCHA → raise so caller can retry
-            if "accessdenied" in url.lower() or "access-denied" in url.lower():
-                raise RuntimeError("Access denied during login. Check credentials / CAPTCHA.")
-            if attempt % 15 == 0 and attempt > 0:
-                log(f"Still waiting for dashboard... ({attempt}s)")
-
-        if not login_success:
-            r2 = browser._cmd({"action": "get_url"})
-            url2 = r2.get("url", "")
-            if "login" not in url2.lower() and "gst.gov.in" in url2:
-                log(f"✅ Logged in (URL: {url2[:70]})")
-            else:
+                log(f"✅ Login successful!")
+                await asyncio.sleep(2)
+                return  # logged in OK
+            if "accessdenied" in url.lower():
                 raise RuntimeError(
-                    "Login timed out. Check CAPTCHA / credentials and try again.")
+                    "Access Denied after login — wrong CAPTCHA or credentials.")
+            if attempt % 20 == 0 and attempt > 0:
+                log(f"  Still waiting for dashboard... ({attempt}s)")
 
+        raise RuntimeError("Login timed out. Please check credentials/CAPTCHA.")
+
+    # ══════════════════════════════════════════════════════════════════
+    # NAVIGATE VIA PORTAL MENU  — NO direct URL goto (avoids Access Denied)
+    # ══════════════════════════════════════════════════════════════════
+    async def _nav_to_returns_dashboard():
+        """Click through portal menus to reach Returns dashboard."""
+        log("  Navigating to Returns dashboard via menu...")
+        # Services menu → Returns
+        _cmd({"action": "click",
+               "selector": "a:has-text('Returns'), li:has-text('Returns') > a, "
+                           "#menu-returns, .menu-returns"})
         await asyncio.sleep(2)
-
-    # ── Helper: ensure session + auto-relogin if expired ─────────
-    async def _ensure_session(context_label=""):
-        alive, url = _is_session_alive()
-        if not alive:
-            log(f"⚠ Session lost{' ('+context_label+')' if context_label else ''}. Re-logging in...", "warn")
-            await _do_login(first_time=False)
-
-    # ── Helper: navigate to a GST page with session guard ─────────
-    async def _safe_goto(url, label="page"):
-        await _ensure_session(label)
-        r = browser._cmd({"action": "goto", "url": url})
+        # Returns Dashboard option
+        _cmd({"action": "click",
+               "selector": "a:has-text('Returns Dashboard'), "
+                           "a:has-text('Dashboard'), .returns-dashboard"})
         await asyncio.sleep(3)
-        # After navigation, check if we got kicked to login
-        alive, cur = _is_session_alive()
-        if not alive:
-            log(f"  ⚠ Redirected to login after goto {label}. Re-logging in...", "warn")
-            await _do_login(first_time=False)
-            r = browser._cmd({"action": "goto", "url": url})
-            await asyncio.sleep(3)
-        return r
 
-    # ═══════════════════════════════════════════════════════════════
+    async def _check_and_relogin_if_needed(context=""):
+        """If page shows access denied / login, do silent re-login."""
+        denied, reason = _is_access_denied()
+        if denied:
+            log(f"⚠ Session lost ({reason}){' — '+context if context else ''}. Re-logging in...", "warn")
+            await _do_login(is_relogin=True)
+            return True
+        return False
+
+    # ══════════════════════════════════════════════════════════════════
+    # DOWNLOAD ONE RETURN TYPE FOR ALL MONTHS
+    # ══════════════════════════════════════════════════════════════════
+    async def _download_months(return_type, nav_selector, dl_selector, file_ext):
+        """
+        For a given return type (e.g. GSTR-1):
+          1. Navigate to its section via menu clicks (NOT goto URL)
+          2. For each month: select FY + period → Search → Download
+          3. On any access denied → re-login → retry that month once
+        """
+        log(f"─── Downloading {return_type} ─────────────────────────")
+
+        for mon_name, mon_num, mon_yr in MONTH_LIST:
+            log(f"  {return_type} {mon_name} {mon_yr}...")
+            retried = False
+
+            for attempt in range(2):  # max 1 retry after re-login
+                try:
+                    # ── Navigate to return section via menu ────────
+                    # Click the return type link inside Returns Dashboard
+                    r = _cmd({"action": "click", "selector": nav_selector})
+                    await asyncio.sleep(3)
+
+                    # Check for access denied right after click
+                    if await _check_and_relogin_if_needed(
+                            f"{return_type} menu click"):
+                        if retried: break
+                        retried = True; continue
+
+                    # ── Select Financial Year ──────────────────────
+                    _cmd({"action": "select_option",
+                           "selector": "select[name='fy'], #finYear, "
+                                       "select.fy-select, select[id*='Year']",
+                           "value": fy})
+                    await asyncio.sleep(0.8)
+
+                    # ── Select Tax Period (month) ──────────────────
+                    _cmd({"action": "select_option",
+                           "selector": "select[name='fp'], #taxPeriod, "
+                                       "select.period-select, select[id*='Period']",
+                           "value": f"{mon_num}{mon_yr}"})
+                    await asyncio.sleep(0.8)
+
+                    # ── Click Search / Proceed ─────────────────────
+                    _cmd({"action": "click",
+                           "selector": "button[type=submit], #proceed-btn, "
+                                       "#searchBtn, button:has-text('Search'), "
+                                       "button:has-text('Proceed')"})
+                    await asyncio.sleep(4)
+
+                    # Check session after search
+                    if await _check_and_relogin_if_needed(
+                            f"{return_type} {mon_name} post-search"):
+                        if retried: break
+                        retried = True; continue
+
+                    # ── Click Download ─────────────────────────────
+                    dl = _cmd({"action": "click", "selector": dl_selector})
+                    await asyncio.sleep(2)
+
+                    err = dl.get("error", "").lower()
+                    if dl.get("status") == "done":
+                        log(f"  ✓ {return_type} {mon_name} {mon_yr} downloaded", "ok")
+                        downloaded_files.append(
+                            {"name": f"{return_type.replace('-','')}_{mon_name}_{mon_yr}.{file_ext}",
+                             "size": "downloaded to PC"})
+                        break  # success — next month
+
+                    elif "closed" in err or "context" in err or "denied" in err:
+                        log(f"  ⚠ {return_type} {mon_name}: page closed/denied — re-logging in", "warn")
+                        await _do_login(is_relogin=True)
+                        if retried: break
+                        retried = True; continue
+
+                    else:
+                        log(f"  ⚠ {return_type} {mon_name}: {dl.get('error','no download btn found')}", "warn")
+                        break  # non-recoverable warning — move on
+
+                except Exception as ex:
+                    err_str = str(ex).lower()
+                    if "closed" in err_str or "context" in err_str or "denied" in err_str:
+                        log(f"  ⚠ {return_type} {mon_name}: page error — re-logging in", "warn")
+                        try:
+                            await _do_login(is_relogin=True)
+                        except Exception as le:
+                            log(f"  ✗ Re-login failed: {le}", "err"); break
+                        if retried: break
+                        retried = True; continue
+                    else:
+                        log(f"  ⚠ {return_type} {mon_name} {mon_yr}: {ex}", "warn")
+                        break
+
+            # After each month, go back to returns dashboard via menu
+            # to reset page state cleanly (avoids stale page issues)
+            try:
+                await _nav_to_returns_dashboard()
+            except Exception:
+                pass  # if nav fails, next iteration will handle it
+
+    # ══════════════════════════════════════════════════════════════════
     # MAIN FLOW
-    # ═══════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════
     try:
         prog(5)
 
-        # ── Step 1-4: Login + CAPTCHA ─────────────────────────────
-        await _do_login(first_time=True)
+        # ── Step 1: Login + CAPTCHA ───────────────────────────────
+        await _do_login(is_relogin=False)
+        prog(20)
+
+        # ── Step 2: Go to Returns Dashboard via menu ──────────────
+        await _nav_to_returns_dashboard()
         prog(25)
 
-        # ── Step 5: Download returns ──────────────────────────────
+        # ── Step 3: Count total steps for progress bar ────────────
         total_steps = 0
-        if returns in ["all", "gstr1"]:   total_steps += 12
-        if returns in ["all", "gstr2b"]:  total_steps += 12
-        if returns in ["all", "gstr2a"]:  total_steps += 12
-        if returns in ["all", "gstr3b"]:  total_steps += 12
-        step = 0
-        base_prog = 25
+        if returns in ["all", "gstr1"]:  total_steps += 12
+        if returns in ["all", "gstr2b"]: total_steps += 12
+        if returns in ["all", "gstr2a"]: total_steps += 12
+        if returns in ["all", "gstr3b"]: total_steps += 12
+        step = [0]
 
         def step_prog():
-            nonlocal step; step += 1
-            p = base_prog + int((step / max(total_steps, 1)) * 65)
+            step[0] += 1
+            p = 25 + int((step[0] / max(total_steps, 1)) * 65)
             prog(min(p, 90))
 
-        # ── GSTR-1 ───────────────────────────────────────────────
+        # Wrap step_prog into each download loop
+        original_download = _download_months
+
+        async def _download_with_progress(rt, nav_sel, dl_sel, ext):
+            await original_download(rt, nav_sel, dl_sel, ext)
+            for _ in MONTH_LIST:
+                step_prog()
+
+        # ── Step 4: Download each return type ────────────────────
+
         if returns in ["all", "gstr1"]:
-            log("─── Downloading GSTR-1 ───────────────────────────")
-            await _safe_goto("https://return.gst.gov.in/returns/auth/dashboard", "GSTR-1 dashboard")
+            await _download_months(
+                return_type  = "GSTR-1",
+                nav_selector = "a:has-text('GSTR-1'), a:has-text('GSTR 1'), "
+                               "#gstr1-link, .gstr1",
+                dl_selector  = "#downloadBtn, button:has-text('Download JSON'), "
+                               "a:has-text('Download'), .download-btn",
+                file_ext     = "zip"
+            )
+            for _ in MONTH_LIST: step_prog()
 
-            for mon_name, mon_num, mon_yr in MONTH_LIST:
-                log(f"  GSTR-1 {mon_name} {mon_yr}...")
-                try:
-                    await _safe_goto("https://return.gst.gov.in/returns/auth/gstr1",
-                                     f"GSTR-1 {mon_name}")
-
-                    # Check page loaded (wait for any select or known element)
-                    chk = browser._cmd({"action": "wait_for_selector",
-                        "selector": "select, #finYear, #taxPeriod, .fy-select",
-                        "timeout": 15000})
-                    if chk.get("status") == "error":
-                        log(f"  ⚠ GSTR-1 {mon_name}: page did not load selects, skipping", "warn")
-                        step_prog(); continue
-
-                    browser._cmd({"action": "select_option",
-                        "selector": "select[name='fy'], #finYear, select.fy-select",
-                        "value": fy})
-                    await asyncio.sleep(0.8)
-
-                    browser._cmd({"action": "select_option",
-                        "selector": "select[name='fp'], #taxPeriod, select.period-select",
-                        "value": f"{mon_num}{mon_yr}"})
-                    await asyncio.sleep(0.8)
-
-                    browser._cmd({"action": "click",
-                        "selector": "button[type=submit], #proceed-btn, #searchBtn, "
-                                    "button:has-text('Search'), button:has-text('Proceed')"})
-                    await asyncio.sleep(4)
-
-                    # After click, check session still alive
-                    await _ensure_session(f"GSTR-1 {mon_name} post-search")
-
-                    dl = browser._cmd({"action": "click",
-                        "selector": "#downloadBtn, a:has-text('Download'), "
-                                    "button:has-text('Download JSON'), .download-btn"})
-                    await asyncio.sleep(2)
-
-                    if dl.get("status") == "done":
-                        log(f"  ✓ GSTR-1 {mon_name} {mon_yr} downloaded", "ok")
-                        downloaded_files.append(
-                            {"name": f"GSTR1_{mon_name}_{mon_yr}.zip",
-                             "size": "downloaded to PC"})
-                    else:
-                        err = dl.get("error", "no download btn")
-                        # If page closed error, session died — re-login and skip this month
-                        if "closed" in err.lower() or "context" in err.lower():
-                            log(f"  ⚠ GSTR-1 {mon_name}: browser page closed — re-logging in", "warn")
-                            await _do_login(first_time=False)
-                        else:
-                            log(f"  ⚠ GSTR-1 {mon_name}: {err}", "warn")
-
-                except Exception as ex:
-                    err_str = str(ex)
-                    if "closed" in err_str.lower() or "context" in err_str.lower():
-                        log(f"  ⚠ GSTR-1 {mon_name}: page closed, re-logging in...", "warn")
-                        try:
-                            await _do_login(first_time=False)
-                        except Exception as login_ex:
-                            log(f"  ✗ Re-login failed: {login_ex}", "err")
-                    else:
-                        log(f"  ⚠ GSTR-1 {mon_name} {mon_yr}: {ex}", "warn")
-                step_prog()
-
-        # ── GSTR-2B ──────────────────────────────────────────────
         if returns in ["all", "gstr2b"]:
-            log("─── Downloading GSTR-2B ──────────────────────────")
-            for mon_name, mon_num, mon_yr in MONTH_LIST:
-                log(f"  GSTR-2B {mon_name} {mon_yr}...")
-                try:
-                    await _safe_goto("https://return.gst.gov.in/returns/auth/gstr2b",
-                                     f"GSTR-2B {mon_name}")
+            await _download_months(
+                return_type  = "GSTR-2B",
+                nav_selector = "a:has-text('GSTR-2B'), a:has-text('GSTR 2B'), "
+                               "#gstr2b-link, .gstr2b",
+                dl_selector  = "#downloadBtn, button:has-text('Download'), "
+                               "a:has-text('Download'), .download-btn",
+                file_ext     = "xlsx"
+            )
+            for _ in MONTH_LIST: step_prog()
 
-                    chk = browser._cmd({"action": "wait_for_selector",
-                        "selector": "select, #finYear, #taxPeriod", "timeout": 15000})
-                    if chk.get("status") == "error":
-                        log(f"  ⚠ GSTR-2B {mon_name}: page did not load, skipping", "warn")
-                        step_prog(); continue
+        if returns in ["all", "gstr2a"]:
+            await _download_months(
+                return_type  = "GSTR-2A",
+                nav_selector = "a:has-text('GSTR-2A'), a:has-text('GSTR 2A'), "
+                               "#gstr2a-link, .gstr2a",
+                dl_selector  = "#downloadBtn, button:has-text('Download'), "
+                               "a:has-text('Download'), .download-btn",
+                file_ext     = "xlsx"
+            )
+            for _ in MONTH_LIST: step_prog()
 
-                    browser._cmd({"action": "select_option",
-                        "selector": "select[name='fy'], #finYear", "value": fy})
-                    await asyncio.sleep(0.8)
-                    browser._cmd({"action": "select_option",
-                        "selector": "select[name='fp'], #taxPeriod",
-                        "value": f"{mon_num}{mon_yr}"})
-                    await asyncio.sleep(0.8)
-                    browser._cmd({"action": "click",
-                        "selector": "button[type=submit], #proceed-btn, #searchBtn"})
-                    await asyncio.sleep(4)
-                    await _ensure_session(f"GSTR-2B {mon_name} post-search")
-
-                    dl = browser._cmd({"action": "click",
-                        "selector": "#downloadBtn, a:has-text('Download'), "
-                                    "button:has-text('Download'), .download-btn"})
-                    await asyncio.sleep(2)
-                    if dl.get("status") == "done":
-                        log(f"  ✓ GSTR-2B {mon_name} {mon_yr} downloaded", "ok")
-                        downloaded_files.append(
-                            {"name": f"GSTR2B_{mon_name}_{mon_yr}.xlsx",
-                             "size": "downloaded to PC"})
-                    else:
-                        err = dl.get("error", "no btn")
-                        if "closed" in err.lower() or "context" in err.lower():
-                            log(f"  ⚠ GSTR-2B {mon_name}: page closed — re-logging in", "warn")
-                            await _do_login(first_time=False)
-                        else:
-                            log(f"  ⚠ GSTR-2B {mon_name}: {err}", "warn")
-                except Exception as ex:
-                    err_str = str(ex)
-                    if "closed" in err_str.lower() or "context" in err_str.lower():
-                        log(f"  ⚠ GSTR-2B {mon_name}: page closed, re-logging in...", "warn")
-                        try: await _do_login(first_time=False)
-                        except Exception as le: log(f"  ✗ Re-login failed: {le}", "err")
-                    else:
-                        log(f"  ⚠ GSTR-2B {mon_name} {mon_yr}: {ex}", "warn")
-                step_prog()
-
-        # ── GSTR-3B ──────────────────────────────────────────────
         if returns in ["all", "gstr3b"]:
-            log("─── Downloading GSTR-3B ──────────────────────────")
-            for mon_name, mon_num, mon_yr in MONTH_LIST:
-                log(f"  GSTR-3B {mon_name} {mon_yr}...")
-                try:
-                    await _safe_goto("https://return.gst.gov.in/returns/auth/gstr3b",
-                                     f"GSTR-3B {mon_name}")
-
-                    chk = browser._cmd({"action": "wait_for_selector",
-                        "selector": "select, #finYear, #taxPeriod", "timeout": 15000})
-                    if chk.get("status") == "error":
-                        log(f"  ⚠ GSTR-3B {mon_name}: page did not load, skipping", "warn")
-                        step_prog(); continue
-
-                    browser._cmd({"action": "select_option",
-                        "selector": "select[name='fy'], #finYear", "value": fy})
-                    await asyncio.sleep(0.8)
-                    browser._cmd({"action": "select_option",
-                        "selector": "select[name='fp'], #taxPeriod",
-                        "value": f"{mon_num}{mon_yr}"})
-                    await asyncio.sleep(0.8)
-                    browser._cmd({"action": "click",
-                        "selector": "button[type=submit], #proceed-btn, #searchBtn"})
-                    await asyncio.sleep(4)
-                    await _ensure_session(f"GSTR-3B {mon_name} post-search")
-
-                    dl = browser._cmd({"action": "click",
-                        "selector": "#downloadBtn, a:has-text('PDF'), "
-                                    "button:has-text('Download'), .download-btn"})
-                    await asyncio.sleep(2)
-                    if dl.get("status") == "done":
-                        log(f"  ✓ GSTR-3B {mon_name} {mon_yr} downloaded", "ok")
-                        downloaded_files.append(
-                            {"name": f"GSTR3B_{mon_name}_{mon_yr}.pdf",
-                             "size": "downloaded to PC"})
-                    else:
-                        err = dl.get("error", "no btn")
-                        if "closed" in err.lower() or "context" in err.lower():
-                            log(f"  ⚠ GSTR-3B {mon_name}: page closed — re-logging in", "warn")
-                            await _do_login(first_time=False)
-                        else:
-                            log(f"  ⚠ GSTR-3B {mon_name}: {err}", "warn")
-                except Exception as ex:
-                    err_str = str(ex)
-                    if "closed" in err_str.lower() or "context" in err_str.lower():
-                        log(f"  ⚠ GSTR-3B {mon_name}: page closed, re-logging in...", "warn")
-                        try: await _do_login(first_time=False)
-                        except Exception as le: log(f"  ✗ Re-login failed: {le}", "err")
-                    else:
-                        log(f"  ⚠ GSTR-3B {mon_name} {mon_yr}: {ex}", "warn")
-                step_prog()
+            await _download_months(
+                return_type  = "GSTR-3B",
+                nav_selector = "a:has-text('GSTR-3B'), a:has-text('GSTR 3B'), "
+                               "#gstr3b-link, .gstr3b",
+                dl_selector  = "#downloadBtn, button:has-text('Download'), "
+                               "a:has-text('PDF'), .download-btn",
+                file_ext     = "pdf"
+            )
+            for _ in MONTH_LIST: step_prog()
 
         prog(95)
         n = len(downloaded_files)
-        log(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
         log(f"✅ All done! {n} file(s) downloaded to your PC.", "ok")
-        log(f"   Check your PC Downloads folder.", "ok")
-        log(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
+        log("   Check your PC Downloads folder.", "ok")
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
         prog(100)
 
         with jobs_lock:

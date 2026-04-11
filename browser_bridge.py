@@ -118,12 +118,22 @@ async def run_action(page, data):
         print()
         print("  1. Look at THIS Chromium browser window")
         print("  2. Type the CAPTCHA characters shown in the box")
-        print("  3. Click the LOGIN button")
-        print("  4. Come back to THIS cmd window and press ENTER")
+        print("  3. Click the LOGIN button in the browser")
+        print("  4. Come back HERE and press ENTER")
         print("  " + "="*56)
         print()
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: input("  >> Press ENTER AFTER you clicked LOGIN: "))
+        # After ENTER: also click LOGIN via script
+        # (covers case where user solved CAPTCHA but forgot to click LOGIN)
+        try:
+            await page.click(
+                "#login, button[type=submit], .login-btn, "
+                "button:has-text('LOGIN'), button:has-text('Login')",
+                timeout=5000)
+            print("  >> LOGIN button clicked by script")
+        except Exception:
+            pass  # user already clicked — that is fine
         return {"status":"captcha_done"}
     else:
         return {"status":"error","error":f"Unknown action: {action}"}
