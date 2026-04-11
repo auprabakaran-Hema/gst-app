@@ -53,7 +53,7 @@ _bridge_lock = threading.Lock()
 
 def _bridge_connected():
     """True if PC polled within last 8 seconds"""
-    return (time.time() - _bridge_last_seen) < 200
+    return (time.time() - _bridge_last_seen) < 8
 
 # ── Rate limiting ─────────────────────────────────────────────────
 _rate = {}
@@ -589,25 +589,22 @@ footer a{color:var(--accent);text-decoration:none}
 
 <!-- ══ TAB 4: AUTO DOWNLOAD ══ -->
 <div class="tp" id="tab-autodl">
+
 <div class="card">
   <div class="ct">🌐 Auto Download from GST Portal</div>
   <div class="pills">
     <span class="pill">GSTR-1</span><span class="pill">GSTR-2B</span>
     <span class="pill">GSTR-2A</span><span class="pill">GSTR-3B</span>
-    <span class="pill">GSTR-1A</span>
   </div>
-  <p style="color:var(--muted);font-size:.78rem;line-height:1.6;margin-bottom:.8rem">
-    Download all GST returns <strong style="color:var(--txt)">directly from the portal</strong> using your PC browser.
-    Your credentials stay secure on the server — only the browser runs on your PC for CAPTCHA solving.
+  <p style="color:var(--muted);font-size:.78rem;line-height:1.65;margin-bottom:.5rem">
+    Enter your GST credentials below. The server opens the GST portal, fills your login,
+    then shows you the CAPTCHA image here — you type it and the rest downloads automatically.
+    <strong style="color:var(--txt)">No software to install on your PC.</strong>
   </p>
-  
-  <!-- Connection Status -->
-  <div class="conn-status" id="conn-status">
-    <div class="conn-dot" id="conn-dot"></div>
-    <span id="conn-text">Checking browser connection...</span>
-  </div>
 </div>
 
+<!-- Step 1: Credentials form -->
+<div id="ad-step1">
 <form id="ad-form">
 <div class="card">
   <div class="ct">GST Portal Credentials</div>
@@ -629,53 +626,66 @@ footer a{color:var(--accent);text-decoration:none}
       </select></div>
     <div class="fg"><label>Returns to Download</label>
       <select id="ad-returns">
-        <option value="all">All Returns (GSTR-1, 2B, 2A, 3B, 1A)</option>
+        <option value="all">All Returns (GSTR-1, 2B, 2A, 3B)</option>
         <option value="gstr1">GSTR-1 Only</option>
         <option value="gstr2b">GSTR-2B Only</option>
         <option value="gstr3b">GSTR-3B Only</option>
       </select></div>
   </div>
 </div>
-
 <div class="card">
-  <div class="ct">How It Works</div>
-  <div class="info-box">
-    <strong>Step 1:</strong> Click "Start Auto Download" below<br>
-    <strong>Step 2:</strong> Run <code>browser_bridge.py</code> on your PC (one-time setup)<br>
-    <strong>Step 3:</strong> Chrome will open on your PC with GST portal<br>
-    <strong>Step 4:</strong> Type the CAPTCHA when it appears<br>
-    <strong>Step 5:</strong> Files download automatically to your PC!
-  </div>
   <button type="submit" class="btn-orange" id="ad-submit">🚀 Start Auto Download</button>
 </div>
 </form>
+</div><!-- /ad-step1 -->
 
+<!-- Step 2: CAPTCHA entry (hidden until server is ready) -->
+<div id="ad-step2" style="display:none">
+<div class="card">
+  <div class="ct">🔐 Type the CAPTCHA to Continue</div>
+  <p style="color:var(--muted);font-size:.8rem;margin-bottom:.9rem">
+    The GST portal login page is open on the server. Type the CAPTCHA characters shown below, then click Submit.
+  </p>
+  <div style="margin-bottom:1rem;text-align:center">
+    <img id="ad-captcha-img" src="" alt="CAPTCHA"
+         style="border:2px solid var(--accent);border-radius:8px;max-width:220px;background:#fff;padding:4px">
+    <br>
+    <button type="button" onclick="refreshCaptcha()"
+            style="margin-top:.5rem;background:none;border:1px solid var(--bdr);border-radius:5px;
+                   color:var(--muted);font-size:.7rem;padding:.3rem .7rem;cursor:pointer">
+      🔄 Refresh CAPTCHA
+    </button>
+  </div>
+  <div class="fg" style="max-width:260px;margin:0 auto">
+    <label>CAPTCHA Text *</label>
+    <input type="text" id="ad-captcha-input" placeholder="Type characters above"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+           style="font-size:1.1rem;letter-spacing:.15em;text-align:center">
+  </div>
+  <div style="max-width:260px;margin:.75rem auto 0">
+    <button type="button" class="btn" id="ad-captcha-submit" onclick="submitCaptcha()">
+      Submit CAPTCHA &amp; Login →
+    </button>
+  </div>
+</div>
+</div><!-- /ad-step2 -->
+
+<!-- Progress & logs -->
 <div class="card pw" id="ad-pw">
-  <div class="ct">Auto Download Progress <span class="sbg s-p pulse" id="ad-badge">Running</span></div>
+  <div class="ct">Progress <span class="sbg s-p pulse" id="ad-badge">Running</span></div>
   <div class="pb-w"><div class="pb" id="ad-pb"></div></div>
   <div class="lb" id="ad-lb"></div>
 </div>
 
+<!-- Download results -->
 <div class="card dw" id="ad-dw">
   <div class="ct">Downloaded Files</div>
   <div class="dl-g" id="ad-dlg"></div>
-  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
-    ✅ Files downloaded to your PC's Downloads folder. Upload them to the Reconciliation tab to process.
+  <p style="color:var(--muted);font-size:.7rem;margin-top:.65rem;font-family:var(--mono)">
+    ⬇️ Click Download to save each file. Then upload them to the Reconciliation tab.
   </p>
 </div>
 
-<div class="card" id="ad-setup" style="display:none">
-  <div class="ct">⚠️ Browser Bridge Not Connected</div>
-  <div class="info-box warn">
-    <strong>To use Auto Download, you need to run the browser bridge on your PC:</strong><br><br>
-    <strong>1.</strong> Download <code>browser_bridge.py</code> to your PC<br>
-    <strong>2.</strong> Install Python dependencies: <code>pip install requests playwright</code><br>
-    <strong>3.</strong> Install browser: <code>playwright install chromium</code><br>
-    <strong>4.</strong> Run: <code>python browser_bridge.py</code><br><br>
-    Then refresh this page and try again.
-  </div>
-  <a href="/api/download_bridge" class="btn-dl" style="display:inline-block;padding:.6rem 1.2rem">⬇️ Download browser_bridge.py</a>
-</div>
 </div><!-- /tab-autodl -->
 
 <!-- ══ FEEDBACK SECTION ══ -->
@@ -896,146 +906,110 @@ function showDownloads(pfx,jid,files){
   });
 }
 
-// ── Browser Connection Check ─────────────────────────────────────
-async function checkBrowserConnection(){
-  const dot=document.getElementById('conn-dot');
-  const txt=document.getElementById('conn-text');
-  const setup=document.getElementById('ad-setup');
-  const form=document.getElementById('ad-form');
-  
-  dot.className='conn-dot connecting';
-  txt.textContent='Checking browser connection...';
-  
-  try{
-    const res=await fetch('/api/browser-status');
-    const d=await res.json();
-    
-    if(d.connected){
-      dot.className='conn-dot online';
-      txt.textContent='✅ Browser bridge connected! Ready to download.';
-      if(setup) setup.style.display='none';
-      if(form) form.style.display='block';
-    } else {
-      dot.className='conn-dot';
-      txt.textContent='❌ Browser bridge not connected. Run browser_bridge.py on your PC.';
-      if(setup) setup.style.display='block';
-      if(form) form.style.display='none';
-    }
-  }catch(e){
-    dot.className='conn-dot';
-    txt.textContent='❌ Cannot check connection. Server may be busy.';
-  }
-}
+// ── Auto Download ────────────────────────────────────────────────
+let _adJobId=null;
+function checkBrowserConnection(){} // server runs the browser
 
-// ── Auto Download Form ────────────────────────────────────────────
-document.getElementById('ad-form').addEventListener('submit', async e=>{
+document.getElementById('ad-form').addEventListener('submit',async e=>{
   e.preventDefault();
-  
   const gstin=document.getElementById('ad-gstin').value.trim().toUpperCase();
   const cname=document.getElementById('ad-name').value.trim();
   const username=document.getElementById('ad-username').value.trim();
   const password=document.getElementById('ad-password').value;
   const fy=document.getElementById('ad-fy').value;
   const returns=document.getElementById('ad-returns').value;
-  
-  if(!gstin||gstin.length!==15){alert('Enter a valid 15-character GSTIN');return;}
+  if(!gstin||gstin.length!==15){alert('Enter valid 15-char GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
-  if(!username){alert('Enter GST portal username');return;}
-  if(!password){alert('Enter GST portal password');return;}
-  
+  if(!username||!password){alert('Enter username and password');return;}
   document.getElementById('ad-pw').style.display='block';
   document.getElementById('ad-dw').style.display='none';
+  document.getElementById('ad-captcha-box').style.display='none';
   document.getElementById('ad-lb').innerHTML='';
   document.getElementById('ad-pb').style.width='0%';
-  
   const btn=document.getElementById('ad-submit');
-  btn.disabled=true;btn.textContent='Connecting to your PC browser...';
-  
-  addLog('ad','info','Starting auto download...');
-  addLog('ad','info','Waiting for browser connection...');
-  
+  btn.disabled=true;btn.textContent='Starting…';
+  addLog('ad','info','Connecting to GST portal on server...');
   try{
-    const res=await fetch('/api/auto-download',{
-      method:'POST',
+    const res=await fetch('/api/auto-download',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({gstin,client_name:cname,username,password,fy,returns})
-    });
+      body:JSON.stringify({gstin,client_name:cname,username,password,fy,returns})});
     const d=await res.json();
-    
-    if(d.error){
-      addLog('ad','err','Error: '+d.error);
-      setBadge('ad','e','Failed');
-      btn.disabled=false;btn.textContent='🚀 Start Auto Download';
-      return;
-    }
-    
-    addLog('ad','info','Browser connected! Opening GST portal...');
-    btn.textContent='Downloading...';
-    
-    // Poll for progress
-    pollAutoDownload(d.job_id);
-    
-  }catch(err){
-    addLog('ad','err','Network error: '+err.message);
-    setBadge('ad','e','Failed');
-    btn.disabled=false;btn.textContent='🚀 Start Auto Download';
-  }
+    if(d.error){addLog('ad','err',d.error);setBadge('ad','e','Failed');
+      btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
+    _adJobId=d.job_id;btn.textContent='Running…';_adPoll(_adJobId);
+  }catch(err){addLog('ad','err','Network error: '+err.message);setBadge('ad','e','Failed');
+    btn.disabled=false;btn.textContent='🚀 Start Auto Download';}
 });
 
-async function pollAutoDownload(jid){
+let _adCapShown=false;
+async function _adPoll(jid){
   try{
-    const res=await fetch('/api/job/'+jid);
-    const d=await res.json();
-    
-    if(d.logs) d.logs.forEach(l=>addLog('ad',l.type,l.msg));
-    if(d.progress!==undefined) document.getElementById('ad-pb').style.width=d.progress+'%';
-    
+    const r=await fetch('/api/job/'+jid);const d=await r.json();
+    if(d.logs)d.logs.forEach(l=>addLog('ad',l.type,l.msg));
+    if(d.progress!=null)document.getElementById('ad-pb').style.width=d.progress+'%';
+    if(d.captcha_needed&&d.captcha_img&&!_adCapShown){
+      _adCapShown=true;
+      document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.captcha_img;
+      document.getElementById('ad-captcha-box').style.display='block';
+      document.getElementById('ad-captcha-val').value='';
+      document.getElementById('ad-captcha-val').focus();
+    }
+    if(!d.captcha_needed)_adCapShown=false;
     if(d.status==='done'){
       setBadge('ad','d','Complete');
       document.getElementById('ad-pb').style.width='100%';
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
-      showAutoDownloadResults(d.files);
-      return;
+      document.getElementById('ad-captcha-box').style.display='none';
+      _adShowFiles(jid,d.files);return;
     }
     if(d.status==='error'){
-      addLog('ad','err','Error: '+(d.error||'Unknown error'));
-      setBadge('ad','e','Failed');
+      addLog('ad','err',d.error||'Unknown error');setBadge('ad','e','Failed');
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
-      return;
+      document.getElementById('ad-captcha-box').style.display='none';return;
     }
-    
-    setTimeout(()=>pollAutoDownload(jid),2000);
-  }catch(err){
-    setTimeout(()=>pollAutoDownload(jid),3000);
-  }
+    setTimeout(()=>_adPoll(jid),1500);
+  }catch(e){setTimeout(()=>_adPoll(jid),3000);}
 }
-
-function showAutoDownloadResults(files){
-  const sec=document.getElementById('ad-dw');
-  const grid=document.getElementById('ad-dlg');
-  if(!sec||!grid) return;
-  
-  sec.style.display='block';
-  grid.innerHTML='';
-  
-  if(!files||!files.length){
-    grid.innerHTML='<div style="color:var(--muted);font-size:.8rem">No files downloaded. Check logs above.</div>';
-    return;
-  }
-  
+async function adRefreshCaptcha(){
+  if(!_adJobId)return;
+  try{
+    const r=await fetch('/api/captcha-refresh/'+_adJobId,{method:'POST'});
+    const d=await r.json();
+    if(d.img){document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.img;
+      document.getElementById('ad-captcha-val').value='';
+      document.getElementById('ad-captcha-val').focus();}
+  }catch(e){}
+}
+async function adSubmitCaptcha(){
+  const txt=document.getElementById('ad-captcha-val').value.trim();
+  if(!txt){alert('Type the CAPTCHA first');return;}
+  const btn=document.getElementById('ad-captcha-btn');
+  btn.disabled=true;btn.textContent='Submitting…';
+  try{
+    const r=await fetch('/api/captcha-submit/'+_adJobId,{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({captcha:txt})});
+    const d=await r.json();
+    if(d.ok){addLog('ad','info','CAPTCHA submitted — logging in...');
+      document.getElementById('ad-captcha-box').style.display='none';_adCapShown=false;}
+    else{addLog('ad','warn','Wrong CAPTCHA — refreshing...');await adRefreshCaptcha();}
+  }catch(e){addLog('ad','warn','Submit failed — try again');}
+  btn.disabled=false;btn.textContent='Submit & Login →';
+}
+function _adShowFiles(jid,files){
+  const sec=document.getElementById('ad-dw'),grid=document.getElementById('ad-dlg');
+  sec.style.display='block';grid.innerHTML='';
+  if(!files||!files.length){grid.innerHTML='<p style="color:var(--muted);font-size:.8rem">No files. Check logs.</p>';return;}
   files.forEach(f=>{
     const c=document.createElement('div');c.className='dlc';
-    c.innerHTML=`<div style="font-size:1.4rem">📥</div>
-      <div class="dl-n">${f.name}</div>
-      <div class="dl-s">${f.size||'Downloaded to PC'}</div>
-      <span style="color:var(--grn);font-size:.7rem">✅ Saved to Downloads</span>`;
+    c.innerHTML=`<div style="font-size:1.5rem">📥</div>
+      <div class="dl-n">${f.name}</div><div class="dl-s">${f.size||''}</div>
+      <a href="/api/dl-file/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
     grid.appendChild(c);
   });
 }
 
-// ── Download Status ───────────────────────────────────────────────
 const MONS=['April','May','June','July','August','September',
             'October','November','December','January','February','March'];
 const RETS=['GSTR1','GSTR1A','GSTR2B','GSTR2A','GSTR3B'];
@@ -1234,10 +1208,6 @@ loadFeedback();
 def index():
     return render_template_string(HTML)
 
-@app.route("/health")
-def health():
-    return jsonify(status="ok", time=int(time.time()))
-
 @app.route("/api/upload", methods=["POST"])
 @rate_limit(limit=20, window=60)
 def api_upload():
@@ -1286,13 +1256,13 @@ def api_upload():
 def api_job(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
-        if not job:
-            return jsonify(error="Job not found"), 404
-        new_logs = job["logs"][:]
-        job["logs"] = []
-        return jsonify(status=job["status"], progress=job["progress"],
-                       logs=new_logs, files=job["files"],
-                       error=job["error"], dl_status=job.get("dl_status",{}))
+    if not job:
+        return jsonify(error="Job not found"), 404
+    new_logs = job["logs"][:]
+    job["logs"] = []
+    return jsonify(status=job["status"], progress=job["progress"],
+                   logs=new_logs, files=job["files"],
+                   error=job["error"], dl_status=job.get("dl_status",{}))
 
 @app.route("/api/download/<job_id>/<filename>")
 @rate_limit(limit=30, window=60)
@@ -1388,978 +1358,414 @@ def api_feedback():
     return jsonify(success=True)
 
 # ═══════════════════════════════════════════════════════════════════
-# HTTP LONG-POLL BRIDGE  (replaces WebSocket — works on all hosts)
+# SERVER-SIDE AUTO DOWNLOAD  — No bridge, no OTP, no paid service
+# User types CAPTCHA once in the web UI. Server does everything else.
 # ═══════════════════════════════════════════════════════════════════
+import queue as _queue, base64 as _b64
 
-def send_browser_command(command_dict, timeout=180):
-    """Put a command on the queue and wait up to `timeout` s for the response."""
-    if not _bridge_connected():
-        return {"status": "error", "error": "No browser connected"}
-    # Drain any stale commands and responses
-    while not _cmd_queue.empty():
-        try: _cmd_queue.get_nowait()
-        except: pass
-    while not _resp_queue.empty():
-        try: _resp_queue.get_nowait()
-        except: pass
-    _cmd_queue.put(command_dict)
-    try:
-        resp = _resp_queue.get(timeout=timeout)
-        return resp
-    except _queue.Empty:
-        return {"status": "error", "error": "Timeout waiting for browser response"}
+# Per-job state: captcha_q gets the text user types; screenshot holds b64 PNG
+_sessions: dict = {}
+_sess_lock = threading.Lock()
 
+# ── Health ────────────────────────────────────────────────────────
+@app.route("/health")
+def health():
+    return jsonify(status="ok")
 
-class RemoteBrowser:
-    """Browser automation via HTTP long-poll bridge"""
-
-    def _cmd(self, d):
-        return send_browser_command(d)
-
-    async def goto(self, url):
-        return self._cmd({"action": "goto", "url": url})
-
-    async def fill(self, selector, value):
-        return self._cmd({"action": "fill", "selector": selector, "value": value})
-
-    async def click(self, selector):
-        return self._cmd({"action": "click", "selector": selector})
-
-    async def screenshot(self):
-        return self._cmd({"action": "screenshot"})
-
-    async def wait_for_selector(self, selector, timeout=30000):
-        return self._cmd({"action": "wait_for_selector", "selector": selector, "timeout": timeout})
-
-    async def get_text(self, selector):
-        return self._cmd({"action": "get_text", "selector": selector})
-
-    async def select_option(self, selector, value):
-        return self._cmd({"action": "select_option", "selector": selector, "value": value})
-
-    async def get_url(self):
-        return self._cmd({"action": "get_url"})
-
-    async def wait_for_navigation(self):
-        return self._cmd({"action": "wait_for_navigation"})
-
-
-# ── Bridge HTTP endpoints (called by browser_bridge.py on PC) ─────
-
-@app.route("/api/bridge/poll", methods=["GET"])
-def bridge_poll():
-    """PC calls this every ~3 s to signal it is alive and pick up a command."""
-    global _bridge_last_seen
-    with _bridge_lock:
-        _bridge_last_seen = time.time()
-    try:
-        cmd = _cmd_queue.get(timeout=8)   # wait up to 8 s for a command
-        return jsonify(cmd)
-    except _queue.Empty:
-        return jsonify({"action": "idle"})   # nothing to do
-
-
-@app.route("/api/bridge/respond", methods=["POST"])
-def bridge_respond():
-    """PC posts the result of the last command here."""
-    data = request.get_json(silent=True) or {}
-    _resp_queue.put(data)
-    return jsonify(ok=True)
-
-# ── Browser Status API ────────────────────────────────────────────
+# ── Browser status — always ready (server runs browser) ───────────
 @app.route("/api/browser-status")
 def browser_status():
-    return jsonify(connected=_bridge_connected())
+    return jsonify(connected=True, mode="server")
 
-# ── Auto Download API ─────────────────────────────────────────────
+# ── CAPTCHA image endpoint ────────────────────────────────────────
+@app.route("/api/captcha-img/<job_id>")
+def captcha_img(job_id):
+    with _sess_lock:
+        s = _sessions.get(job_id, {})
+    img = s.get("screenshot")
+    if not img:
+        return jsonify(error="not ready"), 404
+    return jsonify(img=img)
+
+# ── CAPTCHA refresh ───────────────────────────────────────────────
+@app.route("/api/captcha-refresh/<job_id>", methods=["POST"])
+def captcha_refresh(job_id):
+    with _sess_lock:
+        s = _sessions.get(job_id, {})
+    if not s:
+        return jsonify(error="no session"), 404
+    s.get("refresh_event", threading.Event()).set()
+    # wait up to 6s for new screenshot
+    for _ in range(60):
+        time.sleep(0.1)
+        img = s.get("screenshot")
+        if img:
+            return jsonify(img=img)
+    return jsonify(error="timeout"), 504
+
+# ── CAPTCHA submit ────────────────────────────────────────────────
+@app.route("/api/captcha-submit/<job_id>", methods=["POST"])
+def captcha_submit(job_id):
+    text = (request.get_json(silent=True) or {}).get("captcha","").strip()
+    if not text:
+        return jsonify(ok=False, error="empty")
+    with _sess_lock:
+        s = _sessions.get(job_id)
+    if not s:
+        return jsonify(ok=False, error="no session")
+    s["captcha_q"].put(text)
+    return jsonify(ok=True)
+
+# ── Download file ─────────────────────────────────────────────────
+@app.route("/api/dl-file/<job_id>/<filename>")
+def dl_file(job_id, filename):
+    filename = Path(filename).name
+    fp = OUTPUT_DIR / job_id / filename
+    if not fp.exists():
+        abort(404)
+    return send_file(str(fp), as_attachment=True, download_name=filename)
+
+# ── Start Auto Download ───────────────────────────────────────────
 @app.route("/api/auto-download", methods=["POST"])
 @rate_limit(limit=5, window=60)
 def api_auto_download():
-    """Start auto download from GST portal"""
-    if not WEBSOCKET_AVAILABLE:
-        return jsonify(error="Auto Download feature not available"), 503
-    
-    data = request.get_json(silent=True) or {}
-    gstin = data.get("gstin", "").strip().upper()
-    client_name = data.get("client_name", "").strip()
-    username = data.get("username", "").strip()
-    password = data.get("password", "")
-    fy = data.get("fy", "2025-26")
-    returns = data.get("returns", "all")
-    
+    d = request.get_json(silent=True) or {}
+    gstin       = d.get("gstin","").strip().upper()
+    client_name = d.get("client_name","").strip()
+    username    = d.get("username","").strip()
+    password    = d.get("password","")
+    fy          = d.get("fy","2025-26")
+    returns     = d.get("returns","all")
+
     if not gstin or len(gstin) != 15:
         return jsonify(error="Invalid GSTIN"), 400
     if not client_name:
         return jsonify(error="Company name required"), 400
     if not username or not password:
         return jsonify(error="Username and password required"), 400
-    
-    if not _bridge_connected():
-        return jsonify(error="No browser connected. Run browser_bridge.py on your PC first."), 400
-    
+
     job_id = str(uuid.uuid4())[:8]
-    
+    out_dir = OUTPUT_DIR / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     with jobs_lock:
         jobs[job_id] = {
-            "status": "running",
-            "progress": 0,
-            "logs": [{"type": "info", "msg": "Starting auto download..."}],
-            "files": [],
-            "error": None,
-            "gstin": gstin,
-            "client_name": client_name,
-            "fy": fy,
-            "mode": "autodownload",
-            "dl_status": {}
+            "status": "running", "progress": 0,
+            "logs": [{"type":"info","msg":"Starting..."}],
+            "files": [], "error": None,
+            "captcha_needed": False, "captcha_img": None,
+            "out_dir": str(out_dir),
         }
-    
-    # Start auto download in background
-    def run_async():
+
+    sess = {
+        "captcha_q":     _queue.Queue(),
+        "refresh_event": threading.Event(),
+        "screenshot":    None,
+    }
+    with _sess_lock:
+        _sessions[job_id] = sess
+
+    def run_bg():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(run_auto_download(job_id, gstin, client_name, username, password, fy, returns))
-        except Exception as exc:
-            print(f"Auto download thread error: {exc}")
+            loop.run_until_complete(
+                _auto_download(job_id, gstin, client_name,
+                               username, password, fy, returns, sess))
         finally:
             loop.close()
-    
-    threading.Thread(target=run_async, daemon=True).start()
-    
+            with _sess_lock:
+                _sessions.pop(job_id, None)
+
+    threading.Thread(target=run_bg, daemon=True).start()
     return jsonify(job_id=job_id)
 
-async def run_auto_download(job_id, gstin, client_name, username, password, fy, returns):
-    """
-    Auto-download GST returns via the PC browser bridge.
 
-    KEY DESIGN:
-    ─ Login page: one goto is fine (it IS the login page, no access-denied risk).
-    ─ After login: navigate via portal MENU CLICKS only — no goto URLs.
-    ─ wait_captcha blocks until user presses ENTER in CMD.
-      The bridge script also clicks LOGIN after ENTER automatically.
-    ─ For each return/month: Search first, wait for results to load,
-      then click the exact Download button inside the results section.
-    ─ Download selector is tight — avoids matching nav links like
-      "View/Download Certificates" that share the word "Download".
-    ─ Playwright click timeout on PC = 30 s; server send_browser_command
-      timeout = 180 s; bridge_connected threshold = 200 s.
-      This prevents "No browser connected" during slow portal pages.
-    ─ Access Denied / session expired at any point → auto re-login.
-    ─ "page closed" / "context" errors → auto re-login.
+async def _auto_download(job_id, gstin, client_name,
+                          username, password, fy, returns, sess):
     """
+    Headless Playwright on Render server.
+    Flow:
+      1. Open GST login, fill user+pass
+      2. Screenshot CAPTCHA → send to web UI → user types it
+      3. Submit login → wait for dashboard
+      4. Navigate & download each return to OUTPUT_DIR/job_id/
+    """
+    from playwright.async_api import async_playwright
+
     def log(msg, t="info"):
         with jobs_lock:
             if job_id in jobs:
-                jobs[job_id]["logs"].append({"type": t, "msg": msg})
+                jobs[job_id]["logs"].append({"type":t,"msg":msg})
+
     def prog(p):
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["progress"] = p
 
-    def _cmd_sync(d, timeout=180):
-        """Synchronous wrapper — call via await _cmd() to avoid blocking event loop."""
-        return send_browser_command(d, timeout=timeout)
+    def set_captcha(img_b64):
+        sess["screenshot"] = img_b64
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"] = True
+                jobs[job_id]["captcha_img"]    = img_b64
 
-    async def _cmd(d, timeout=180):
-        """Run blocking bridge command off the event loop."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: _cmd_sync(d, timeout))
+    def clear_captcha():
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"] = False
+                jobs[job_id]["captcha_img"]    = None
 
-    fy_start = fy.split("-")[0].strip()
-    s = int(fy_start); e = s + 1
-    MONTH_LIST = [
-        ("April",     "04", str(s)), ("May",      "05", str(s)),
-        ("June",      "06", str(s)), ("July",     "07", str(s)),
-        ("August",    "08", str(s)), ("September","09", str(s)),
-        ("October",   "10", str(s)), ("November", "11", str(s)),
-        ("December",  "12", str(s)), ("January",  "01", str(e)),
-        ("February",  "02", str(e)), ("March",    "03", str(e)),
+    fy_start = int(fy.split("-")[0])
+    MONTHS = [
+        ("April","04",str(fy_start)),    ("May","05",str(fy_start)),
+        ("June","06",str(fy_start)),     ("July","07",str(fy_start)),
+        ("August","08",str(fy_start)),   ("September","09",str(fy_start)),
+        ("October","10",str(fy_start)),  ("November","11",str(fy_start)),
+        ("December","12",str(fy_start)), ("January","01",str(fy_start+1)),
+        ("February","02",str(fy_start+1)),("March","03",str(fy_start+1)),
     ]
-    downloaded_files = []
+    out_dir = Path(jobs[job_id]["out_dir"])
+    downloaded = []
 
-    # ── Helpers ──────────────────────────────────────────────────────
-
-    def _cur_url_sync(timeout=10):
-        r = send_browser_command({"action": "get_url"}, timeout=timeout)
-        return r.get("url", "").lower()
-
-    async def _cur_url(timeout=10):
-        r = await _cmd({"action": "get_url"}, timeout=timeout)
-        return r.get("url", "").lower()
-
-    def _is_lost_sync():
-        """True if page shows login/access-denied/session-expired."""
-        url = _cur_url_sync()
-        bad = ["accessdenied", "access-denied", "sessionexpired",
-               "session-expired", "/login", "timeout"]
-        return any(b in url for b in bad)
-
-    async def _is_lost():
-        """True if page shows login/access-denied/session-expired."""
-        url = await _cur_url()
-        bad = ["accessdenied", "access-denied", "sessionexpired",
-               "session-expired", "/login", "timeout"]
-        return any(b in url for b in bad)
-
-    # ── Login ─────────────────────────────────────────────────────────
-    async def _do_login(is_relogin=False):
-        if is_relogin:
-            log("🔄 Session lost — re-logging in...", "warn")
-        else:
-            log("Opening GST portal login page...")
-
-        r = await _cmd({"action": "goto",
-                   "url": "https://services.gst.gov.in/services/login"})
-        if r.get("status") == "error":
-            raise RuntimeError(f"Cannot open login page: {r.get('error')}")
-
-        r = await _cmd({"action": "wait_for_selector",
-                   "selector": "#username", "timeout": 30000})
-        if r.get("status") == "error":
-            raise RuntimeError("Login form not found")
-
-        log("Entering username and password...")
-        await _cmd({"action": "fill", "selector": "#username", "value": username})
-        await _cmd({"action": "fill", "selector": "#user_pass", "value": password})
-
-        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
-        if is_relogin:
-            log("🔄  SESSION EXPIRED — RE-LOGIN REQUIRED ON YOUR PC:", "warn")
-        else:
-            log("🛑  ACTION REQUIRED ON YOUR PC:", "warn")
-        log("    1. Look at the Chromium browser window", "warn")
-        log("    2. Type the CAPTCHA shown in the image", "warn")
-        log("    3. Click LOGIN in the browser", "warn")
-        log("    4. Press ENTER here in the CMD window", "warn")
-        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
-
-        r = await _cmd({"action": "wait_captcha"}, timeout=300)
-        if r.get("status") == "error":
-            raise RuntimeError(f"CAPTCHA wait error: {r.get('error')}")
-
-        log("Waiting for login to complete...")
-        for attempt in range(90):
-            await asyncio.sleep(1)
-            url = _cur_url_sync()
-            if any(x in url for x in [
-                "fowelcome", "taxpayerdashboard", "mainmenu",
-                "returns/dashboard", "auth/fo"
-            ]) and "login" not in url:
-                log("✅ Login successful!")
-                await asyncio.sleep(2)
-                return
-            if "accessdenied" in url:
-                raise RuntimeError(
-                    "Access Denied after login — wrong CAPTCHA or credentials.")
-            if attempt % 20 == 0 and attempt > 0:
-                log(f"  Still waiting for dashboard... ({attempt}s)")
-
-        raise RuntimeError("Login timed out. Check credentials / CAPTCHA.")
-
-    # ── Navigate to Returns Dashboard via menu ────────────────────────
-    async def _go_returns_dashboard():
-        log("  → Returns Dashboard (menu)...")
-        await _cmd({"action": "click",
-               "selector": "a:has-text('Returns'), li:has-text('Returns') > a, "
-                           "#menu-returns, .menu-returns"})
-        await asyncio.sleep(2)
-        await _cmd({"action": "click",
-               "selector": "a:has-text('Returns Dashboard'), "
-                           "a:has-text('Returns Dashboard'), .returns-dashboard"})
-        await asyncio.sleep(3)
-
-    # ── Check + re-login if session lost ─────────────────────────────
-    async def _guard(label=""):
-        err_check = await _is_lost()
-        if err_check:
-            log(f"⚠ Session lost{' ('+label+')' if label else ''}. Re-logging in...", "warn")
-            await _do_login(is_relogin=True)
-            await _go_returns_dashboard()
-            return True
-        return False
-
-    # ── Download one return type for all 12 months ────────────────────
-    async def _download_return(return_type, menu_selector, fy_sel, fp_sel,
-                                search_sel, dl_selector, file_ext):
-        log(f"─── Downloading {return_type} ─────────────────────────")
-
-        for mon_name, mon_num, mon_yr in MONTH_LIST:
-            log(f"  {return_type} {mon_name} {mon_yr}...")
-            success = False
-
-            for attempt in range(2):  # 1 retry after re-login
-                try:
-                    # 1. Click return type in Returns Dashboard menu
-                    r = await _cmd({"action": "click", "selector": menu_selector})
-                    await asyncio.sleep(3)
-
-                    # session check after menu click
-                    err = r.get("error","").lower()
-                    if "closed" in err or "context" in err or await _is_lost():
-                        if attempt == 0:
-                            await _do_login(is_relogin=True)
-                            await _go_returns_dashboard()
-                            continue
-                        else: break
-
-                    # 2. Select Financial Year
-                    await _cmd({"action": "select_option",
-                           "selector": fy_sel, "value": fy})
-                    await asyncio.sleep(1)
-
-                    # 3. Select Tax Period (MMYYYY format e.g. 042025)
-                    await _cmd({"action": "select_option",
-                           "selector": fp_sel,
-                           "value": f"{mon_num}{mon_yr}"})
-                    await asyncio.sleep(1)
-
-                    # 4. Click Search / Proceed
-                    await _cmd({"action": "click", "selector": search_sel})
-                    await asyncio.sleep(5)  # wait for results to load
-
-                    # session check after search
-                    if await _is_lost():
-                        if attempt == 0:
-                            await _do_login(is_relogin=True)
-                            await _go_returns_dashboard()
-                            continue
-                        else: break
-
-                    # 5. Click the specific Download button
-                    dl = await _cmd({"action": "click", "selector": dl_selector})
-                    await asyncio.sleep(3)
-
-                    derr = dl.get("error","").lower()
-                    if dl.get("status") == "done":
-                        log(f"  ✓ {return_type} {mon_name} {mon_yr} downloaded", "ok")
-                        downloaded_files.append({
-                            "name": f"{return_type.replace('-','')}_{mon_name}_{mon_yr}.{file_ext}",
-                            "size": "downloaded to PC"
-                        })
-                        success = True; break
-
-                    elif "closed" in derr or "context" in derr or await _is_lost():
-                        log(f"  ⚠ {return_type} {mon_name}: session lost after search — re-logging in", "warn")
-                        if attempt == 0:
-                            await _do_login(is_relogin=True)
-                            await _go_returns_dashboard()
-                            continue
-                        else: break
-
-                    else:
-                        log(f"  ⚠ {return_type} {mon_name}: {dl.get('error','download btn not found')}", "warn")
-                        break
-
-                except Exception as ex:
-                    es = str(ex).lower()
-                    if "closed" in es or "context" in es or "denied" in es:
-                        log(f"  ⚠ {return_type} {mon_name}: page error — re-logging in", "warn")
-                        if attempt == 0:
-                            try:
-                                await _do_login(is_relogin=True)
-                                await _go_returns_dashboard()
-                            except Exception as le:
-                                log(f"  ✗ Re-login failed: {le}", "err"); break
-                            continue
-                        else: break
-                    else:
-                        log(f"  ⚠ {return_type} {mon_name} {mon_yr}: {ex}", "warn")
-                        break
-
-            if not success:
-                # Go back to Returns Dashboard cleanly before next month
-                try: await _go_returns_dashboard()
-                except Exception: pass
-
-    # ══════════════════════════════════════════════════════════════════
-    # MAIN FLOW
-    # ══════════════════════════════════════════════════════════════════
-    try:
-        prog(5)
-
-        # Step 1: Login
-        await _do_login(is_relogin=False)
-        prog(20)
-
-        # Step 2: Navigate to Returns Dashboard via menu
-        await _go_returns_dashboard()
-        prog(25)
-
-        # Step 3: Count steps for progress
-        total_steps = 0
-        if returns in ["all", "gstr1"]:  total_steps += 12
-        if returns in ["all", "gstr2b"]: total_steps += 12
-        if returns in ["all", "gstr2a"]: total_steps += 12
-        if returns in ["all", "gstr3b"]: total_steps += 12
-        step = [0]
-        def step_prog():
-            step[0] += 1
-            prog(min(25 + int(step[0] / max(total_steps,1) * 65), 90))
-
-        # ── Shared selectors ──────────────────────────────────────────
-        # FY / period dropdowns — same on GSTR-1, 2A, 2B, 3B pages
-        FY_SEL  = "#finYear, select[name='fy'], select[ng-model*='year'], select[id*='Year']"
-        FP_SEL  = "#taxPeriod, select[name='fp'], select[ng-model*='period'], select[id*='Period']"
-        # Search button
-        SRCH    = ("#searchBtn, #proceed-btn, button[type=submit]:has-text('Search'), "
-                   "button:has-text('Proceed'), button:has-text('SEARCH')")
-        # Download buttons — TIGHT selectors that avoid nav/header links
-        # Only match buttons / anchors that are inside the results table or
-        # action area, NOT the top nav bar links like "View/Download Certificates"
-        DL_JSON = ("#downloadJson, #dwn-btn, button#downloadBtn, "
-                   "a#downloadBtn, "
-                   "td a:has-text('Download'), "
-                   ".action-btn:has-text('Download'), "
-                   "button.btn:has-text('Download JSON')")
-        DL_XLSX = ("#downloadExcel, #dwn-btn, button#downloadBtn, "
-                   "a#downloadBtn, "
-                   "td a:has-text('Download'), "
-                   ".action-btn:has-text('Download'), "
-                   "button.btn:has-text('Download')")
-        DL_PDF  = ("#downloadPdf, button#downloadBtn, "
-                   "a#downloadBtn, "
-                   "td a:has-text('Download'), "
-                   ".action-btn:has-text('Download'), "
-                   "button.btn:has-text('PDF'), button.btn:has-text('Download')")
-
-        # Step 4: Download each return type
-        if returns in ["all", "gstr1"]:
-            await _download_return(
-                return_type  = "GSTR-1",
-                menu_selector= ("a[href*='gstr1'], a:has-text('GSTR-1'), "
-                                "a:has-text('GSTR1'), td:has-text('GSTR-1') a"),
-                fy_sel=FY_SEL, fp_sel=FP_SEL, search_sel=SRCH,
-                dl_selector  = DL_JSON, file_ext="zip")
-            for _ in MONTH_LIST: step_prog()
-
-        if returns in ["all", "gstr2b"]:
-            await _download_return(
-                return_type  = "GSTR-2B",
-                menu_selector= ("a[href*='gstr2b'], a:has-text('GSTR-2B'), "
-                                "a:has-text('GSTR2B'), td:has-text('GSTR-2B') a"),
-                fy_sel=FY_SEL, fp_sel=FP_SEL, search_sel=SRCH,
-                dl_selector  = DL_XLSX, file_ext="xlsx")
-            for _ in MONTH_LIST: step_prog()
-
-        if returns in ["all", "gstr2a"]:
-            await _download_return(
-                return_type  = "GSTR-2A",
-                menu_selector= ("a[href*='gstr2a'], a:has-text('GSTR-2A'), "
-                                "a:has-text('GSTR2A'), td:has-text('GSTR-2A') a"),
-                fy_sel=FY_SEL, fp_sel=FP_SEL, search_sel=SRCH,
-                dl_selector  = DL_XLSX, file_ext="xlsx")
-            for _ in MONTH_LIST: step_prog()
-
-        if returns in ["all", "gstr3b"]:
-            await _download_return(
-                return_type  = "GSTR-3B",
-                menu_selector= ("a[href*='gstr3b'], a:has-text('GSTR-3B'), "
-                                "a:has-text('GSTR3B'), td:has-text('GSTR-3B') a"),
-                fy_sel=FY_SEL, fp_sel=FP_SEL, search_sel=SRCH,
-                dl_selector  = DL_PDF, file_ext="pdf")
-            for _ in MONTH_LIST: step_prog()
-
-        prog(95)
-        n = len(downloaded_files)
-        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
-        log(f"✅ All done! {n} file(s) downloaded to your PC.", "ok")
-        log("   Check your PC Downloads folder.", "ok")
-        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
-        prog(100)
-
-        with jobs_lock:
-            jobs[job_id]["status"] = "done"
-            jobs[job_id]["files"]  = downloaded_files
-
-    except Exception as exc:
-        import traceback
-        log(f"Error: {exc}", "err")
-        for line in traceback.format_exc().split("\n"):
-            if line.strip(): log(f"  {line}", "err")
-        with jobs_lock:
-            jobs[job_id]["status"] = "error"
-            jobs[job_id]["error"]  = str(exc)
-
-
-# ── Download browser_bridge.py ────────────────────────────────────
-@app.route("/api/download_bridge")
-def download_bridge():
-    """Download the correct HTTP-polling browser_bridge.py for user's PC"""
-    try:
-        # Try to serve the actual file if it exists alongside app.py
-        bridge_path = Path(__file__).parent / "browser_bridge.py"
-        if bridge_path.exists():
-            return send_file(str(bridge_path), as_attachment=True,
-                             download_name="browser_bridge.py",
-                             mimetype="text/plain")
-    except Exception:
-        pass
-
-    # Fallback: embedded correct HTTP-polling bridge
-    bridge_code = r'''"""
-browser_bridge.py - Run this on YOUR PC
-========================================
-Uses plain HTTP polling - no WebSocket needed.
-
-HOW TO USE:
-  1. Double-click RUN_BRIDGE.bat  OR  run: python browser_bridge.py
-  2. Open your Render portal -> Auto-Download tab
-  3. Fill GSTIN + credentials -> click Start Auto Download
-  4. This browser window opens GST portal automatically
-  5. Solve CAPTCHA when it appears, press ENTER here
-"""
-
-import sys, subprocess, os
-
-REQUIRED = ["requests", "playwright"]
-
-def _pip(pkg):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q",
-        "--no-warn-script-location"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-print("\n  Checking packages...")
-for pkg in REQUIRED:
-    try:
-        __import__(pkg); print(f"  OK: {pkg}")
-    except ImportError:
-        print(f"  Installing {pkg}...")
-        try: _pip(pkg); print(f"  OK: {pkg} installed")
-        except Exception as e:
-            print(f"  ERROR: {e}"); input("\n  Press Enter to exit..."); sys.exit(1)
-
-_marker = os.path.join(os.path.expanduser("~"), ".playwright_chromium_ok")
-if not os.path.exists(_marker):
-    print("  Installing Chromium (one-time ~150 MB)...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        open(_marker, "w").close(); print("  OK: Chromium installed")
-    except Exception as e:
-        print(f"  WARNING: {e}")
-
-import asyncio, json, base64
-import requests
-from playwright.async_api import async_playwright
-
-# ====================================================
-RENDER_SERVER = "https://gst-app-ut23.onrender.com"
-# ====================================================
-
-POLL_URL    = RENDER_SERVER.rstrip("/") + "/api/bridge/poll"
-RESPOND_URL = RENDER_SERVER.rstrip("/") + "/api/bridge/respond"
-
-def _post(data):
-    try: requests.post(RESPOND_URL, json=data, timeout=10)
-    except Exception as e: print(f"  WARNING: respond failed: {e}")
-
-def _poll():
-    try:
-        r = requests.get(POLL_URL, timeout=12)
-        if r.status_code == 200: return r.json()
-    except Exception as e: print(f"  WARNING: poll failed: {e}")
-    return None
-
-async def run_action(page, data):
-    action = data.get("action", "")
-    if action == "goto":
-        url = data["url"]; print(f"\n  >> Opening: {url}")
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            return {"status": "done", "url": page.url}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "fill":
-        sel = data.get("selector", ""); val = data.get("value", "")
-        disp = "*" * len(val) if "pass" in sel.lower() else val
-        print(f"  >> Fill [{sel}] = {disp}")
-        try: await page.fill(sel, val); return {"status": "done"}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "click":
-        sel = data.get("selector", ""); print(f"  >> Click [{sel}]")
-        try: await page.click(sel, timeout=30000); return {"status": "done"}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "screenshot":
-        try:
-            img = await page.screenshot()
-            return {"status": "screenshot", "image": base64.b64encode(img).decode()}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "wait_for_selector":
-        sel = data.get("selector", ""); timeout = data.get("timeout", 30000)
-        print(f"  >> Wait for [{sel}]")
-        try: await page.wait_for_selector(sel, timeout=timeout); return {"status": "found"}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "get_text":
-        sel = data.get("selector", "")
-        try: return {"status": "text", "text": await page.inner_text(sel)}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "get_url":
-        return {"status": "url", "url": page.url}
-    elif action == "select_option":
-        sel = data.get("selector", ""); val = data.get("value", "")
-        print(f"  >> Select [{sel}] = {val}")
-        try: await page.select_option(sel, val); return {"status": "done"}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "wait_for_navigation":
-        try:
-            await page.wait_for_load_state("networkidle", timeout=30000)
-            return {"status": "done", "url": page.url}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "eval":
-        script = data.get("script", "")
-        try:
-            result = await page.evaluate(script)
-            return {"status": "result", "result": str(result)}
-        except Exception as e: return {"status": "error", "error": str(e)}
-    elif action == "wait_captcha":
-        print()
-        print("  " + "=" * 56)
-        print("  !!  CAPTCHA REQUIRED - DO THIS NOW:  !!")
-        print()
-        print("  1. Look at THIS Chromium browser window")
-        print("  2. Type the CAPTCHA shown in the image")
-        print("  3. Click the LOGIN button in the browser")
-        print("  4. Come back HERE and press ENTER in CMD")
-        print("  " + "=" * 56)
-        print()
-        await asyncio.get_event_loop().run_in_executor(
-            None, lambda: input("  >> Press ENTER AFTER you clicked LOGIN: "))
-        try:
-            await page.click(
-                "#login, button[type=submit], .login-btn, "
-                "button:has-text('LOGIN'), button:has-text('Login')",
-                timeout=5000)
-            print("  >> LOGIN button clicked by script")
-        except Exception:
-            pass
-        return {"status": "captcha_done"}
-    else:
-        return {"status": "error", "error": f"Unknown action: {action}"}
-
-async def main():
-    print()
-    print("  " + "=" * 56)
-    print("   GST Browser Bridge  (HTTP polling)")
-    print("  " + "=" * 56)
-    print(f"\n  Server: {RENDER_SERVER}")
-    print("\n  Testing server connection...")
-    try:
-        r = requests.get(RENDER_SERVER, timeout=15)
-        print(f"  OK: Server reachable (HTTP {r.status_code})")
-    except Exception as e:
-        print(f"\n  ERROR: Cannot reach server: {e}")
-        input("\n  Press Enter to exit..."); return
-
-    print("\n  Starting browser...")
     async with async_playwright() as pw:
-        try:
-            browser = await pw.chromium.launch(
-                headless=False,
-                args=["--start-maximized",
-                      "--disable-blink-features=AutomationControlled",
-                      "--no-sandbox"])
-        except Exception as e:
-            print(f"\n  ERROR: Browser failed: {e}")
-            input("\n  Press Enter to exit..."); return
-
-        context = await browser.new_context(
-            viewport={"width": 1366, "height": 768},
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox","--disable-setuid-sandbox",
+                  "--disable-dev-shm-usage","--disable-gpu","--single-process"]
+        )
+        ctx = await browser.new_context(
+            viewport={"width":1366,"height":768},
             user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"))
-        page = await context.new_page()
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0.0.0 Safari/537.36"),
+            accept_downloads=True,
+        )
+        ctx.set_default_timeout(30000)
+        page = await ctx.new_page()
 
-        print("  OK: Browser ready!")
-        print()
-        print("  NEXT STEPS:")
-        print("  1. Open your Render portal in any browser")
-        print("  2. Go to Auto-Download tab")
-        print("  3. Enter details -> click Start Auto Download")
-        print("  4. This window will do the rest automatically")
-        print()
-        print("  Polling server for commands...")
-        print("  " + "-" * 56)
+        try:
+            # ── LOGIN ─────────────────────────────────────────────
+            log("Opening GST portal login page...")
+            prog(5)
+            await page.goto("https://services.gst.gov.in/services/login",
+                            wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_selector("#username", timeout=20000)
 
-        errs = 0
-        while True:
-            cmd = await asyncio.get_event_loop().run_in_executor(None, _poll)
-            if cmd is None:
-                errs += 1
-                if errs % 5 == 0: print(f"  WARNING: poll failing ({errs}x)")
-                await asyncio.sleep(2); continue
-            errs = 0
-            action = cmd.get("action", "idle")
-            if action == "idle":
-                await asyncio.sleep(1); continue
-            result = await run_action(page, cmd)
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda r=result: _post(r))
+            log("Filling username and password...")
+            await page.fill("#username", username)
+            await page.fill("#user_pass", password)
+            prog(10)
 
-        await browser.close()
-    input("  Press Enter to close...")
+            # ── CAPTCHA LOOP (retry if wrong) ─────────────────────
+            login_ok = False
+            for attempt in range(4):
+                # Screenshot just the CAPTCHA widget
+                try:
+                    cap_el = await page.wait_for_selector(
+                        "img[src*='captcha' i], img[alt*='captcha' i], "
+                        "#imgCaptcha, .captcha img",
+                        timeout=8000)
+                    img_bytes = await cap_el.screenshot()
+                except Exception:
+                    img_bytes = await page.screenshot(clip={"x":0,"y":0,"width":640,"height":500})
 
-if __name__ == "__main__":
-    try: asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n  Interrupted."); sys.exit(0)
-'''
-    from flask import Response
-    return Response(
-        bridge_code,
-        mimetype="text/plain",
-        headers={"Content-Disposition": "attachment; filename=browser_bridge.py"}
-    )
+                img_b64 = _b64.b64encode(img_bytes).decode()
+                set_captcha(img_b64)
 
-# ═══════════════════════════════════════════════════════════════════
-# WORKERS (Your existing code)
-# ═══════════════════════════════════════════════════════════════════
+                if attempt == 0:
+                    log("🔐 CAPTCHA shown — type it in the box and click Submit", "warn")
+                else:
+                    log(f"❌ Wrong CAPTCHA — try again (attempt {attempt+1})", "warn")
 
-def run_reconciliation(job_id):
-    def log(msg, t="info"):
-        with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
-    def prog(p):
-        with jobs_lock: jobs[job_id]["progress"] = p
-    def set_dl(k, v):
-        with jobs_lock: jobs[job_id]["dl_status"][k] = v
+                # Wait for user to type CAPTCHA (up to 5 min)
+                try:
+                    captcha_text = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: sess["captcha_q"].get(timeout=300))
+                except Exception:
+                    raise RuntimeError("CAPTCHA not entered within 5 minutes")
 
-    try:
-        job         = jobs[job_id]
-        gstin       = job["gstin"]
-        client_name = job["client_name"]
-        fy          = job["fy"]
-        job_dir     = Path(job["job_dir"])
-        out_dir     = Path(job["out_dir"])
-        saved       = job["saved"]
-        FY_MONTHS   = _fy_months(fy)
+                clear_captcha()
+                log(f"Submitting CAPTCHA...")
+                prog(15 + attempt * 3)
 
-        log(f"Starting: {client_name} ({gstin}) FY {fy}")
-        log("⭐ Full access — processing all uploaded files")
-        prog(5)
+                # Fill CAPTCHA field and click login
+                try:
+                    await page.fill(
+                        "input[name='captcha' i], #captcha, input[placeholder*='captcha' i], "
+                        "input[id*='captcha' i], input[maxlength='6'], input[maxlength='8']",
+                        captcha_text)
+                except Exception:
+                    # Try filling by index — CAPTCHA is usually the 3rd input
+                    inputs = await page.query_selector_all("input[type=text], input:not([type=password])")
+                    for inp in inputs:
+                        visible = await inp.is_visible()
+                        if visible:
+                            val = await inp.input_value()
+                            if not val:  # empty field = probably captcha
+                                await inp.fill(captcha_text)
+                                break
 
-        for fpath in saved["r1"]:
-            mon, yr = _detect_month(fpath, FY_MONTHS)
-            if mon:
-                dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
-                if not dest.exists():
-                    try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
-                log(f"  GSTR-1: {mon} {yr}"); set_dl(f"{mon}_GSTR1", "OK")
-            else:
-                log(f"  ⚠ Month not detected in: {Path(fpath).name}", "warn")
+                await page.click("#btnSubmit, button[type=submit], #loginBtn, "
+                                 "button:has-text('LOGIN'), input[type=submit]")
+                prog(20 + attempt * 3)
 
-        for fpath in saved["r2b"]:
-            mon, yr = _detect_month(fpath, FY_MONTHS)
-            if mon:
-                dest = job_dir / f"GSTR2B_{mon}_{yr}.xlsx"
-                if not dest.exists():
-                    try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
-                log(f"  GSTR-2B: {mon} {yr}"); set_dl(f"{mon}_GSTR2B", "OK")
+                # Wait for result — either dashboard or error
+                try:
+                    await page.wait_for_function(
+                        """() => {
+                            const url = window.location.href;
+                            const err = document.querySelector('.error-msg, .alert-danger, #errMsg, .err-msg');
+                            return url.includes('dashboard') || url.includes('mainmenu') ||
+                                   url.includes('taxpayer') || (err && err.innerText.trim().length > 0);
+                        }""",
+                        timeout=20000)
+                except Exception:
+                    pass
 
-        for fpath in saved["r2a"]:
-            mon, yr = _detect_month(fpath, FY_MONTHS)
-            if mon:
-                ext = Path(fpath).suffix.lower()
-                dest = job_dir / f"GSTR2A_{mon}_{yr}{ext}"
-                if not dest.exists():
-                    try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
-                log(f"  GSTR-2A: {mon} {yr}"); set_dl(f"{mon}_GSTR2A", "OK")
+                cur_url = page.url
+                if any(x in cur_url for x in
+                       ["dashboard","mainmenu","taxpayer","auth/","returns/"]):
+                    if "login" not in cur_url:
+                        login_ok = True
+                        log(f"✅ Login successful!")
+                        prog(30)
+                        break
 
-        for fpath in saved["r3b"]:
-            mon, yr = _detect_month(fpath, FY_MONTHS)
-            if mon:
-                dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
-                if not dest.exists():
-                    try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
-                log(f"  GSTR-3B: {mon} {yr}"); set_dl(f"{mon}_GSTR3B", "OK")
+                # Check for error message on page
+                err_el = await page.query_selector(
+                    ".error-msg, .alert-danger, #errMsg, .err-msg, [class*='error']")
+                if err_el:
+                    err_txt = await err_el.inner_text()
+                    log(f"Portal says: {err_txt.strip()[:80]}", "warn")
 
-        for fpath in saved["cust"]:
-            dest = job_dir / "customer_names.xlsx"
-            if not dest.exists():
-                try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
-            log("  Customer names loaded"); break
+                # Still on login? Reload and retry
+                if attempt < 3:
+                    await page.reload(wait_until="domcontentloaded")
+                    await page.wait_for_selector("#username", timeout=15000)
+                    await page.fill("#username", username)
+                    await page.fill("#user_pass", password)
 
-        for fpath in saved["taxlib"]:
-            dest = job_dir / f"TAX_LIABILITY_{Path(fpath).name}"
-            if not dest.exists():
-                try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
-            log(f"  Tax Liability: {Path(dest).name}"); break
+            if not login_ok:
+                raise RuntimeError("Login failed after 4 attempts. Check username/password.")
 
-        prog(25)
+            # ── NAVIGATE TO RETURNS DASHBOARD ─────────────────────
+            log("Navigating to returns dashboard...")
+            prog(33)
+            await page.goto("https://return.gst.gov.in/returns/auth/dashboard",
+                            wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(3)
 
-        suite_path = _find_engine("gst_suite_final.py")
-        if not suite_path:
-            raise FileNotFoundError("gst_suite_final.py not found on server.")
+            # ── DOWNLOAD EACH RETURN ──────────────────────────────
+            total  = (12 if returns in ["all","gstr1"] else 0) + \
+                     (12 if returns in ["all","gstr2b"] else 0) + \
+                     (12 if returns in ["all","gstr3b"] else 0)
+            done   = 0
 
-        log("Loading reconciliation engine...")
-        import importlib.util as _ilu, logging as _lg
-        spec = _ilu.spec_from_file_location("gst_suite", str(suite_path))
-        gst  = _ilu.module_from_spec(spec)
-        spec.loader.exec_module(gst)
+            async def dl_month(return_type, mon_name, mon_num, mon_yr):
+                """Navigate to a return for one month and trigger download."""
+                nonlocal done
+                url_map = {
+                    "gstr1":  "https://return.gst.gov.in/returns/auth/gstr1",
+                    "gstr2b": "https://return.gst.gov.in/returns/auth/gstr2b",
+                    "gstr3b": "https://return.gst.gov.in/returns/auth/gstr3b",
+                }
+                await page.goto(url_map[return_type],
+                                wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
 
-        s = int(fy.split("-")[0]); e = s + 1
-        gst.FY_LABEL = fy
-        gst.MONTHS = [
-            ("April","04",str(s)),("May","05",str(s)),("June","06",str(s)),
-            ("July","07",str(s)),("August","08",str(s)),("September","09",str(s)),
-            ("October","10",str(s)),("November","11",str(s)),("December","12",str(s)),
-            ("January","01",str(e)),("February","02",str(e)),("March","03",str(e)),
-        ]
+                # Select FY
+                for fy_sel in ["#finYear","select[ng-model*='year' i]",
+                               "select[id*='year' i]","select:nth-of-type(1)"]:
+                    try:
+                        await page.select_option(fy_sel, fy); break
+                    except Exception: pass
+                await asyncio.sleep(0.5)
 
-        _log = _lg.getLogger(f"gst_{job_id}")
-        _log.setLevel(_lg.DEBUG)
-        class WL(_lg.Handler):
-            def emit(self, r):
-                log(self.format(r), "err" if r.levelno >= _lg.WARNING else "info")
-        _log.addHandler(WL())
+                # Select period
+                period_val = f"{mon_num}{mon_yr}"
+                for p_sel in ["#taxPeriod","select[ng-model*='period' i]",
+                              "select[id*='period' i]","select:nth-of-type(2)"]:
+                    try:
+                        await page.select_option(p_sel, period_val); break
+                    except Exception: pass
+                await asyncio.sleep(0.5)
 
-        prog(30)
-        log("Running annual reconciliation (1–2 minutes)...")
-        gst.write_annual_reconciliation(str(job_dir), client_name, gstin, _log)
-        prog(65)
-        log("  ✓ Annual reconciliation complete", "ok")
+                # Click Search/Proceed
+                for btn_sel in ["#searchBtn","#proceedBtn",
+                                "button:has-text('Search')",
+                                "button:has-text('Proceed')",
+                                "button[type=submit]"]:
+                    try:
+                        await page.click(btn_sel, timeout=5000); break
+                    except Exception: pass
+                await asyncio.sleep(3)
 
-        extract_path = _find_engine("gstr1_extract.py")
-        gstr1_zips   = list(job_dir.glob("GSTR1_*.zip"))
+                # Trigger download
+                ext = ".zip" if return_type == "gstr1" else \
+                      ".xlsx" if return_type == "gstr2b" else ".pdf"
+                fname = f"{return_type.upper()}_{mon_name}_{mon_yr}{ext}"
+                fpath = out_dir / fname
 
-        if extract_path and gstr1_zips:
-            log(f"Running GSTR-1 detail extraction ({len(gstr1_zips)} months)...")
-            try:
-                spec2 = _ilu.spec_from_file_location("gstr1_extract", str(extract_path))
-                gstr1 = _ilu.module_from_spec(spec2)
-                spec2.loader.exec_module(gstr1)
-                out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
-                gstr1.extract_gstr1_to_excel(str(job_dir), str(out_xl))
-                log(f"  ✓ GSTR-1 detail: {out_xl.name}", "ok")
-            except Exception as ex:
-                log(f"  ⚠ GSTR-1 extraction error: {ex}", "warn")
-        elif not extract_path:
-            log("⚠ gstr1_extract.py not on server — GSTR-1 detail skipped", "warn")
-        else:
-            log("ℹ No GSTR-1 ZIPs uploaded — GSTR-1 detail not generated")
+                async with page.expect_download(timeout=30000) as dl_info:
+                    for dl_sel in ["#downloadBtn","a:has-text('Download')",
+                                   "button:has-text('Download JSON')",
+                                   "button:has-text('Download Excel')",
+                                   "button:has-text('Download')",".download-btn"]:
+                        try:
+                            await page.click(dl_sel, timeout=5000); break
+                        except Exception: pass
+                try:
+                    dl = await dl_info.value
+                    await dl.save_as(str(fpath))
+                    sz = fpath.stat().st_size // 1024
+                    log(f"  ✓ {fname} ({sz} KB)", "ok")
+                    downloaded.append({"name": fname, "size": f"{sz} KB"})
+                except Exception as ex:
+                    log(f"  ⚠ {fname}: {ex}", "warn")
 
-        prog(85)
-        log("Collecting output files...")
+                done += 1
+                prog(33 + int(done / max(total,1) * 62))
 
-        output_files = []
-        for fp in sorted(job_dir.glob("*.xlsx")):
-            dest_fp = out_dir / fp.name
-            shutil.copy2(str(fp), str(dest_fp))
-            sz = dest_fp.stat().st_size // 1024
-            output_files.append({"name": fp.name, "size": f"{sz} KB"})
-            log(f"  ✓ {fp.name} ({sz} KB)", "ok")
+            if returns in ["all","gstr1"]:
+                log("── Downloading GSTR-1 ──────────────────────────")
+                for mn, mm, my in MONTHS:
+                    log(f"  GSTR-1 {mn} {my}...")
+                    try: await dl_month("gstr1", mn, mm, my)
+                    except Exception as ex: log(f"  ⚠ {mn}: {ex}","warn"); done+=1
 
-        if not output_files:
-            raise RuntimeError("No Excel output generated.")
+            if returns in ["all","gstr2b"]:
+                log("── Downloading GSTR-2B ─────────────────────────")
+                for mn, mm, my in MONTHS:
+                    log(f"  GSTR-2B {mn} {my}...")
+                    try: await dl_month("gstr2b", mn, mm, my)
+                    except Exception as ex: log(f"  ⚠ {mn}: {ex}","warn"); done+=1
 
-        prog(100)
-        log(f"Done! {len(output_files)} file(s) ready to download.", "ok")
-        with jobs_lock:
-            jobs[job_id]["status"] = "done"
-            jobs[job_id]["files"]  = output_files
-        _cleanup_uploads(job_id)
+            if returns in ["all","gstr3b"]:
+                log("── Downloading GSTR-3B ─────────────────────────")
+                for mn, mm, my in MONTHS:
+                    log(f"  GSTR-3B {mn} {my}...")
+                    try: await dl_month("gstr3b", mn, mm, my)
+                    except Exception as ex: log(f"  ⚠ {mn}: {ex}","warn"); done+=1
 
-    except Exception as exc:
-        import traceback
-        log(f"Error: {exc}", "err")
-        for line in traceback.format_exc().split('\n'):
-            if line.strip(): log(f"  {line}", "err")
-        with jobs_lock:
-            jobs[job_id]["status"] = "error"
-            jobs[job_id]["error"]  = str(exc)
-        _cleanup_uploads(job_id)
+            prog(100)
+            log(f"✅ Done! {len(downloaded)} file(s) ready to download.", "ok")
+            with jobs_lock:
+                jobs[job_id]["status"] = "done"
+                jobs[job_id]["files"]  = downloaded
 
-def run_gstr1_only(job_id):
-    def log(msg, t="info"):
-        with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
-    def prog(p):
-        with jobs_lock: jobs[job_id]["progress"] = p
+        except Exception as exc:
+            import traceback
+            log(f"Error: {exc}", "err")
+            for line in traceback.format_exc().split("\n"):
+                if line.strip(): log(f"  {line}", "err")
+            with jobs_lock:
+                jobs[job_id]["status"] = "error"
+                jobs[job_id]["error"]  = str(exc)
+        finally:
+            await browser.close()
 
-    try:
-        job         = jobs[job_id]
-        client_name = job["client_name"]
-        fy          = job["fy"]
-        job_dir     = Path(job["job_dir"])
-        out_dir     = Path(job["out_dir"])
-        saved       = job["saved"]
-        FY_MONTHS   = _fy_months(fy)
 
-        log(f"GSTR-1 Detail: {client_name} FY {fy}")
-        prog(5)
-
-        for fpath in saved["r1"]:
-            mon, yr = _detect_month(fpath, FY_MONTHS)
-            if mon:
-                dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
-                if not dest.exists():
-                    try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
-                log(f"  ✓ GSTR-1: {mon} {yr}")
-            else:
-                log(f"  ⚠ Month not detected: {Path(fpath).name}", "warn")
-
-        for fpath in saved["r2b"] + saved["r2a"]:
-            dest = job_dir / Path(fpath).name
-            if not dest.exists():
-                try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
-
-        for fpath in saved["cust"]:
-            dest = job_dir / "customer_names.xlsx"
-            if not dest.exists():
-                try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
-            break
-
-        prog(20)
-        gstr1_zips = list(job_dir.glob("GSTR1_*.zip"))
-        if not gstr1_zips:
-            raise RuntimeError("No GSTR1_*.zip files found.")
-
-        extract_path = _find_engine("gstr1_extract.py")
-        if not extract_path:
-            raise FileNotFoundError("gstr1_extract.py not found on server.")
-
-        log(f"Extracting {len(gstr1_zips)} month(s)...")
-        import importlib.util as _ilu
-        spec = _ilu.spec_from_file_location("gstr1_extract", str(extract_path))
-        gstr1_mod = _ilu.module_from_spec(spec)
-        spec.loader.exec_module(gstr1_mod)
-
-        prog(30)
-        out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
-        gstr1_mod.extract_gstr1_to_excel(str(job_dir), str(out_xl))
-        prog(90)
-
-        output_files = []
-        for fp in sorted(job_dir.glob("*.xlsx")):
-            dest_fp = out_dir / fp.name
-            shutil.copy2(str(fp), str(dest_fp))
-            sz = dest_fp.stat().st_size // 1024
-            output_files.append({"name": fp.name, "size": f"{sz} KB"})
-            log(f"  ✓ {fp.name} ({sz} KB)", "ok")
-
-        if not output_files:
-            raise RuntimeError("No output files generated.")
-
-        prog(100)
-        log(f"Done! {len(output_files)} file(s) ready.", "ok")
-        with jobs_lock:
-            jobs[job_id]["status"] = "done"
-            jobs[job_id]["files"]  = output_files
-        _cleanup_uploads(job_id)
-
-    except Exception as exc:
-        import traceback
-        log(f"Error: {exc}", "err")
-        for line in traceback.format_exc().split('\n'):
-            if line.strip(): log(f"  {line}", "err")
-        with jobs_lock:
-            jobs[job_id]["status"] = "error"
-            jobs[job_id]["error"]  = str(exc)
-        _cleanup_uploads(job_id)
 
 # ── Startup ───────────────────────────────────────────────────────
 if __name__ == "__main__":
