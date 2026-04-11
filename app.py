@@ -1,18 +1,26 @@
 """
-GST Reconciliation Web App — v5 PUBLIC BETA
-=============================================
+GST Reconciliation Web App — v6 with Auto Download
+===================================================
 • Fully free — no license, no restrictions
 • Scripts (gst_suite_final.py, gstr1_extract.py) never exposed to users
-• 3 tabs: Reconciliation | GSTR-1 Detail | Download Status
-• Feedback / comment section at bottom
+• 4 tabs: Reconciliation | GSTR-1 Detail | Download Status | Auto Download
+• NEW: Download directly from GST portal using PC browser bridge
 • Render.com ready — binds to $PORT
 """
 
-import os, sys, json, zipfile, re, time, shutil, uuid, threading
+import os, sys, json, zipfile, re, time, shutil, uuid, threading, asyncio
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template_string, abort
 import tempfile, platform
+
+# ── WebSocket imports ──────────────────────────────────────────────
+try:
+    import websockets
+    WEBSOCKET_AVAILABLE = True
+except ImportError:
+    WEBSOCKET_AVAILABLE = False
+    print("⚠️ websockets not installed - Auto Download feature disabled")
 
 # ── Directories ───────────────────────────────────────────────────
 def _get_app_dir(subfolder):
@@ -36,6 +44,12 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_MB * 1024 * 1024
 
 jobs      = {}
 jobs_lock = threading.Lock()
+
+# ── WebSocket State ───────────────────────────────────────────────
+connected_clients = set()
+browser_response = None
+response_event = threading.Event()
+ws_loop = None
 
 # ── Rate limiting ─────────────────────────────────────────────────
 _rate = {}
@@ -185,6 +199,7 @@ h1 span{background:linear-gradient(135deg,var(--accent),var(--accent2));
 .badge-grn{background:rgba(0,230,118,.15);color:var(--grn);border:1px solid rgba(0,230,118,.4)}
 .badge-blue{background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.3)}
 .badge-purple{background:rgba(124,58,237,.15);color:#a78bfa;border:1px solid rgba(124,58,237,.3)}
+.badge-orange{background:rgba(255,109,0,.15);color:var(--org);border:1px solid rgba(255,109,0,.4)}
 
 /* Tabs */
 .tabs{display:flex;gap:.25rem;border-bottom:2px solid var(--bdr);margin-bottom:1.1rem;overflow-x:auto}
@@ -208,7 +223,7 @@ h1 span{background:linear-gradient(135deg,var(--accent),var(--accent2));
 @media(max-width:600px){.fg2{grid-template-columns:1fr}}
 .fg{display:flex;flex-direction:column;gap:.3rem}
 label{font-size:.68rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-input[type=text],textarea,select{
+input[type=text],input[type=password],textarea,select{
   background:var(--surf2);border:1px solid var(--bdr);border-radius:7px;
   padding:.52rem .78rem;color:var(--txt);font-family:var(--mono);font-size:.82rem;
   transition:border-color .2s;width:100%}
@@ -242,6 +257,12 @@ select option{background:var(--surf)}
   border-radius:9px;color:var(--accent);font-family:var(--sans);font-size:.82rem;
   font-weight:700;cursor:pointer;transition:all .15s;margin-top:.4rem}
 .btn-sec:hover{background:rgba(0,229,255,.08)}
+.btn-orange{width:100%;padding:.8rem;background:linear-gradient(135deg,var(--org),#ff9100);
+  border:none;border-radius:10px;color:#000;font-family:var(--sans);font-size:.88rem;
+  font-weight:800;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;
+  transition:transform .15s,box-shadow .15s;margin-top:.3rem}
+.btn-orange:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,109,0,.25)}
+.btn-orange:disabled{opacity:.4;cursor:not-allowed;transform:none}
 
 /* Progress */
 .pw{display:none}
@@ -272,6 +293,7 @@ select option{background:var(--surf)}
 .s-p{background:rgba(255,109,0,.15);color:var(--org);border:1px solid rgba(255,109,0,.4)}
 .s-d{background:rgba(0,230,118,.15);color:var(--grn);border:1px solid rgba(0,230,118,.4)}
 .s-e{background:rgba(255,23,68,.15);color:var(--red);border:1px solid rgba(255,23,68,.4)}
+.s-w{background:rgba(0,229,255,.15);color:var(--accent);border:1px solid rgba(0,229,255,.4)}
 .pulse{animation:pulse 1.2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
@@ -297,6 +319,16 @@ select option{background:var(--surf)}
   border-radius:9px;padding:.85rem 1rem;margin-bottom:.9rem;
   font-size:.78rem;color:var(--muted);line-height:1.65}
 .info-box strong{color:var(--txt)}
+.info-box.warn{background:rgba(255,109,0,.05);border-color:rgba(255,109,0,.18)}
+.info-box.success{background:rgba(0,230,118,.05);border-color:rgba(0,230,118,.18)}
+
+/* Connection status */
+.conn-status{display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;
+  background:var(--surf2);border:1px solid var(--bdr);border-radius:8px;
+  font-size:.72rem;font-family:var(--mono);margin-bottom:1rem}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--red)}
+.conn-dot.online{background:var(--grn);box-shadow:0 0 8px var(--grn)}
+.conn-dot.connecting{background:var(--org);animation:pulse 1s infinite}
 
 /* Feedback section */
 .fb-card{background:var(--surf);border:1px solid var(--bdr);border-radius:13px;
@@ -334,6 +366,7 @@ footer a{color:var(--accent);text-decoration:none}
     <span class="badge badge-grn">⭐ 100% Free</span>
     <span class="badge badge-blue">📊 Full Reconciliation</span>
     <span class="badge badge-purple">🔒 Your files stay private</span>
+    <span class="badge badge-orange">🌐 Auto Download NEW</span>
   </div>
 </header>
 
@@ -342,6 +375,7 @@ footer a{color:var(--accent);text-decoration:none}
   <button class="tb active" onclick="switchTab('recon',event)">📊 Reconciliation</button>
   <button class="tb" onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
   <button class="tb" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
+  <button class="tb" onclick="switchTab('autodl',event)">🌐 Auto Download</button>
 </div>
 
 <!-- ══ TAB 1: RECONCILIATION ══ -->
@@ -549,6 +583,97 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 </div><!-- /tab-dlstatus -->
 
+<!-- ══ TAB 4: AUTO DOWNLOAD ══ -->
+<div class="tp" id="tab-autodl">
+<div class="card">
+  <div class="ct">🌐 Auto Download from GST Portal</div>
+  <div class="pills">
+    <span class="pill">GSTR-1</span><span class="pill">GSTR-2B</span>
+    <span class="pill">GSTR-2A</span><span class="pill">GSTR-3B</span>
+    <span class="pill">GSTR-1A</span>
+  </div>
+  <p style="color:var(--muted);font-size:.78rem;line-height:1.6;margin-bottom:.8rem">
+    Download all GST returns <strong style="color:var(--txt)">directly from the portal</strong> using your PC browser.
+    Your credentials stay secure on the server — only the browser runs on your PC for CAPTCHA solving.
+  </p>
+  
+  <!-- Connection Status -->
+  <div class="conn-status" id="conn-status">
+    <div class="conn-dot" id="conn-dot"></div>
+    <span id="conn-text">Checking browser connection...</span>
+  </div>
+</div>
+
+<form id="ad-form">
+<div class="card">
+  <div class="ct">GST Portal Credentials</div>
+  <div class="fg2">
+    <div class="fg"><label>GSTIN *</label>
+      <input type="text" id="ad-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
+    <div class="fg"><label>Company Name *</label>
+      <input type="text" id="ad-name" placeholder="ABC Traders" required></div>
+    <div class="fg"><label>Username *</label>
+      <input type="text" id="ad-username" placeholder="Your GST portal username" required></div>
+    <div class="fg"><label>Password *</label>
+      <input type="password" id="ad-password" placeholder="Your GST portal password" required></div>
+    <div class="fg"><label>Financial Year</label>
+      <select id="ad-fy">
+        <option value="2025-26">2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+      </select></div>
+    <div class="fg"><label>Returns to Download</label>
+      <select id="ad-returns">
+        <option value="all">All Returns (GSTR-1, 2B, 2A, 3B, 1A)</option>
+        <option value="gstr1">GSTR-1 Only</option>
+        <option value="gstr2b">GSTR-2B Only</option>
+        <option value="gstr3b">GSTR-3B Only</option>
+      </select></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="ct">How It Works</div>
+  <div class="info-box">
+    <strong>Step 1:</strong> Click "Start Auto Download" below<br>
+    <strong>Step 2:</strong> Run <code>browser_bridge.py</code> on your PC (one-time setup)<br>
+    <strong>Step 3:</strong> Chrome will open on your PC with GST portal<br>
+    <strong>Step 4:</strong> Type the CAPTCHA when it appears<br>
+    <strong>Step 5:</strong> Files download automatically to your PC!
+  </div>
+  <button type="submit" class="btn-orange" id="ad-submit">🚀 Start Auto Download</button>
+</div>
+</form>
+
+<div class="card pw" id="ad-pw">
+  <div class="ct">Auto Download Progress <span class="sbg s-p pulse" id="ad-badge">Running</span></div>
+  <div class="pb-w"><div class="pb" id="ad-pb"></div></div>
+  <div class="lb" id="ad-lb"></div>
+</div>
+
+<div class="card dw" id="ad-dw">
+  <div class="ct">Downloaded Files</div>
+  <div class="dl-g" id="ad-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ✅ Files downloaded to your PC's Downloads folder. Upload them to the Reconciliation tab to process.
+  </p>
+</div>
+
+<div class="card" id="ad-setup" style="display:none">
+  <div class="ct">⚠️ Browser Bridge Not Connected</div>
+  <div class="info-box warn">
+    <strong>To use Auto Download, you need to run the browser bridge on your PC:</strong><br><br>
+    <strong>1.</strong> Download <code>browser_bridge.py</code> to your PC<br>
+    <strong>2.</strong> Install Python dependencies: <code>pip install playwright websockets</code><br>
+    <strong>3.</strong> Install browser: <code>playwright install chromium</code><br>
+    <strong>4.</strong> Run: <code>python browser_bridge.py</code><br><br>
+    Then refresh this page and try again.
+  </div>
+  <a href="/api/download_bridge" class="btn-dl" style="display:inline-block;padding:.6rem 1.2rem">⬇️ Download browser_bridge.py</a>
+</div>
+</div><!-- /tab-autodl -->
+
 <!-- ══ FEEDBACK SECTION ══ -->
 <div class="fb-card" id="feedback-section">
   <div class="ct">💬 Feedback &amp; Comments</div>
@@ -626,6 +751,9 @@ function switchTab(name, e){
       b.classList.add('active');
   });
   document.getElementById('tab-'+name).classList.add('active');
+  
+  // Check connection status when switching to autodl tab
+  if(name==='autodl') checkBrowserConnection();
 }
 
 // ── File zones ────────────────────────────────────────────────────
@@ -760,6 +888,145 @@ function showDownloads(pfx,jid,files){
     c.innerHTML=`<div style="font-size:1.4rem">${icon}</div>
       <div class="dl-n">${f.name}</div><div class="dl-s">${f.size}</div>
       <a href="/api/download/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>Download ↓</a>`;
+    grid.appendChild(c);
+  });
+}
+
+// ── Browser Connection Check ─────────────────────────────────────
+async function checkBrowserConnection(){
+  const dot=document.getElementById('conn-dot');
+  const txt=document.getElementById('conn-text');
+  const setup=document.getElementById('ad-setup');
+  const form=document.getElementById('ad-form');
+  
+  dot.className='conn-dot connecting';
+  txt.textContent='Checking browser connection...';
+  
+  try{
+    const res=await fetch('/api/browser-status');
+    const d=await res.json();
+    
+    if(d.connected){
+      dot.className='conn-dot online';
+      txt.textContent='✅ Browser bridge connected! Ready to download.';
+      if(setup) setup.style.display='none';
+      if(form) form.style.display='block';
+    } else {
+      dot.className='conn-dot';
+      txt.textContent='❌ Browser bridge not connected. Run browser_bridge.py on your PC.';
+      if(setup) setup.style.display='block';
+      if(form) form.style.display='none';
+    }
+  }catch(e){
+    dot.className='conn-dot';
+    txt.textContent='❌ Cannot check connection. Server may be busy.';
+  }
+}
+
+// ── Auto Download Form ────────────────────────────────────────────
+document.getElementById('ad-form').addEventListener('submit', async e=>{
+  e.preventDefault();
+  
+  const gstin=document.getElementById('ad-gstin').value.trim().toUpperCase();
+  const cname=document.getElementById('ad-name').value.trim();
+  const username=document.getElementById('ad-username').value.trim();
+  const password=document.getElementById('ad-password').value;
+  const fy=document.getElementById('ad-fy').value;
+  const returns=document.getElementById('ad-returns').value;
+  
+  if(!gstin||gstin.length!==15){alert('Enter a valid 15-character GSTIN');return;}
+  if(!cname){alert('Enter company name');return;}
+  if(!username){alert('Enter GST portal username');return;}
+  if(!password){alert('Enter GST portal password');return;}
+  
+  document.getElementById('ad-pw').style.display='block';
+  document.getElementById('ad-dw').style.display='none';
+  document.getElementById('ad-lb').innerHTML='';
+  document.getElementById('ad-pb').style.width='0%';
+  
+  const btn=document.getElementById('ad-submit');
+  btn.disabled=true;btn.textContent='Connecting to your PC browser...';
+  
+  addLog('ad','info','Starting auto download...');
+  addLog('ad','info','Waiting for browser connection...');
+  
+  try{
+    const res=await fetch('/api/auto-download',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({gstin,client_name:cname,username,password,fy,returns})
+    });
+    const d=await res.json();
+    
+    if(d.error){
+      addLog('ad','err','Error: '+d.error);
+      setBadge('ad','e','Failed');
+      btn.disabled=false;btn.textContent='🚀 Start Auto Download';
+      return;
+    }
+    
+    addLog('ad','info','Browser connected! Opening GST portal...');
+    btn.textContent='Downloading...';
+    
+    // Poll for progress
+    pollAutoDownload(d.job_id);
+    
+  }catch(err){
+    addLog('ad','err','Network error: '+err.message);
+    setBadge('ad','e','Failed');
+    btn.disabled=false;btn.textContent='🚀 Start Auto Download';
+  }
+});
+
+async function pollAutoDownload(jid){
+  try{
+    const res=await fetch('/api/job/'+jid);
+    const d=await res.json();
+    
+    if(d.logs) d.logs.forEach(l=>addLog('ad',l.type,l.msg));
+    if(d.progress!==undefined) document.getElementById('ad-pb').style.width=d.progress+'%';
+    
+    if(d.status==='done'){
+      setBadge('ad','d','Complete');
+      document.getElementById('ad-pb').style.width='100%';
+      document.getElementById('ad-submit').disabled=false;
+      document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
+      showAutoDownloadResults(d.files);
+      return;
+    }
+    if(d.status==='error'){
+      addLog('ad','err','Error: '+(d.error||'Unknown error'));
+      setBadge('ad','e','Failed');
+      document.getElementById('ad-submit').disabled=false;
+      document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
+      return;
+    }
+    
+    setTimeout(()=>pollAutoDownload(jid),2000);
+  }catch(err){
+    setTimeout(()=>pollAutoDownload(jid),3000);
+  }
+}
+
+function showAutoDownloadResults(files){
+  const sec=document.getElementById('ad-dw');
+  const grid=document.getElementById('ad-dlg');
+  if(!sec||!grid) return;
+  
+  sec.style.display='block';
+  grid.innerHTML='';
+  
+  if(!files||!files.length){
+    grid.innerHTML='<div style="color:var(--muted);font-size:.8rem">No files downloaded. Check logs above.</div>';
+    return;
+  }
+  
+  files.forEach(f=>{
+    const c=document.createElement('div');c.className='dlc';
+    c.innerHTML=`<div style="font-size:1.4rem">📥</div>
+      <div class="dl-n">${f.name}</div>
+      <div class="dl-s">${f.size||'Downloaded to PC'}</div>
+      <span style="color:var(--grn);font-size:.7rem">✅ Saved to Downloads</span>`;
     grid.appendChild(c);
   });
 }
@@ -1081,49 +1348,456 @@ def api_feedback():
     }
     fb = _load_feedback()
     fb.append(entry)
-    # Keep last 500 entries only
     if len(fb) > 500: fb = fb[-500:]
     _save_feedback(fb)
     return jsonify(success=True)
 
-# ── Month helpers ─────────────────────────────────────────────────
-def _fy_months(fy):
-    s = int(fy.split("-")[0]); e = s + 1
-    return {
-        "April":str(s),"May":str(s),"June":str(s),"July":str(s),
-        "August":str(s),"September":str(s),"October":str(s),"November":str(s),
-        "December":str(s),"January":str(e),"February":str(e),"March":str(e),
-    }
+# ═══════════════════════════════════════════════════════════════════
+# WEBSOCKET & AUTO DOWNLOAD FEATURE
+# ═══════════════════════════════════════════════════════════════════
 
-def _detect_month(fpath, FY_MONTHS):
-    name = Path(fpath).stem.lower()
-    for part in re.split(r'[_\-\s]', name):
-        if part in MONTHS_MAP:
-            mon = MONTHS_MAP[part]
-            return mon, FY_MONTHS.get(mon, list(FY_MONTHS.values())[0])
+async def send_browser_command(command_dict):
+    """Send command to browser and wait for response"""
+    global browser_response
+    response_event.clear()
+    browser_response = None
+    
+    if not connected_clients:
+        return {"status": "error", "error": "No browser connected"}
+    
+    client = list(connected_clients)[0]
+    await client.send(json.dumps(command_dict))
+    
+    response_event.wait(timeout=30)
+    
+    if browser_response is None:
+        return {"status": "error", "error": "Timeout waiting for browser"}
+    
+    return browser_response
+
+class RemoteBrowser:
+    """Browser automation via WebSocket"""
+    
+    async def goto(self, url):
+        return await send_browser_command({"action": "goto", "url": url})
+    
+    async def fill(self, selector, value):
+        return await send_browser_command({"action": "fill", "selector": selector, "value": value})
+    
+    async def click(self, selector):
+        return await send_browser_command({"action": "click", "selector": selector})
+    
+    async def screenshot(self):
+        return await send_browser_command({"action": "screenshot"})
+    
+    async def wait_for_selector(self, selector, timeout=30000):
+        return await send_browser_command({"action": "wait_for_selector", "selector": selector, "timeout": timeout})
+    
+    async def get_text(self, selector):
+        return await send_browser_command({"action": "get_text", "selector": selector})
+    
+    async def select_option(self, selector, value):
+        return await send_browser_command({"action": "select_option", "selector": selector, "value": value})
+    
+    async def get_url(self):
+        return await send_browser_command({"action": "get_url"})
+    
+    async def wait_for_navigation(self):
+        return await send_browser_command({"action": "wait_for_navigation"})
+
+# ── WebSocket Server ──────────────────────────────────────────────
+async def ws_handler(websocket, path):
+    """Handle browser connection from PC"""
+    global connected_clients, browser_response
+    print(f"🖥️  Browser connected from {websocket.remote_address}")
+    connected_clients.add(websocket)
+    
     try:
-        with zipfile.ZipFile(fpath) as z:
-            for jn in z.namelist():
-                if jn.endswith(".json"):
-                    with z.open(jn) as jf:
-                        d = json.load(jf)
-                        fp = re.sub(r'[^0-9]','', d.get("fp",""))
-                        if len(fp) == 6:
-                            mon = MONTHS_MAP.get(fp[:2])
-                            if mon: return mon, fp[2:]
-    except: pass
-    return None, None
+        async for message in websocket:
+            data = json.loads(message)
+            browser_response = data
+            response_event.set()
+    except websockets.exceptions.ConnectionClosed:
+        print("❌ Browser disconnected")
+    finally:
+        connected_clients.discard(websocket)
 
-def _find_engine(name):
-    for loc in [
-        Path(__file__).parent / name,
-        Path(os.getcwd()) / name,
-        Path(os.path.expanduser("~")) / "Desktop" / name,
-    ]:
-        if loc.exists(): return loc
-    return None
+def start_websocket_server():
+    """Start WebSocket server in background"""
+    if not WEBSOCKET_AVAILABLE:
+        print("⚠️ WebSocket server not started - websockets not installed")
+        return
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    server = websockets.serve(ws_handler, "0.0.0.0", 10000)
+    print("🌐 WebSocket server started on ws://0.0.0.0:10000")
+    
+    loop.run_until_complete(server)
+    loop.run_forever()
 
-# ── Worker: Reconciliation + GSTR-1 detail ────────────────────────
+# Start WebSocket server
+if WEBSOCKET_AVAILABLE:
+    ws_thread = threading.Thread(target=start_websocket_server, daemon=True)
+    ws_thread.start()
+
+# ── Browser Status API ────────────────────────────────────────────
+@app.route("/api/browser-status")
+def browser_status():
+    return jsonify(connected=len(connected_clients) > 0)
+
+# ── Auto Download API ─────────────────────────────────────────────
+@app.route("/api/auto-download", methods=["POST"])
+@rate_limit(limit=5, window=60)
+def api_auto_download():
+    """Start auto download from GST portal"""
+    if not WEBSOCKET_AVAILABLE:
+        return jsonify(error="Auto Download feature not available"), 503
+    
+    data = request.get_json(silent=True) or {}
+    gstin = data.get("gstin", "").strip().upper()
+    client_name = data.get("client_name", "").strip()
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    fy = data.get("fy", "2025-26")
+    returns = data.get("returns", "all")
+    
+    if not gstin or len(gstin) != 15:
+        return jsonify(error="Invalid GSTIN"), 400
+    if not client_name:
+        return jsonify(error="Company name required"), 400
+    if not username or not password:
+        return jsonify(error="Username and password required"), 400
+    
+    if not connected_clients:
+        return jsonify(error="No browser connected. Run browser_bridge.py on your PC first."), 400
+    
+    job_id = str(uuid.uuid4())[:8]
+    
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "running",
+            "progress": 0,
+            "logs": [{"type": "info", "msg": "Starting auto download..."}],
+            "files": [],
+            "error": None,
+            "gstin": gstin,
+            "client_name": client_name,
+            "fy": fy,
+            "mode": "autodownload",
+            "dl_status": {}
+        }
+    
+    # Start auto download in background
+    def run_async():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(run_auto_download(job_id, gstin, client_name, username, password, fy, returns))
+        print(f"Auto download result: {result}")
+    
+    threading.Thread(target=run_async, daemon=True).start()
+    
+    return jsonify(job_id=job_id)
+
+async def run_auto_download(job_id, gstin, client_name, username, password, fy, returns):
+    """Auto download GST returns via browser bridge"""
+    
+    def log(msg, t="info"):
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["logs"].append({"type": t, "msg": msg})
+    
+    def prog(p):
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["progress"] = p
+    
+    try:
+        browser = RemoteBrowser()
+        downloaded_files = []
+        
+        log("Connecting to your PC browser...")
+        prog(5)
+        
+        # Navigate to GST portal
+        log("Opening GST portal...")
+        await browser.goto("https://www.gst.gov.in/")
+        await asyncio.sleep(2)
+        prog(10)
+        
+        # Click login
+        log("Navigating to login page...")
+        try:
+            await browser.click('a:has-text("Login")')
+        except:
+            try:
+                await browser.click('//a[contains(text(),"Login")]')
+            except:
+                pass
+        
+        await browser.wait_for_selector("#username")
+        prog(15)
+        
+        # Fill credentials
+        log("Entering credentials...")
+        await browser.fill("#username", username)
+        await browser.fill("#user_pass", password)
+        prog(20)
+        
+        # Wait for CAPTCHA
+        log("=" * 50)
+        log("🛑 PLEASE SOLVE CAPTCHA ON YOUR PC BROWSER!")
+        log("=" * 50)
+        
+        # Take screenshot
+        screenshot = await browser.screenshot()
+        if screenshot.get("status") == "screenshot":
+            log("Screenshot captured - check your PC browser")
+        
+        # Wait for login (max 3 minutes)
+        login_success = False
+        for i in range(180):
+            await asyncio.sleep(1)
+            url_result = await browser.get_url()
+            current_url = url_result.get("url", "")
+            
+            if "dashboard" in current_url or "mainmenu" in current_url:
+                log("✅ Login successful!")
+                login_success = True
+                break
+            
+            if i % 15 == 0:
+                log(f"Waiting for login... ({i}s)")
+        
+        if not login_success:
+            log("❌ Login timeout - CAPTCHA not solved", "err")
+            with jobs_lock:
+                jobs[job_id]["status"] = "error"
+                jobs[job_id]["error"] = "Login timeout - CAPTCHA not solved"
+            return
+        
+        prog(30)
+        
+        # Download based on selection
+        if returns in ["all", "gstr1"]:
+            log("Downloading GSTR-1 returns...")
+            # Navigate to GSTR-1
+            await browser.goto("https://return.gst.gov.in/returns/auth/gstr1")
+            await asyncio.sleep(2)
+            
+            # Select financial year
+            try:
+                await browser.select_option("#finYear", fy)
+                log(f"Selected FY: {fy}")
+            except Exception as e:
+                log(f"Could not select FY: {e}", "warn")
+            
+            # Download each month
+            months = ["04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03"]
+            for i, month in enumerate(months):
+                try:
+                    await browser.select_option("#monYear", month)
+                    await browser.click("#searchBtn")
+                    await asyncio.sleep(3)
+                    
+                    # Click download
+                    try:
+                        await browser.click("#downloadBtn")
+                        log(f"✓ Downloaded GSTR-1 for month {month}")
+                        downloaded_files.append({"name": f"GSTR1_{month}_{fy}.zip"})
+                    except:
+                        log(f"⚠ Could not download GSTR-1 for month {month}", "warn")
+                    
+                    prog(30 + (i + 1) * 4)
+                except Exception as e:
+                    log(f"Error downloading month {month}: {e}", "err")
+        
+        if returns in ["all", "gstr2b"]:
+            log("Downloading GSTR-2B returns...")
+            await browser.goto("https://return.gst.gov.itc/auth/gstr2b")
+            await asyncio.sleep(2)
+            # Similar logic for GSTR-2B
+            log("GSTR-2B download initiated")
+        
+        if returns in ["all", "gstr3b"]:
+            log("Downloading GSTR-3B returns...")
+            await browser.goto("https://return.gst.gov.in/returns/auth/gstr3b")
+            await asyncio.sleep(2)
+            log("GSTR-3B download initiated")
+        
+        prog(90)
+        log("Downloads complete!")
+        
+        # Close browser
+        await browser.goto("about:blank")
+        
+        prog(100)
+        
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"] = downloaded_files
+            jobs[job_id]["logs"].append({"type": "ok", "msg": f"Downloaded {len(downloaded_files)} files to your PC!"})
+        
+    except Exception as e:
+        import traceback
+        log(f"Error: {e}", "err")
+        for line in traceback.format_exc().split('\n'):
+            if line.strip():
+                log(f"  {line}", "err")
+        
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"] = str(e)
+
+# ── Download browser_bridge.py ────────────────────────────────────
+@app.route("/api/download_bridge")
+def download_bridge():
+    """Download browser_bridge.py for user's PC"""
+    bridge_code = '''"""
+browser_bridge.py - Run this on YOUR PC
+Connects your local browser to the Render server for GST automation
+"""
+
+import asyncio
+import websockets
+import json
+import base64
+import os
+from playwright.sync_api import sync_playwright
+
+# UPDATE THIS with your Render app WebSocket URL
+# Example: "wss://my-gst-app.onrender.com"
+RENDER_SERVER = "wss://YOUR-RENDER-APP.onrender.com"
+
+async def browser_handler():
+    print("=" * 60)
+    print("🖥️  GST Browser Bridge")
+    print("=" * 60)
+    print("📱 Connecting to Render server...")
+    
+    ws_url = RENDER_SERVER.replace("https://", "wss://").replace("http://", "ws://")
+    if not ws_url.startswith("ws"):
+        ws_url = "wss://" + ws_url
+    if not ws_url.endswith("/ws"):
+        ws_url += "/ws"
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            args=['--start-maximized']
+        )
+        context = browser.new_context(viewport={"width": 1366, "height": 768})
+        page = context.new_page()
+        
+        print("✅ Browser ready!")
+        print("⏳ Waiting for commands from Render...")
+        print("=" * 60)
+        
+        try:
+            async with websockets.connect(ws_url) as ws:
+                print("🔗 Connected to Render!")
+                print("🌐 GST Portal will open automatically...")
+                print("📝 Type CAPTCHA when it appears")
+                print("=" * 60)
+                
+                while True:
+                    try:
+                        message = await ws.recv()
+                        data = json.loads(message)
+                        action = data.get("action")
+                        
+                        if action == "goto":
+                            url = data.get("url")
+                            print(f"🌐 Navigating to: {url}")
+                            page.goto(url, wait_until="networkidle")
+                            await ws.send(json.dumps({"status": "done", "url": page.url}))
+                            
+                        elif action == "fill":
+                            selector = data.get("selector")
+                            value = data.get("value")
+                            display_value = "*" * len(value) if "pass" in selector.lower() else value
+                            print(f"⌨️  Filling {selector}: {display_value}")
+                            page.fill(selector, value)
+                            await ws.send(json.dumps({"status": "done"}))
+                            
+                        elif action == "click":
+                            selector = data.get("selector")
+                            print(f"🖱️  Clicking: {selector}")
+                            page.click(selector)
+                            await ws.send(json.dumps({"status": "done"}))
+                            
+                        elif action == "screenshot":
+                            print("📸 Taking screenshot...")
+                            screenshot = page.screenshot(full_page=True)
+                            encoded = base64.b64encode(screenshot).decode()
+                            await ws.send(json.dumps({
+                                "status": "screenshot", 
+                                "image": encoded
+                            }))
+                            
+                        elif action == "wait_for_selector":
+                            selector = data.get("selector")
+                            timeout = data.get("timeout", 30000)
+                            print(f"⏳ Waiting for: {selector}")
+                            page.wait_for_selector(selector, timeout=timeout)
+                            await ws.send(json.dumps({"status": "found"}))
+                            
+                        elif action == "get_text":
+                            selector = data.get("selector")
+                            text = page.inner_text(selector)
+                            await ws.send(json.dumps({"status": "text", "text": text}))
+                            
+                        elif action == "select_option":
+                            selector = data.get("selector")
+                            value = data.get("value")
+                            page.select_option(selector, value)
+                            await ws.send(json.dumps({"status": "done"}))
+                            
+                        elif action == "get_url":
+                            await ws.send(json.dumps({
+                                "status": "url", 
+                                "url": page.url
+                            }))
+                            
+                        elif action == "wait_for_navigation":
+                            print("⏳ Waiting for navigation...")
+                            page.wait_for_load_state("networkidle")
+                            await ws.send(json.dumps({"status": "done", "url": page.url}))
+                            
+                    except Exception as e:
+                        error_msg = str(e)
+                        print(f"❌ Error: {error_msg}")
+                        await ws.send(json.dumps({"status": "error", "error": error_msg}))
+                        
+        except websockets.exceptions.ConnectionClosed:
+            print("❌ Connection to Render lost")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+        finally:
+            browser.close()
+            print("🔒 Browser closed")
+
+if __name__ == "__main__":
+    if "YOUR-RENDER-APP" in RENDER_SERVER:
+        print("⚠️  WARNING: Update RENDER_SERVER with your actual Render URL!")
+        print("Example: wss://my-gst-app.onrender.com")
+        exit(1)
+    
+    asyncio.run(browser_handler())
+'''
+    
+    from flask import Response
+    return Response(
+        bridge_code,
+        mimetype="text/plain",
+        headers={"Content-Disposition": "attachment; filename=browser_bridge.py"}
+    )
+
+# ═══════════════════════════════════════════════════════════════════
+# WORKERS (Your existing code)
+# ═══════════════════════════════════════════════════════════════════
+
 def run_reconciliation(job_id):
     def log(msg, t="info"):
         with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
@@ -1146,8 +1820,6 @@ def run_reconciliation(job_id):
         log("⭐ Full access — processing all uploaded files")
         prog(5)
 
-        # ── Rename to standard names ───────────────────────────────
-        log("Preparing uploaded files...")
         for fpath in saved["r1"]:
             mon, yr = _detect_month(fpath, FY_MONTHS)
             if mon:
@@ -1203,12 +1875,9 @@ def run_reconciliation(job_id):
 
         prog(25)
 
-        # ── Load reconciliation engine ─────────────────────────────
         suite_path = _find_engine("gst_suite_final.py")
         if not suite_path:
-            raise FileNotFoundError(
-                "gst_suite_final.py not found on server. "
-                "Contact the administrator.")
+            raise FileNotFoundError("gst_suite_final.py not found on server.")
 
         log("Loading reconciliation engine...")
         import importlib.util as _ilu, logging as _lg
@@ -1238,7 +1907,6 @@ def run_reconciliation(job_id):
         prog(65)
         log("  ✓ Annual reconciliation complete", "ok")
 
-        # ── GSTR-1 Full Detail ─────────────────────────────────────
         extract_path = _find_engine("gstr1_extract.py")
         gstr1_zips   = list(job_dir.glob("GSTR1_*.zip"))
 
@@ -1270,9 +1938,7 @@ def run_reconciliation(job_id):
             log(f"  ✓ {fp.name} ({sz} KB)", "ok")
 
         if not output_files:
-            raise RuntimeError(
-                "No Excel output generated. "
-                "Check that uploaded ZIP files contain valid GST JSON data.")
+            raise RuntimeError("No Excel output generated.")
 
         prog(100)
         log(f"Done! {len(output_files)} file(s) ready to download.", "ok")
@@ -1291,8 +1957,6 @@ def run_reconciliation(job_id):
             jobs[job_id]["error"]  = str(exc)
         _cleanup_uploads(job_id)
 
-
-# ── Worker: GSTR-1 Detail only ────────────────────────────────────
 def run_gstr1_only(job_id):
     def log(msg, t="info"):
         with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
@@ -1338,9 +2002,7 @@ def run_gstr1_only(job_id):
         prog(20)
         gstr1_zips = list(job_dir.glob("GSTR1_*.zip"))
         if not gstr1_zips:
-            raise RuntimeError(
-                "No GSTR1_*.zip files found. "
-                "Ensure filenames contain the month name (e.g. GSTR1_April_2025.zip).")
+            raise RuntimeError("No GSTR1_*.zip files found.")
 
         extract_path = _find_engine("gstr1_extract.py")
         if not extract_path:
@@ -1350,8 +2012,7 @@ def run_gstr1_only(job_id):
         import importlib.util as _ilu
         spec = _ilu.spec_from_file_location("gstr1_extract", str(extract_path))
         gstr1_mod = _ilu.module_from_spec(spec)
-        spec2 = spec  # avoid shadowing
-        spec2.loader.exec_module(gstr1_mod)
+        spec.loader.exec_module(gstr1_mod)
 
         prog(30)
         out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
@@ -1386,12 +2047,11 @@ def run_gstr1_only(job_id):
             jobs[job_id]["error"]  = str(exc)
         _cleanup_uploads(job_id)
 
-
 # ── Startup ───────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n  ============================================================")
-    print(f"   GST Reconciliation Portal v5 — Public Beta")
+    print(f"   GST Reconciliation Portal v6 — with Auto Download")
     print(f"  ============================================================")
     print(f"   Upload dir    : {UPLOAD_DIR}")
     print(f"   Output dir    : {OUTPUT_DIR}")
@@ -1400,6 +2060,7 @@ if __name__ == "__main__":
     ext   = _find_engine("gstr1_extract.py")
     print(f"   Suite engine  : {suite or '⚠ NOT FOUND'}")
     print(f"   GSTR-1 engine : {ext   or '⚠ NOT FOUND'}")
+    print(f"   WebSocket     : {'✅ Enabled' if WEBSOCKET_AVAILABLE else '⚠ Not available'}")
     print(f"\n   Open: http://localhost:{port}")
     print(f"  ============================================================\n")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
