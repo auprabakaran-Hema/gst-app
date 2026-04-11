@@ -1518,154 +1518,256 @@ def api_auto_download():
     return jsonify(job_id=job_id)
 
 async def run_auto_download(job_id, gstin, client_name, username, password, fy, returns):
-    """Auto download GST returns via browser bridge"""
-    
+    """
+    Auto-download GST returns via the PC browser bridge.
+    Follows the real GST portal flow at services.gst.gov.in.
+    """
     def log(msg, t="info"):
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["logs"].append({"type": t, "msg": msg})
-    
     def prog(p):
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["progress"] = p
-    
+
+    # FY → start year e.g. "2024-25" → "2024"
+    fy_start = fy.split("-")[0].strip()
+
+    # Month tuples: (display-name, number, year)
+    s = int(fy_start); e = s + 1
+    MONTH_LIST = [
+        ("April",     "04", str(s)), ("May",      "05", str(s)),
+        ("June",      "06", str(s)), ("July",     "07", str(s)),
+        ("August",    "08", str(s)), ("September","09", str(s)),
+        ("October",   "10", str(s)), ("November", "11", str(s)),
+        ("December",  "12", str(s)), ("January",  "01", str(e)),
+        ("February",  "02", str(e)), ("March",    "03", str(e)),
+    ]
+
     try:
         browser = RemoteBrowser()
         downloaded_files = []
-        
-        log("Connecting to your PC browser...")
         prog(5)
-        
-        # Navigate to GST portal
-        log("Opening GST portal...")
-        await browser.goto("https://www.gst.gov.in/")
-        await asyncio.sleep(2)
+
+        # ── Step 1: Go directly to login page ────────────────────
+        log("Opening GST portal login page...")
+        r = browser._cmd({"action": "goto",
+                           "url": "https://services.gst.gov.in/services/login"})
+        if r.get("status") == "error":
+            raise RuntimeError(f"Cannot open GST portal: {r.get('error')}")
+        prog(8)
+
+        # ── Step 2: Wait for username field ──────────────────────
+        log("Waiting for login form...")
+        r = browser._cmd({"action": "wait_for_selector",
+                           "selector": "#username", "timeout": 30000})
+        if r.get("status") == "error":
+            raise RuntimeError("Login form not found on page")
         prog(10)
-        
-        # Click login
-        log("Navigating to login page...")
-        try:
-            await browser.click('a:has-text("Login")')
-        except:
-            try:
-                await browser.click('//a[contains(text(),"Login")]')
-            except:
-                pass
-        
-        await browser.wait_for_selector("#username")
+
+        # ── Step 3: Fill username & password ─────────────────────
+        log("Entering username and password...")
+        browser._cmd({"action": "fill", "selector": "#username",
+                       "value": username})
+        browser._cmd({"action": "fill", "selector": "#user_pass",
+                       "value": password})
         prog(15)
-        
-        # Fill credentials
-        log("Entering credentials...")
-        await browser.fill("#username", username)
-        await browser.fill("#user_pass", password)
+
+        # ── Step 4: Ask user to solve CAPTCHA then click LOGIN ────
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
+        log("🛑  ACTION REQUIRED ON YOUR PC:", "warn")
+        log("    1. Look at the browser_bridge window on your PC", "warn")
+        log("    2. Type the CAPTCHA characters in the browser", "warn")
+        log("    3. Click the LOGIN button", "warn")
+        log("    4. Press ENTER in the bridge window to continue", "warn")
+        log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
+
+        # This blocks until the user presses ENTER in browser_bridge
+        r = browser._cmd({"action": "wait_captcha"})
+        if r.get("status") == "error":
+            raise RuntimeError(f"CAPTCHA wait failed: {r.get('error')}")
         prog(20)
-        
-        # Wait for CAPTCHA
-        log("=" * 50)
-        log("🛑 PLEASE SOLVE CAPTCHA ON YOUR PC BROWSER!")
-        log("=" * 50)
-        
-        # Take screenshot
-        screenshot = await browser.screenshot()
-        if screenshot.get("status") == "screenshot":
-            log("Screenshot captured - check your PC browser")
-        
-        # Wait for login (max 3 minutes)
+
+        # ── Step 5: Wait for successful login (URL change) ────────
+        log("Waiting for login to complete...")
         login_success = False
-        for i in range(180):
+        for attempt in range(60):   # max 60 s
             await asyncio.sleep(1)
-            url_result = await browser.get_url()
-            current_url = url_result.get("url", "")
-            
-            if "dashboard" in current_url or "mainmenu" in current_url:
-                log("✅ Login successful!")
+            r = browser._cmd({"action": "get_url"})
+            url = r.get("url", "")
+            # GST portal post-login URLs contain these fragments
+            if any(x in url for x in [
+                "taxpayerDashboard", "taxpayer/dashboard",
+                "mainmenu", "dashboard", "returns/dashboard",
+                "services/dashboard", "auth/"
+            ]) and "login" not in url:
                 login_success = True
+                log(f"✅ Login successful! ({url[:60]}...)")
                 break
-            
-            if i % 15 == 0:
-                log(f"Waiting for login... ({i}s)")
-        
+            if attempt % 10 == 0 and attempt > 0:
+                log(f"Still waiting for dashboard... ({attempt}s)")
+
         if not login_success:
-            log("❌ Login timeout - CAPTCHA not solved", "err")
-            with jobs_lock:
-                jobs[job_id]["status"] = "error"
-                jobs[job_id]["error"] = "Login timeout - CAPTCHA not solved"
-            return
-        
-        prog(30)
-        
-        # Download based on selection
+            # Last chance: check page title / content
+            r2 = browser._cmd({"action": "get_url"})
+            url2 = r2.get("url", "")
+            if "login" not in url2 and "gst.gov.in" in url2:
+                login_success = True
+                log(f"✅ Logged in (URL: {url2[:60]})")
+            else:
+                raise RuntimeError(
+                    "Login failed or timed out. Wrong CAPTCHA / credentials?")
+
+        prog(25)
+
+        # ── Step 6: Download returns ──────────────────────────────
+        total_steps = 0
+        if returns in ["all", "gstr1"]:   total_steps += 12
+        if returns in ["all", "gstr2b"]:  total_steps += 12
+        if returns in ["all", "gstr2a"]:  total_steps += 12
+        if returns in ["all", "gstr3b"]:  total_steps += 12
+        step = 0
+        base_prog = 25
+
+        def step_prog():
+            nonlocal step; step += 1
+            p = base_prog + int((step / max(total_steps, 1)) * 65)
+            prog(min(p, 90))
+
+        # ── GSTR-1 ───────────────────────────────────────────────
         if returns in ["all", "gstr1"]:
-            log("Downloading GSTR-1 returns...")
-            # Navigate to GSTR-1
-            await browser.goto("https://return.gst.gov.in/returns/auth/gstr1")
-            await asyncio.sleep(2)
-            
-            # Select financial year
-            try:
-                await browser.select_option("#finYear", fy)
-                log(f"Selected FY: {fy}")
-            except Exception as e:
-                log(f"Could not select FY: {e}", "warn")
-            
-            # Download each month
-            months = ["04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03"]
-            for i, month in enumerate(months):
+            log("─── Downloading GSTR-1 ───────────────────────────")
+            r = browser._cmd({"action": "goto",
+                "url": "https://return.gst.gov.in/returns/auth/dashboard"})
+            await asyncio.sleep(3)
+
+            for mon_name, mon_num, mon_yr in MONTH_LIST:
+                log(f"  GSTR-1 {mon_name} {mon_yr}...")
                 try:
-                    await browser.select_option("#monYear", month)
-                    await browser.click("#searchBtn")
+                    # Navigate to GSTR-1 filing
+                    browser._cmd({"action": "goto",
+                        "url": f"https://return.gst.gov.in/returns/auth/gstr1"})
+                    await asyncio.sleep(2)
+
+                    # Select FY and month
+                    browser._cmd({"action": "select_option",
+                        "selector": "select[name='fy'], #finYear, select.fy-select",
+                        "value": fy})
+                    await asyncio.sleep(0.5)
+                    browser._cmd({"action": "select_option",
+                        "selector": "select[name='fp'], #taxPeriod, select.period-select",
+                        "value": f"{mon_num}{mon_yr}"})
+                    await asyncio.sleep(0.5)
+
+                    # Click Search / Proceed
+                    browser._cmd({"action": "click",
+                        "selector": "button[type=submit], #proceed-btn, #searchBtn, "
+                                    "button:has-text('Search'), button:has-text('Proceed')"})
                     await asyncio.sleep(3)
-                    
-                    # Click download
-                    try:
-                        await browser.click("#downloadBtn")
-                        log(f"✓ Downloaded GSTR-1 for month {month}")
-                        downloaded_files.append({"name": f"GSTR1_{month}_{fy}.zip"})
-                    except:
-                        log(f"⚠ Could not download GSTR-1 for month {month}", "warn")
-                    
-                    prog(30 + (i + 1) * 4)
-                except Exception as e:
-                    log(f"Error downloading month {month}: {e}", "err")
-        
+
+                    # Click Download JSON
+                    dl = browser._cmd({"action": "click",
+                        "selector": "#downloadBtn, a:has-text('Download'), "
+                                    "button:has-text('Download JSON'), .download-btn"})
+                    if dl.get("status") == "done":
+                        log(f"  ✓ GSTR-1 {mon_name} {mon_yr} downloaded", "ok")
+                        downloaded_files.append(
+                            {"name": f"GSTR1_{mon_name}_{mon_yr}.zip",
+                             "size": "downloaded to PC"})
+                    else:
+                        log(f"  ⚠ GSTR-1 {mon_name} {mon_yr}: {dl.get('error','no download btn')}", "warn")
+
+                except Exception as ex:
+                    log(f"  ⚠ GSTR-1 {mon_name} {mon_yr} skipped: {ex}", "warn")
+                step_prog()
+
+        # ── GSTR-2B ──────────────────────────────────────────────
         if returns in ["all", "gstr2b"]:
-            log("Downloading GSTR-2B returns...")
-            await browser.goto("https://return.gst.gov.itc/auth/gstr2b")
-            await asyncio.sleep(2)
-            # Similar logic for GSTR-2B
-            log("GSTR-2B download initiated")
-        
+            log("─── Downloading GSTR-2B ──────────────────────────")
+            for mon_name, mon_num, mon_yr in MONTH_LIST:
+                log(f"  GSTR-2B {mon_name} {mon_yr}...")
+                try:
+                    browser._cmd({"action": "goto",
+                        "url": "https://return.gst.gov.in/returns/auth/gstr2b"})
+                    await asyncio.sleep(2)
+                    browser._cmd({"action": "select_option",
+                        "selector": "select[name='fy'], #finYear", "value": fy})
+                    await asyncio.sleep(0.5)
+                    browser._cmd({"action": "select_option",
+                        "selector": "select[name='fp'], #taxPeriod",
+                        "value": f"{mon_num}{mon_yr}"})
+                    await asyncio.sleep(0.5)
+                    browser._cmd({"action": "click",
+                        "selector": "button[type=submit], #proceed-btn, #searchBtn"})
+                    await asyncio.sleep(3)
+                    dl = browser._cmd({"action": "click",
+                        "selector": "#downloadBtn, a:has-text('Download'), "
+                                    "button:has-text('Download'), .download-btn"})
+                    if dl.get("status") == "done":
+                        log(f"  ✓ GSTR-2B {mon_name} {mon_yr} downloaded", "ok")
+                        downloaded_files.append(
+                            {"name": f"GSTR2B_{mon_name}_{mon_yr}.xlsx",
+                             "size": "downloaded to PC"})
+                    else:
+                        log(f"  ⚠ GSTR-2B {mon_name} {mon_yr}: {dl.get('error','no btn')}", "warn")
+                except Exception as ex:
+                    log(f"  ⚠ GSTR-2B {mon_name} {mon_yr} skipped: {ex}", "warn")
+                step_prog()
+
+        # ── GSTR-3B ──────────────────────────────────────────────
         if returns in ["all", "gstr3b"]:
-            log("Downloading GSTR-3B returns...")
-            await browser.goto("https://return.gst.gov.in/returns/auth/gstr3b")
-            await asyncio.sleep(2)
-            log("GSTR-3B download initiated")
-        
-        prog(90)
-        log("Downloads complete!")
-        
-        # Close browser
-        await browser.goto("about:blank")
-        
+            log("─── Downloading GSTR-3B ──────────────────────────")
+            for mon_name, mon_num, mon_yr in MONTH_LIST:
+                log(f"  GSTR-3B {mon_name} {mon_yr}...")
+                try:
+                    browser._cmd({"action": "goto",
+                        "url": "https://return.gst.gov.in/returns/auth/gstr3b"})
+                    await asyncio.sleep(2)
+                    browser._cmd({"action": "select_option",
+                        "selector": "select[name='fy'], #finYear", "value": fy})
+                    await asyncio.sleep(0.5)
+                    browser._cmd({"action": "select_option",
+                        "selector": "select[name='fp'], #taxPeriod",
+                        "value": f"{mon_num}{mon_yr}"})
+                    await asyncio.sleep(0.5)
+                    browser._cmd({"action": "click",
+                        "selector": "button[type=submit], #proceed-btn, #searchBtn"})
+                    await asyncio.sleep(3)
+                    dl = browser._cmd({"action": "click",
+                        "selector": "#downloadBtn, a:has-text('PDF'), "
+                                    "button:has-text('Download'), .download-btn"})
+                    if dl.get("status") == "done":
+                        log(f"  ✓ GSTR-3B {mon_name} {mon_yr} downloaded", "ok")
+                        downloaded_files.append(
+                            {"name": f"GSTR3B_{mon_name}_{mon_yr}.pdf",
+                             "size": "downloaded to PC"})
+                    else:
+                        log(f"  ⚠ GSTR-3B {mon_name} {mon_yr}: {dl.get('error','no btn')}", "warn")
+                except Exception as ex:
+                    log(f"  ⚠ GSTR-3B {mon_name} {mon_yr} skipped: {ex}", "warn")
+                step_prog()
+
+        prog(95)
+        n = len(downloaded_files)
+        log(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
+        log(f"✅ All done! {n} file(s) downloaded to your PC.", "ok")
+        log(f"   Check your PC Downloads folder.", "ok")
+        log(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
         prog(100)
-        
+
         with jobs_lock:
             jobs[job_id]["status"] = "done"
-            jobs[job_id]["files"] = downloaded_files
-            jobs[job_id]["logs"].append({"type": "ok", "msg": f"Downloaded {len(downloaded_files)} files to your PC!"})
-        
-    except Exception as e:
+            jobs[job_id]["files"]  = downloaded_files
+
+    except Exception as exc:
         import traceback
-        log(f"Error: {e}", "err")
-        for line in traceback.format_exc().split('\n'):
-            if line.strip():
-                log(f"  {line}", "err")
-        
+        log(f"Error: {exc}", "err")
+        for line in traceback.format_exc().split("\n"):
+            if line.strip(): log(f"  {line}", "err")
         with jobs_lock:
             jobs[job_id]["status"] = "error"
-            jobs[job_id]["error"] = str(e)
+            jobs[job_id]["error"]  = str(exc)
 
 # ── Download browser_bridge.py ────────────────────────────────────
 @app.route("/api/download_bridge")

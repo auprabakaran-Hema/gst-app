@@ -112,14 +112,19 @@ async def run_action(page, data):
             return {"status":"result","result":str(result)}
         except Exception as e: return {"status":"error","error":str(e)}
     elif action == "wait_captcha":
-        print("\n  " + "!"*56)
-        print("  CAPTCHA REQUIRED — type it in the browser window")
-        print("  Then press ENTER here")
-        print("  " + "!"*56)
+        print()
+        print("  " + "="*56)
+        print("  !!  CAPTCHA REQUIRED — DO THIS NOW:  !!")
+        print()
+        print("  1. Look at THIS Chromium browser window")
+        print("  2. Type the CAPTCHA characters shown in the box")
+        print("  3. Click the LOGIN button")
+        print("  4. Come back to THIS cmd window and press ENTER")
+        print("  " + "="*56)
+        print()
         await asyncio.get_event_loop().run_in_executor(
-            None, lambda: input("  >> Press ENTER after CAPTCHA: "))
+            None, lambda: input("  >> Press ENTER AFTER you clicked LOGIN: "))
         return {"status":"captcha_done"}
-    else:
         return {"status":"error","error":f"Unknown action: {action}"}
 
 async def main():
