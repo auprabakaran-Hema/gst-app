@@ -77,7 +77,7 @@ async def run_action(page, data):
         except Exception as e: return {"status":"error","error":str(e)}
     elif action == "click":
         sel=data.get("selector",""); print(f"  >> Click [{sel}]")
-        try: await page.click(sel,timeout=15000); return {"status":"done"}
+        try: await page.click(sel,timeout=30000); return {"status":"done"}
         except Exception as e: return {"status":"error","error":str(e)}
     elif action == "screenshot":
         try:
@@ -117,19 +117,18 @@ async def run_action(page, data):
         print("  !!  CAPTCHA REQUIRED — DO THIS NOW:  !!")
         print()
         print("  1. Look at THIS Chromium browser window")
-        print("  2. Type the CAPTCHA characters shown in the box")
+        print("  2. Type the CAPTCHA shown in the image")
         print("  3. Click the LOGIN button in the browser")
-        print("  4. Come back HERE and press ENTER")
+        print("  4. Come back HERE and press ENTER in CMD")
         print("  " + "="*56)
         print()
         await asyncio.get_event_loop().run_in_executor(
             None, lambda: input("  >> Press ENTER AFTER you clicked LOGIN: "))
-        # After ENTER: also click LOGIN via script
-        # (covers case where user solved CAPTCHA but forgot to click LOGIN)
+        # Also click LOGIN via script — covers case where user forgot to click
         try:
             await page.click(
                 "#login, button[type=submit], .login-btn, "
-                "button:has-text('LOGIN'), button:has-text('Login')",
+                "button:has-text(\'LOGIN\'), button:has-text(\'Login\')",
                 timeout=5000)
             print("  >> LOGIN button clicked by script")
         except Exception:
