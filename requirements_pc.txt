@@ -1,0 +1,3 @@
+# requirements_pc.txt - Install on your PC
+playwright==1.40.0
+websockets==12.0
