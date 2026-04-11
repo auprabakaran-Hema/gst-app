@@ -669,7 +669,7 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="info-box warn">
     <strong>To use Auto Download, you need to run the browser bridge on your PC:</strong><br><br>
     <strong>1.</strong> Download <code>browser_bridge.py</code> to your PC<br>
-    <strong>2.</strong> Install Python dependencies: <code>pip install playwright websockets</code><br>
+    <strong>2.</strong> Install Python dependencies: <code>pip install requests playwright</code><br>
     <strong>3.</strong> Install browser: <code>playwright install chromium</code><br>
     <strong>4.</strong> Run: <code>python browser_bridge.py</code><br><br>
     Then refresh this page and try again.
@@ -1234,6 +1234,10 @@ loadFeedback();
 def index():
     return render_template_string(HTML)
 
+@app.route("/health")
+def health():
+    return jsonify(status="ok", time=int(time.time()))
+
 @app.route("/api/upload", methods=["POST"])
 @rate_limit(limit=20, window=60)
 def api_upload():
@@ -1282,13 +1286,13 @@ def api_upload():
 def api_job(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
-    if not job:
-        return jsonify(error="Job not found"), 404
-    new_logs = job["logs"][:]
-    job["logs"] = []
-    return jsonify(status=job["status"], progress=job["progress"],
-                   logs=new_logs, files=job["files"],
-                   error=job["error"], dl_status=job.get("dl_status",{}))
+        if not job:
+            return jsonify(error="Job not found"), 404
+        new_logs = job["logs"][:]
+        job["logs"] = []
+        return jsonify(status=job["status"], progress=job["progress"],
+                       logs=new_logs, files=job["files"],
+                       error=job["error"], dl_status=job.get("dl_status",{}))
 
 @app.route("/api/download/<job_id>/<filename>")
 @rate_limit(limit=30, window=60)
@@ -1391,7 +1395,10 @@ def send_browser_command(command_dict, timeout=180):
     """Put a command on the queue and wait up to `timeout` s for the response."""
     if not _bridge_connected():
         return {"status": "error", "error": "No browser connected"}
-    # Drain any stale response
+    # Drain any stale commands and responses
+    while not _cmd_queue.empty():
+        try: _cmd_queue.get_nowait()
+        except: pass
     while not _resp_queue.empty():
         try: _resp_queue.get_nowait()
         except: pass
@@ -1510,8 +1517,12 @@ def api_auto_download():
     def run_async():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(run_auto_download(job_id, gstin, client_name, username, password, fy, returns))
-        print(f"Auto download result: {result}")
+        try:
+            loop.run_until_complete(run_auto_download(job_id, gstin, client_name, username, password, fy, returns))
+        except Exception as exc:
+            print(f"Auto download thread error: {exc}")
+        finally:
+            loop.close()
     
     threading.Thread(target=run_async, daemon=True).start()
     
@@ -1545,8 +1556,14 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
             if job_id in jobs:
                 jobs[job_id]["progress"] = p
 
-    def _cmd(d, timeout=180):
+    def _cmd_sync(d, timeout=180):
+        """Synchronous wrapper — call via await _cmd() to avoid blocking event loop."""
         return send_browser_command(d, timeout=timeout)
+
+    async def _cmd(d, timeout=180):
+        """Run blocking bridge command off the event loop."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: _cmd_sync(d, timeout))
 
     fy_start = fy.split("-")[0].strip()
     s = int(fy_start); e = s + 1
@@ -1562,13 +1579,24 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
 
     # ── Helpers ──────────────────────────────────────────────────────
 
-    def _cur_url(timeout=10):
-        r = _cmd({"action": "get_url"}, timeout=timeout)
+    def _cur_url_sync(timeout=10):
+        r = send_browser_command({"action": "get_url"}, timeout=timeout)
         return r.get("url", "").lower()
 
-    def _is_lost():
+    async def _cur_url(timeout=10):
+        r = await _cmd({"action": "get_url"}, timeout=timeout)
+        return r.get("url", "").lower()
+
+    def _is_lost_sync():
         """True if page shows login/access-denied/session-expired."""
-        url = _cur_url()
+        url = _cur_url_sync()
+        bad = ["accessdenied", "access-denied", "sessionexpired",
+               "session-expired", "/login", "timeout"]
+        return any(b in url for b in bad)
+
+    async def _is_lost():
+        """True if page shows login/access-denied/session-expired."""
+        url = await _cur_url()
         bad = ["accessdenied", "access-denied", "sessionexpired",
                "session-expired", "/login", "timeout"]
         return any(b in url for b in bad)
@@ -1580,19 +1608,19 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
         else:
             log("Opening GST portal login page...")
 
-        r = _cmd({"action": "goto",
+        r = await _cmd({"action": "goto",
                    "url": "https://services.gst.gov.in/services/login"})
         if r.get("status") == "error":
             raise RuntimeError(f"Cannot open login page: {r.get('error')}")
 
-        r = _cmd({"action": "wait_for_selector",
+        r = await _cmd({"action": "wait_for_selector",
                    "selector": "#username", "timeout": 30000})
         if r.get("status") == "error":
             raise RuntimeError("Login form not found")
 
         log("Entering username and password...")
-        _cmd({"action": "fill", "selector": "#username", "value": username})
-        _cmd({"action": "fill", "selector": "#user_pass", "value": password})
+        await _cmd({"action": "fill", "selector": "#username", "value": username})
+        await _cmd({"action": "fill", "selector": "#user_pass", "value": password})
 
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
         if is_relogin:
@@ -1605,16 +1633,14 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
         log("    4. Press ENTER here in the CMD window", "warn")
         log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "info")
 
-        # Blocks until user presses ENTER in bridge CMD.
-        # The bridge script itself also clicks LOGIN after ENTER.
-        r = _cmd({"action": "wait_captcha"}, timeout=300)
+        r = await _cmd({"action": "wait_captcha"}, timeout=300)
         if r.get("status") == "error":
             raise RuntimeError(f"CAPTCHA wait error: {r.get('error')}")
 
         log("Waiting for login to complete...")
         for attempt in range(90):
             await asyncio.sleep(1)
-            url = _cur_url()
+            url = _cur_url_sync()
             if any(x in url for x in [
                 "fowelcome", "taxpayerdashboard", "mainmenu",
                 "returns/dashboard", "auth/fo"
@@ -1633,18 +1659,18 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
     # ── Navigate to Returns Dashboard via menu ────────────────────────
     async def _go_returns_dashboard():
         log("  → Returns Dashboard (menu)...")
-        _cmd({"action": "click",
+        await _cmd({"action": "click",
                "selector": "a:has-text('Returns'), li:has-text('Returns') > a, "
                            "#menu-returns, .menu-returns"})
         await asyncio.sleep(2)
-        _cmd({"action": "click",
+        await _cmd({"action": "click",
                "selector": "a:has-text('Returns Dashboard'), "
                            "a:has-text('Returns Dashboard'), .returns-dashboard"})
         await asyncio.sleep(3)
 
     # ── Check + re-login if session lost ─────────────────────────────
     async def _guard(label=""):
-        err_check = _is_lost()
+        err_check = await _is_lost()
         if err_check:
             log(f"⚠ Session lost{' ('+label+')' if label else ''}. Re-logging in...", "warn")
             await _do_login(is_relogin=True)
@@ -1664,12 +1690,12 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
             for attempt in range(2):  # 1 retry after re-login
                 try:
                     # 1. Click return type in Returns Dashboard menu
-                    r = _cmd({"action": "click", "selector": menu_selector})
+                    r = await _cmd({"action": "click", "selector": menu_selector})
                     await asyncio.sleep(3)
 
                     # session check after menu click
                     err = r.get("error","").lower()
-                    if "closed" in err or "context" in err or _is_lost():
+                    if "closed" in err or "context" in err or await _is_lost():
                         if attempt == 0:
                             await _do_login(is_relogin=True)
                             await _go_returns_dashboard()
@@ -1677,22 +1703,22 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
                         else: break
 
                     # 2. Select Financial Year
-                    _cmd({"action": "select_option",
+                    await _cmd({"action": "select_option",
                            "selector": fy_sel, "value": fy})
                     await asyncio.sleep(1)
 
                     # 3. Select Tax Period (MMYYYY format e.g. 042025)
-                    _cmd({"action": "select_option",
+                    await _cmd({"action": "select_option",
                            "selector": fp_sel,
                            "value": f"{mon_num}{mon_yr}"})
                     await asyncio.sleep(1)
 
                     # 4. Click Search / Proceed
-                    _cmd({"action": "click", "selector": search_sel})
+                    await _cmd({"action": "click", "selector": search_sel})
                     await asyncio.sleep(5)  # wait for results to load
 
                     # session check after search
-                    if _is_lost():
+                    if await _is_lost():
                         if attempt == 0:
                             await _do_login(is_relogin=True)
                             await _go_returns_dashboard()
@@ -1700,8 +1726,7 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
                         else: break
 
                     # 5. Click the specific Download button
-                    #    Use a tight selector to avoid matching nav links
-                    dl = _cmd({"action": "click", "selector": dl_selector})
+                    dl = await _cmd({"action": "click", "selector": dl_selector})
                     await asyncio.sleep(3)
 
                     derr = dl.get("error","").lower()
@@ -1713,7 +1738,7 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
                         })
                         success = True; break
 
-                    elif "closed" in derr or "context" in derr or _is_lost():
+                    elif "closed" in derr or "context" in derr or await _is_lost():
                         log(f"  ⚠ {return_type} {mon_name}: session lost after search — re-logging in", "warn")
                         if attempt == 0:
                             await _do_login(is_relogin=True)
@@ -1859,140 +1884,223 @@ async def run_auto_download(job_id, gstin, client_name, username, password, fy, 
 # ── Download browser_bridge.py ────────────────────────────────────
 @app.route("/api/download_bridge")
 def download_bridge():
-    """Download browser_bridge.py for user's PC"""
-    bridge_code = '''"""
+    """Download the correct HTTP-polling browser_bridge.py for user's PC"""
+    try:
+        # Try to serve the actual file if it exists alongside app.py
+        bridge_path = Path(__file__).parent / "browser_bridge.py"
+        if bridge_path.exists():
+            return send_file(str(bridge_path), as_attachment=True,
+                             download_name="browser_bridge.py",
+                             mimetype="text/plain")
+    except Exception:
+        pass
+
+    # Fallback: embedded correct HTTP-polling bridge
+    bridge_code = r'''"""
 browser_bridge.py - Run this on YOUR PC
-Connects your local browser to the Render server for GST automation
+========================================
+Uses plain HTTP polling - no WebSocket needed.
+
+HOW TO USE:
+  1. Double-click RUN_BRIDGE.bat  OR  run: python browser_bridge.py
+  2. Open your Render portal -> Auto-Download tab
+  3. Fill GSTIN + credentials -> click Start Auto Download
+  4. This browser window opens GST portal automatically
+  5. Solve CAPTCHA when it appears, press ENTER here
 """
 
-import asyncio
-import websockets
-import json
-import base64
-import os
-from playwright.sync_api import sync_playwright
+import sys, subprocess, os
 
-# UPDATE THIS with your Render app WebSocket URL
-# Example: "wss://my-gst-app.onrender.com"
-RENDER_SERVER = "wss://YOUR-RENDER-APP.onrender.com"
+REQUIRED = ["requests", "playwright"]
 
-async def browser_handler():
-    print("=" * 60)
-    print("🖥️  GST Browser Bridge")
-    print("=" * 60)
-    print("📱 Connecting to Render server...")
-    
-    ws_url = RENDER_SERVER.replace("https://", "wss://").replace("http://", "ws://")
-    if not ws_url.startswith("ws"):
-        ws_url = "wss://" + ws_url
-    if not ws_url.endswith("/ws"):
-        ws_url += "/ws"
-    
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            args=['--start-maximized']
-        )
-        context = browser.new_context(viewport={"width": 1366, "height": 768})
-        page = context.new_page()
-        
-        print("✅ Browser ready!")
-        print("⏳ Waiting for commands from Render...")
-        print("=" * 60)
-        
-        try:
-            async with websockets.connect(ws_url) as ws:
-                print("🔗 Connected to Render!")
-                print("🌐 GST Portal will open automatically...")
-                print("📝 Type CAPTCHA when it appears")
-                print("=" * 60)
-                
-                while True:
-                    try:
-                        message = await ws.recv()
-                        data = json.loads(message)
-                        action = data.get("action")
-                        
-                        if action == "goto":
-                            url = data.get("url")
-                            print(f"🌐 Navigating to: {url}")
-                            page.goto(url, wait_until="networkidle")
-                            await ws.send(json.dumps({"status": "done", "url": page.url}))
-                            
-                        elif action == "fill":
-                            selector = data.get("selector")
-                            value = data.get("value")
-                            display_value = "*" * len(value) if "pass" in selector.lower() else value
-                            print(f"⌨️  Filling {selector}: {display_value}")
-                            page.fill(selector, value)
-                            await ws.send(json.dumps({"status": "done"}))
-                            
-                        elif action == "click":
-                            selector = data.get("selector")
-                            print(f"🖱️  Clicking: {selector}")
-                            page.click(selector)
-                            await ws.send(json.dumps({"status": "done"}))
-                            
-                        elif action == "screenshot":
-                            print("📸 Taking screenshot...")
-                            screenshot = page.screenshot(full_page=True)
-                            encoded = base64.b64encode(screenshot).decode()
-                            await ws.send(json.dumps({
-                                "status": "screenshot", 
-                                "image": encoded
-                            }))
-                            
-                        elif action == "wait_for_selector":
-                            selector = data.get("selector")
-                            timeout = data.get("timeout", 30000)
-                            print(f"⏳ Waiting for: {selector}")
-                            page.wait_for_selector(selector, timeout=timeout)
-                            await ws.send(json.dumps({"status": "found"}))
-                            
-                        elif action == "get_text":
-                            selector = data.get("selector")
-                            text = page.inner_text(selector)
-                            await ws.send(json.dumps({"status": "text", "text": text}))
-                            
-                        elif action == "select_option":
-                            selector = data.get("selector")
-                            value = data.get("value")
-                            page.select_option(selector, value)
-                            await ws.send(json.dumps({"status": "done"}))
-                            
-                        elif action == "get_url":
-                            await ws.send(json.dumps({
-                                "status": "url", 
-                                "url": page.url
-                            }))
-                            
-                        elif action == "wait_for_navigation":
-                            print("⏳ Waiting for navigation...")
-                            page.wait_for_load_state("networkidle")
-                            await ws.send(json.dumps({"status": "done", "url": page.url}))
-                            
-                    except Exception as e:
-                        error_msg = str(e)
-                        print(f"❌ Error: {error_msg}")
-                        await ws.send(json.dumps({"status": "error", "error": error_msg}))
-                        
-        except websockets.exceptions.ConnectionClosed:
-            print("❌ Connection to Render lost")
+def _pip(pkg):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q",
+        "--no-warn-script-location"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+print("\n  Checking packages...")
+for pkg in REQUIRED:
+    try:
+        __import__(pkg); print(f"  OK: {pkg}")
+    except ImportError:
+        print(f"  Installing {pkg}...")
+        try: _pip(pkg); print(f"  OK: {pkg} installed")
         except Exception as e:
-            print(f"❌ Error: {e}")
-        finally:
-            browser.close()
-            print("🔒 Browser closed")
+            print(f"  ERROR: {e}"); input("\n  Press Enter to exit..."); sys.exit(1)
+
+_marker = os.path.join(os.path.expanduser("~"), ".playwright_chromium_ok")
+if not os.path.exists(_marker):
+    print("  Installing Chromium (one-time ~150 MB)...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        open(_marker, "w").close(); print("  OK: Chromium installed")
+    except Exception as e:
+        print(f"  WARNING: {e}")
+
+import asyncio, json, base64
+import requests
+from playwright.async_api import async_playwright
+
+# ====================================================
+RENDER_SERVER = "https://gst-app-ut23.onrender.com"
+# ====================================================
+
+POLL_URL    = RENDER_SERVER.rstrip("/") + "/api/bridge/poll"
+RESPOND_URL = RENDER_SERVER.rstrip("/") + "/api/bridge/respond"
+
+def _post(data):
+    try: requests.post(RESPOND_URL, json=data, timeout=10)
+    except Exception as e: print(f"  WARNING: respond failed: {e}")
+
+def _poll():
+    try:
+        r = requests.get(POLL_URL, timeout=12)
+        if r.status_code == 200: return r.json()
+    except Exception as e: print(f"  WARNING: poll failed: {e}")
+    return None
+
+async def run_action(page, data):
+    action = data.get("action", "")
+    if action == "goto":
+        url = data["url"]; print(f"\n  >> Opening: {url}")
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            return {"status": "done", "url": page.url}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "fill":
+        sel = data.get("selector", ""); val = data.get("value", "")
+        disp = "*" * len(val) if "pass" in sel.lower() else val
+        print(f"  >> Fill [{sel}] = {disp}")
+        try: await page.fill(sel, val); return {"status": "done"}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "click":
+        sel = data.get("selector", ""); print(f"  >> Click [{sel}]")
+        try: await page.click(sel, timeout=30000); return {"status": "done"}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "screenshot":
+        try:
+            img = await page.screenshot()
+            return {"status": "screenshot", "image": base64.b64encode(img).decode()}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "wait_for_selector":
+        sel = data.get("selector", ""); timeout = data.get("timeout", 30000)
+        print(f"  >> Wait for [{sel}]")
+        try: await page.wait_for_selector(sel, timeout=timeout); return {"status": "found"}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "get_text":
+        sel = data.get("selector", "")
+        try: return {"status": "text", "text": await page.inner_text(sel)}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "get_url":
+        return {"status": "url", "url": page.url}
+    elif action == "select_option":
+        sel = data.get("selector", ""); val = data.get("value", "")
+        print(f"  >> Select [{sel}] = {val}")
+        try: await page.select_option(sel, val); return {"status": "done"}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "wait_for_navigation":
+        try:
+            await page.wait_for_load_state("networkidle", timeout=30000)
+            return {"status": "done", "url": page.url}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "eval":
+        script = data.get("script", "")
+        try:
+            result = await page.evaluate(script)
+            return {"status": "result", "result": str(result)}
+        except Exception as e: return {"status": "error", "error": str(e)}
+    elif action == "wait_captcha":
+        print()
+        print("  " + "=" * 56)
+        print("  !!  CAPTCHA REQUIRED - DO THIS NOW:  !!")
+        print()
+        print("  1. Look at THIS Chromium browser window")
+        print("  2. Type the CAPTCHA shown in the image")
+        print("  3. Click the LOGIN button in the browser")
+        print("  4. Come back HERE and press ENTER in CMD")
+        print("  " + "=" * 56)
+        print()
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: input("  >> Press ENTER AFTER you clicked LOGIN: "))
+        try:
+            await page.click(
+                "#login, button[type=submit], .login-btn, "
+                "button:has-text('LOGIN'), button:has-text('Login')",
+                timeout=5000)
+            print("  >> LOGIN button clicked by script")
+        except Exception:
+            pass
+        return {"status": "captcha_done"}
+    else:
+        return {"status": "error", "error": f"Unknown action: {action}"}
+
+async def main():
+    print()
+    print("  " + "=" * 56)
+    print("   GST Browser Bridge  (HTTP polling)")
+    print("  " + "=" * 56)
+    print(f"\n  Server: {RENDER_SERVER}")
+    print("\n  Testing server connection...")
+    try:
+        r = requests.get(RENDER_SERVER, timeout=15)
+        print(f"  OK: Server reachable (HTTP {r.status_code})")
+    except Exception as e:
+        print(f"\n  ERROR: Cannot reach server: {e}")
+        input("\n  Press Enter to exit..."); return
+
+    print("\n  Starting browser...")
+    async with async_playwright() as pw:
+        try:
+            browser = await pw.chromium.launch(
+                headless=False,
+                args=["--start-maximized",
+                      "--disable-blink-features=AutomationControlled",
+                      "--no-sandbox"])
+        except Exception as e:
+            print(f"\n  ERROR: Browser failed: {e}")
+            input("\n  Press Enter to exit..."); return
+
+        context = await browser.new_context(
+            viewport={"width": 1366, "height": 768},
+            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"))
+        page = await context.new_page()
+
+        print("  OK: Browser ready!")
+        print()
+        print("  NEXT STEPS:")
+        print("  1. Open your Render portal in any browser")
+        print("  2. Go to Auto-Download tab")
+        print("  3. Enter details -> click Start Auto Download")
+        print("  4. This window will do the rest automatically")
+        print()
+        print("  Polling server for commands...")
+        print("  " + "-" * 56)
+
+        errs = 0
+        while True:
+            cmd = await asyncio.get_event_loop().run_in_executor(None, _poll)
+            if cmd is None:
+                errs += 1
+                if errs % 5 == 0: print(f"  WARNING: poll failing ({errs}x)")
+                await asyncio.sleep(2); continue
+            errs = 0
+            action = cmd.get("action", "idle")
+            if action == "idle":
+                await asyncio.sleep(1); continue
+            result = await run_action(page, cmd)
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda r=result: _post(r))
+
+        await browser.close()
+    input("  Press Enter to close...")
 
 if __name__ == "__main__":
-    if "YOUR-RENDER-APP" in RENDER_SERVER:
-        print("⚠️  WARNING: Update RENDER_SERVER with your actual Render URL!")
-        print("Example: wss://my-gst-app.onrender.com")
-        exit(1)
-    
-    asyncio.run(browser_handler())
+    try: asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n  Interrupted."); sys.exit(0)
 '''
-    
     from flask import Response
     return Response(
         bridge_code,
