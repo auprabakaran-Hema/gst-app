@@ -2484,9 +2484,9 @@ def _auto_download(job_id, gstin, client_name,
         return True
 
     def _go_to_dashboard():
-        """Navigate to return.gst.gov.in/returns/auth/dashboard — the Returns Dashboard with tiles."""
+        """Navigate to Returns Dashboard by clicking Services→Returns→Returns Dashboard.
+        Never uses direct URLs — always follows menu clicks to avoid Access Denied."""
         cur = driver.current_url
-        # Already on the correct returns dashboard (has GSTR tiles)
         if "return.gst.gov.in" in cur and "dashboard" in cur:
             return True
 
@@ -2494,43 +2494,51 @@ def _auto_download(job_id, gstin, client_name,
             log("  ⚠ Session lost — re-logging in...", "warn")
             _do_login()
 
-        log("  Navigating to Returns Dashboard...")
+        log("  Navigating: Services → Returns → Returns Dashboard")
 
         for attempt in range(3):
-            cur = driver.current_url
-            log(f"  Nav attempt {attempt+1} from: {cur}")
+            log(f"  Nav attempt {attempt+1} from: {driver.current_url}")
 
-            # Step 1: Click Services
-            _try_click([
-                "//a[normalize-space(text())='Services']",
-                "//nav//a[normalize-space()='Services']",
-                "//ul[contains(@class,'nav')]//a[contains(text(),'Services')]",
-            ])
-            time.sleep(1.5)
+            # Step 1: Click Services (also hover to open dropdown)
+            try:
+                from selenium.webdriver.common.action_chains import ActionChains
+                svc_el = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, "//a[normalize-space(text())='Services']")))
+                ActionChains(driver).move_to_element(svc_el).click(svc_el).perform()
+                log("  Services clicked ✓")
+            except:
+                _try_click([
+                    "//a[normalize-space(text())='Services']",
+                    "//nav//a[normalize-space()='Services']",
+                ])
+            time.sleep(2)
 
-            # Step 2: Click Returns (in dropdown)
-            _try_click([
-                "//a[normalize-space(text())='Returns']",
-                "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
-                "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
-                "//li[contains(@class,'open')]//a[normalize-space()='Returns']",
-            ])
-            time.sleep(1.5)
+            # Step 2: Click Returns in dropdown (hover first to keep dropdown open)
+            try:
+                ret_el = WebDriverWait(driver, 8).until(
+                    EC.element_to_be_clickable((By.XPATH, "//a[normalize-space(text())='Returns']")))
+                ActionChains(driver).move_to_element(ret_el).click(ret_el).perform()
+                log("  Returns clicked ✓")
+            except:
+                _try_click([
+                    "//a[normalize-space(text())='Returns']",
+                    "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
+                    "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
+                ])
+            time.sleep(2)
 
-            # Step 3: Click Returns Dashboard (in submenu)
+            # Step 3: Click Returns Dashboard — XPath first, then full page scan
             clicked = _try_click([
                 "//a[contains(normalize-space(text()),'Returns Dashboard')]",
-                "//a[contains(@href,'returnsdashboard')]",
-                "//a[contains(@href,'returns/auth/dashboard')]",
             ])
             if not clicked:
-                # Scan all links for Returns Dashboard
+                # Scan ALL links on page (same as local script "scan" approach)
                 for el in driver.find_elements(By.TAG_NAME, "a"):
                     try:
                         if "Returns Dashboard" in (el.text or "") and el.is_displayed():
                             driver.execute_script("arguments[0].click();", el)
-                            clicked = True
                             log("  Returns Dashboard clicked via scan ✓")
+                            clicked = True
                             break
                     except: continue
             time.sleep(10)
@@ -2543,33 +2551,19 @@ def _auto_download(job_id, gstin, client_name,
                 _do_login()
                 continue
 
-            # ✅ Correct dashboard on return.gst.gov.in
             if "return.gst.gov.in" in final and "dashboard" in final:
-                log("  ✅ Returns Dashboard loaded (return.gst.gov.in)", "ok")
+                log("  ✅ Returns Dashboard loaded", "ok")
                 return True
 
-            # Landed on services dashboard — click FILE RETURNS link directly
-            if "services.gst.gov.in" in final and "dashboard" in final:
-                log("  On services dashboard — clicking FILE RETURNS link...")
-                clicked2 = _try_click([
-                    "//a[normalize-space(text())='FILE RETURNS']",
-                    "//a[contains(@href,'return.gst.gov.in')]",
-                    "//a[contains(@href,'returns/auth/dashboard')]",
-                ])
-                time.sleep(10)
-                final2 = driver.current_url
-                log(f"  URL after FILE RETURNS click: {final2}")
-                if "return.gst.gov.in" in final2 and "dashboard" in final2:
-                    log("  ✅ Returns Dashboard loaded via FILE RETURNS", "ok")
-                    return True
-
-            # Log page to understand where we are
+            # Still on wrong page — log what's visible to help diagnose
             try:
-                pg = driver.find_element(By.TAG_NAME, "body").text[:300].replace("\n"," ")
-                log(f"  Page: {pg}", "info")
+                links = [(a.text.strip(), a.get_attribute("href") or "")
+                         for a in driver.find_elements(By.TAG_NAME, "a")
+                         if a.is_displayed() and a.text.strip()]
+                log(f"  Links on page: {links[:10]}", "info")
             except: pass
 
-        raise RuntimeError(f"Could not reach return.gst.gov.in dashboard. Last URL: {driver.current_url}")
+        raise RuntimeError(f"Could not reach Returns Dashboard. Last URL: {driver.current_url}")
 
     def _select_and_search(month_name):
         """Select FY, Quarter, Period then click SEARCH (mirrors select_and_search)"""
