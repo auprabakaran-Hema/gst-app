@@ -52,7 +52,7 @@ _bridge_last_seen = 0       # epoch seconds of last PC poll
 _bridge_lock = threading.Lock()
 
 def _bridge_connected():
-    """Server-side mode — no bridge needed, always connected"""
+    """Server-side — no bridge needed"""
     return True
 
 # ── Rate limiting ─────────────────────────────────────────────────
@@ -632,6 +632,7 @@ footer a{color:var(--accent);text-decoration:none}
       <select id="ad-returns">
         <option value="all">All Returns (GSTR-1, 2B, 2A, 3B)</option>
         <option value="gstr1">GSTR-1 Only</option>
+        <option value="gstr1a">GSTR-1A Only</option>
         <option value="gstr2b">GSTR-2B Only</option>
         <option value="gstr3b">GSTR-3B Only</option>
       </select></div>
@@ -841,8 +842,7 @@ async function startJob(fd, pfx, btnLbl){
   btn.disabled=true;btn.textContent='Uploading...';
   try{
     const res=await fetch('/api/upload',{method:'POST',body:fd});
-    let d;
-    try{d=await res.json();}catch(_){throw new Error('Server error (HTTP '+res.status+'). Try again.');}
+    let d;try{d=await res.json();}catch(_){throw new Error('Server error (HTTP '+res.status+'). Try again.');}
     if(!d.job_id) throw new Error(d.error||'Upload failed');
     addLog(pfx,'info','Files uploaded. Processing started...');
     btn.textContent='Processing...';
@@ -952,13 +952,7 @@ async function _adPoll(jid){
     let d;try{d=await r.json();}catch(_){setTimeout(()=>_adPoll(jid),3000);return;}
     if(d.logs)d.logs.forEach(l=>addLog('ad',l.type,l.msg));
     if(d.progress!=null)document.getElementById('ad-pb').style.width=d.progress+'%';
-    if(d.captcha_needed&&!_adCapShown){
-      _adCapShown=true;
-      if(d.captcha_img){document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.captcha_img;document.getElementById('ad-captcha-img').style.display='block';}else{document.getElementById('ad-captcha-img').style.display='none';}
-      document.getElementById('ad-step2').style.display='block';
-      document.getElementById('ad-captcha-input').value='';
-      setTimeout(()=>document.getElementById('ad-captcha-input').focus(),100);
-    }
+    if(d.captcha_needed&&!_adCapShown){_adCapShown=true;if(d.captcha_img){document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.captcha_img;document.getElementById('ad-captcha-img').style.display='block';}else{document.getElementById('ad-captcha-img').style.display='none';}document.getElementById('ad-step2').style.display='block';document.getElementById('ad-captcha-input').value='';setTimeout(()=>document.getElementById('ad-captcha-input').focus(),100);}
     if(!d.captcha_needed)_adCapShown=false;
     if(d.status==='done'){
       setBadge('ad','d','Complete');
@@ -1207,6 +1201,255 @@ loadFeedback();
 </script>
 </body>
 </html>"""
+
+
+# ═══════════════════════════════════════════════════════════════════
+# RECONCILIATION WORKERS
+# ═══════════════════════════════════════════════════════════════════
+
+def run_reconciliation(job_id):
+    def log(msg, t="info"):
+        with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
+    def prog(p):
+        with jobs_lock: jobs[job_id]["progress"] = p
+    def set_dl(k, v):
+        with jobs_lock: jobs[job_id]["dl_status"][k] = v
+    try:
+        job         = jobs[job_id]
+        gstin       = job["gstin"]
+        client_name = job["client_name"]
+        fy          = job["fy"]
+        job_dir     = Path(job["job_dir"])
+        out_dir     = Path(job["out_dir"])
+        saved       = job["saved"]
+        FY_MONTHS   = _fy_months(fy)
+
+        log(f"Starting: {client_name} ({gstin}) FY {fy}")
+        prog(5)
+
+        for fpath in saved["r1"]:
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-1: {mon} {yr}"); set_dl(f"{mon}_GSTR1", "OK")
+            else:
+                log(f"  ⚠ Month not detected: {Path(fpath).name}", "warn")
+
+        for fpath in saved["r2b"]:
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                dest = job_dir / f"GSTR2B_{mon}_{yr}.xlsx"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-2B: {mon} {yr}"); set_dl(f"{mon}_GSTR2B", "OK")
+
+        for fpath in saved["r2a"]:
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                ext = Path(fpath).suffix.lower()
+                dest = job_dir / f"GSTR2A_{mon}_{yr}{ext}"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-2A: {mon} {yr}"); set_dl(f"{mon}_GSTR2A", "OK")
+
+        for fpath in saved["r3b"]:
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-3B: {mon} {yr}"); set_dl(f"{mon}_GSTR3B", "OK")
+
+        for fpath in saved["cust"]:
+            dest = job_dir / "customer_names.xlsx"
+            if not dest.exists():
+                try: Path(fpath).rename(dest)
+                except: shutil.copy2(fpath, str(dest))
+            log("  Customer names loaded"); break
+
+        for fpath in saved["taxlib"]:
+            dest = job_dir / f"TAX_LIABILITY_{Path(fpath).name}"
+            if not dest.exists():
+                try: Path(fpath).rename(dest)
+                except: shutil.copy2(fpath, str(dest))
+            log(f"  Tax Liability: {Path(dest).name}"); break
+
+        prog(25)
+
+        suite_path = _find_engine("gst_suite_final.py")
+        if not suite_path:
+            raise FileNotFoundError("gst_suite_final.py not found on server.")
+
+        log("Loading reconciliation engine...")
+        import importlib.util as _ilu, logging as _lg
+        spec = _ilu.spec_from_file_location("gst_suite", str(suite_path))
+        gst  = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(gst)
+
+        s = int(fy.split("-")[0]); e = s + 1
+        gst.FY_LABEL = fy
+        gst.MONTHS = [
+            ("April","04",str(s)),("May","05",str(s)),("June","06",str(s)),
+            ("July","07",str(s)),("August","08",str(s)),("September","09",str(s)),
+            ("October","10",str(s)),("November","11",str(s)),("December","12",str(s)),
+            ("January","01",str(e)),("February","02",str(e)),("March","03",str(e)),
+        ]
+
+        _log = _lg.getLogger(f"gst_{job_id}")
+        _log.setLevel(_lg.DEBUG)
+        class WL(_lg.Handler):
+            def emit(self, r):
+                log(self.format(r), "err" if r.levelno >= _lg.WARNING else "info")
+        _log.addHandler(WL())
+
+        prog(30)
+        log("Running annual reconciliation (1-2 minutes)...")
+        gst.write_annual_reconciliation(str(job_dir), client_name, gstin, _log)
+        prog(65)
+        log("  ✓ Annual reconciliation complete", "ok")
+
+        extract_path = _find_engine("gstr1_extract.py")
+        gstr1_zips   = list(job_dir.glob("GSTR1_*.zip"))
+
+        if extract_path and gstr1_zips:
+            log(f"Running GSTR-1 detail extraction ({len(gstr1_zips)} months)...")
+            try:
+                spec2 = _ilu.spec_from_file_location("gstr1_extract", str(extract_path))
+                gstr1 = _ilu.module_from_spec(spec2)
+                spec2.loader.exec_module(gstr1)
+                out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
+                gstr1.extract_gstr1_to_excel(str(job_dir), str(out_xl))
+                log(f"  ✓ GSTR-1 detail: {out_xl.name}", "ok")
+            except Exception as ex:
+                log(f"  ⚠ GSTR-1 extraction error: {ex}", "warn")
+        elif not extract_path:
+            log("⚠ gstr1_extract.py not on server — GSTR-1 detail skipped", "warn")
+
+        prog(85)
+        log("Collecting output files...")
+        output_files = []
+        for fp in sorted(job_dir.glob("*.xlsx")):
+            dest_fp = out_dir / fp.name
+            shutil.copy2(str(fp), str(dest_fp))
+            sz = dest_fp.stat().st_size // 1024
+            output_files.append({"name": fp.name, "size": f"{sz} KB"})
+            log(f"  ✓ {fp.name} ({sz} KB)", "ok")
+
+        if not output_files:
+            raise RuntimeError("No Excel output generated.")
+
+        prog(100)
+        log(f"Done! {len(output_files)} file(s) ready to download.", "ok")
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = output_files
+        _cleanup_uploads(job_id)
+
+    except Exception as exc:
+        import traceback
+        log(f"Error: {exc}", "err")
+        for line in traceback.format_exc().split("\n"):
+            if line.strip(): log(f"  {line}", "err")
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"]  = str(exc)
+        _cleanup_uploads(job_id)
+
+
+def run_gstr1_only(job_id):
+    def log(msg, t="info"):
+        with jobs_lock: jobs[job_id]["logs"].append({"type":t,"msg":msg})
+    def prog(p):
+        with jobs_lock: jobs[job_id]["progress"] = p
+    try:
+        job         = jobs[job_id]
+        client_name = job["client_name"]
+        fy          = job["fy"]
+        job_dir     = Path(job["job_dir"])
+        out_dir     = Path(job["out_dir"])
+        saved       = job["saved"]
+        FY_MONTHS   = _fy_months(fy)
+
+        log(f"GSTR-1 Detail: {client_name} FY {fy}")
+        prog(5)
+
+        for fpath in saved["r1"]:
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-1: {mon} {yr}")
+            else:
+                log(f"  ⚠ Month not detected: {Path(fpath).name}", "warn")
+
+        for fpath in saved["r2b"] + saved["r2a"]:
+            dest = job_dir / Path(fpath).name
+            if not dest.exists():
+                try: Path(fpath).rename(dest)
+                except: shutil.copy2(fpath, str(dest))
+
+        for fpath in saved["cust"]:
+            dest = job_dir / "customer_names.xlsx"
+            if not dest.exists():
+                try: Path(fpath).rename(dest)
+                except: shutil.copy2(fpath, str(dest))
+            break
+
+        prog(20)
+        gstr1_zips = list(job_dir.glob("GSTR1_*.zip"))
+        if not gstr1_zips:
+            raise RuntimeError("No GSTR1_*.zip files found.")
+
+        extract_path = _find_engine("gstr1_extract.py")
+        if not extract_path:
+            raise FileNotFoundError("gstr1_extract.py not found on server.")
+
+        log(f"Extracting {len(gstr1_zips)} month(s)...")
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("gstr1_extract", str(extract_path))
+        gstr1_mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(gstr1_mod)
+
+        prog(30)
+        out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
+        gstr1_mod.extract_gstr1_to_excel(str(job_dir), str(out_xl))
+        prog(90)
+
+        output_files = []
+        for fp in sorted(job_dir.glob("*.xlsx")):
+            dest_fp = out_dir / fp.name
+            shutil.copy2(str(fp), str(dest_fp))
+            sz = dest_fp.stat().st_size // 1024
+            output_files.append({"name": fp.name, "size": f"{sz} KB"})
+            log(f"  ✓ {fp.name} ({sz} KB)", "ok")
+
+        if not output_files:
+            raise RuntimeError("No output files generated.")
+
+        prog(100)
+        log(f"Done! {len(output_files)} file(s) ready.", "ok")
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = output_files
+        _cleanup_uploads(job_id)
+
+    except Exception as exc:
+        import traceback
+        log(f"Error: {exc}", "err")
+        for line in traceback.format_exc().split("\n"):
+            if line.strip(): log(f"  {line}", "err")
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"]  = str(exc)
+        _cleanup_uploads(job_id)
 
 # ── Routes ────────────────────────────────────────────────────────
 @app.route("/")
@@ -1604,7 +1847,7 @@ def _auto_download(job_id, gstin, client_name,
         login_ok = False
         token = ""
 
-        for attempt in range(3):
+        for attempt in range(5):
             if attempt > 0:
                 log(f"Retrying login (attempt {attempt+1})...", "warn")
                 # Refresh captcha
@@ -1626,11 +1869,23 @@ def _auto_download(job_id, gstin, client_name,
 
             # POST login
             try:
+                # Try both the JSON API and form-POST formats
                 r1 = S.post(
                     "https://services.gst.gov.in/services/api/login",
                     json={"username": username, "user_pass": password,
-                          "captcha": captcha_text},
+                          "captcha": captcha_text, "captchaText": captcha_text},
+                    headers={"Content-Type": "application/json",
+                             "X-Requested-With": "XMLHttpRequest"},
                     timeout=30)
+                # If JSON API fails with HTML, try form POST
+                if r1.status_code != 200 or b"<!DOCTYPE" in r1.content[:100]:
+                    r1 = S.post(
+                        "https://services.gst.gov.in/services/login",
+                        data={"username": username, "user_pass": password,
+                              "captchaText": captcha_text, "captcha": captcha_text,
+                              "submit": "Login"},
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        timeout=30)
                 try:
                     ld = r1.json()
                     sc = str(ld.get("status_cd",""))
@@ -1652,7 +1907,7 @@ def _auto_download(job_id, gstin, client_name,
                 log(f"Login attempt error: {ex}", "warn")
 
         if not login_ok:
-            raise RuntimeError("Login failed — wrong username/password or CAPTCHA after 3 tries")
+            raise RuntimeError("Login failed — wrong username/password or CAPTCHA after 5 tries")
 
         if token:
             S.headers["Authorization"] = f"Bearer {token}"
@@ -1672,6 +1927,7 @@ def _auto_download(job_id, gstin, client_name,
         # ── Step 6: Download returns ──────────────────────────────
         total = sum([
             12 if returns in ["all","gstr1"]  else 0,
+            12 if returns in ["all","gstr1a"] else 0,
             12 if returns in ["all","gstr2b"] else 0,
             12 if returns in ["all","gstr3b"] else 0,
         ])
@@ -1681,7 +1937,7 @@ def _auto_download(job_id, gstin, client_name,
         def dl_one(ret_type, mon_name, mon_num, mon_yr):
             nonlocal done_n
             period = f"{mon_num}{mon_yr}"
-            ext    = {"gstr1":".zip","gstr2b":".xlsx","gstr3b":".pdf"}.get(ret_type,".zip")
+            ext    = {"gstr1":".zip","gstr1a":".zip","gstr2b":".xlsx","gstr3b":".pdf"}.get(ret_type,".zip")
             fname  = f"{ret_type.upper()}_{mon_name}_{mon_yr}{ext}"
             fpath  = out_dir / fname
             urls_to_try = [
@@ -1710,6 +1966,12 @@ def _auto_download(job_id, gstin, client_name,
             for mn,mm,my in MONTHS:
                 log(f"  GSTR-1 {mn} {my}...")
                 dl_one("gstr1",mn,mm,my)
+
+        if returns in ["all","gstr1a"]:
+            log("── Downloading GSTR-1A ─────────────────────────────")
+            for mn,mm,my in MONTHS:
+                log(f"  GSTR-1A {mn} {my}...")
+                dl_one("gstr1a",mn,mm,my)
 
         if returns in ["all","gstr2b"]:
             log("── Downloading GSTR-2B ─────────────────────────────")
