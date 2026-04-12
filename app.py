@@ -462,8 +462,16 @@ footer a{color:var(--accent);text-decoration:none}
     </div>
   </div>
 </div>
-<div class="card">
-  <button type="submit" class="btn" id="r-submit">Generate Reconciliation + GSTR-1 Detail →</button>
+<div class="card" style="display:flex;gap:.65rem;align-items:stretch;flex-wrap:wrap">
+  <button type="submit" class="btn" id="r-submit" style="flex:1;margin-top:0">Generate Reconciliation + GSTR-1 Detail →</button>
+  <button type="button" onclick="resetRecon()" id="r-reset"
+          style="flex:0 0 auto;padding:.8rem 1.4rem;background:var(--surf2);
+                 border:1px solid var(--red);border-radius:10px;color:var(--red);
+                 font-family:var(--sans);font-size:.82rem;font-weight:700;
+                 cursor:pointer;transition:all .15s;white-space:nowrap;margin-top:0"
+          title="Clear all files and reset the form">
+    🔄 Reset
+  </button>
 </div>
 </form>
 
@@ -612,77 +620,25 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
-<!-- Step 1: Bookmarklet setup -->
+<!-- Step 1: How it works -->
 <div class="card" id="ad-step1">
-  <div class="ct">Step 1 — Save the Bookmark <span class="sbg badge-grn" style="font-size:.6rem">ONE TIME ONLY</span></div>
-
-  <!-- Main instruction box -->
-  <div class="info-box success" style="margin-bottom:1rem;font-size:.76rem;line-height:1.8">
-    <strong>✅ No F12 / No copy-paste!</strong> Save the bookmark below once. After that, one click sends your token automatically.
-  </div>
-
-  <!-- The bookmarklet link — right-click to bookmark -->
-  <div style="background:var(--surf2);border:2px dashed var(--accent2);border-radius:12px;padding:1.1rem;text-align:center;margin-bottom:1rem">
-    <div style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem;font-family:var(--mono)">
-      👇 RIGHT-CLICK this button → "Bookmark this link" / "Add to bookmarks"
-    </div>
-    <a id="gst-bookmarklet-link" href="#"
-       style="display:inline-block;padding:.8rem 1.8rem;
-              background:linear-gradient(135deg,#7c3aed,#a78bfa);
-              border-radius:10px;color:#fff;font-weight:800;font-size:1rem;
-              text-decoration:none;letter-spacing:.04em;white-space:nowrap;
-              box-shadow:0 4px 18px rgba(124,58,237,.4)"
-       onclick="bookmarkletClick(event)">
-      🔖 GST Token Capture
-    </a>
-    <div style="font-size:.68rem;color:var(--muted);margin-top:.6rem;font-family:var(--mono)">
-      Right-click → "Bookmark link" or "Add to favourites"
-    </div>
-  </div>
-
-  <!-- Step by step instructions with browser tabs -->
-  <div style="margin-bottom:.8rem">
-    <div style="display:flex;gap:.4rem;margin-bottom:.6rem;flex-wrap:wrap" id="bm-browser-tabs">
-      <button onclick="showBmInstr('chrome')" class="bm-tab active" id="bmt-chrome"
-        style="padding:.3rem .8rem;border-radius:6px;border:1px solid var(--accent);background:rgba(0,229,255,.1);
-               color:var(--accent);font-size:.7rem;font-weight:700;cursor:pointer">Chrome / Edge</button>
-      <button onclick="showBmInstr('firefox')" class="bm-tab" id="bmt-firefox"
-        style="padding:.3rem .8rem;border-radius:6px;border:1px solid var(--bdr);background:var(--surf2);
-               color:var(--muted);font-size:.7rem;font-weight:700;cursor:pointer">Firefox</button>
-    </div>
-    <div id="bm-instr-chrome" class="bm-instr" style="font-size:.74rem;color:var(--muted);line-height:1.8;background:var(--surf2);border-radius:8px;padding:.75rem">
-      1. <strong style="color:var(--txt)">Right-click</strong> the purple button above<br>
-      2. Click <strong style="color:var(--txt)">"Bookmark link"</strong> (or "Add to favourites")<br>
-      3. Save it anywhere — desktop, bookmarks bar, anywhere<br>
-      4. Done! ✅
-    </div>
-    <div id="bm-instr-firefox" class="bm-instr" style="display:none;font-size:.74rem;color:var(--muted);line-height:1.8;background:var(--surf2);border-radius:8px;padding:.75rem">
-      1. <strong style="color:var(--txt)">Right-click</strong> the purple button above<br>
-      2. Click <strong style="color:var(--txt)">"Bookmark This Link"</strong><br>
-      3. Choose a folder and click Save<br>
-      4. Done! ✅
-    </div>
-  </div>
-
-  <div style="border-top:1px solid var(--bdr);padding-top:.8rem">
-    <div style="font-size:.74rem;color:var(--muted);line-height:1.8">
-      <strong style="color:var(--txt)">How it works:</strong><br>
-      1. Fill in your GSTIN, Company Name, Username &amp; Password below<br>
-      2. Click <strong style="color:var(--org)">🚀 Start Auto Download</strong><br>
-      3. Server opens a browser on portal — a CAPTCHA screenshot appears here<br>
-      4. <strong style="color:var(--accent)">Type the CAPTCHA letters in the box and click Submit</strong><br>
-      5. Server logs in and downloads all your returns automatically!
-    </div>
+  <div class="ct">How It Works</div>
+  <div style="font-size:.78rem;color:var(--muted);line-height:1.9">
+    1. Fill in your GSTIN, Company Name, Username &amp; Password below<br>
+    2. Click <strong style="color:var(--org)">🚀 Start Auto Download</strong><br>
+    3. A CAPTCHA screenshot appears here — type it and click <strong style="color:var(--accent)">Submit</strong><br>
+    4. Server logs into GST portal and downloads all returns automatically<br>
+    5. Files appear below — also auto-loaded into the <strong style="color:var(--txt)">Reconciliation tab</strong>
   </div>
   <div class="info-box" style="margin-top:.8rem;font-size:.72rem">
-    Your password is used only for this session and never stored.
+    Your password is used only for this session and is never stored.
   </div>
 </div>
 
 <!-- Step 2: Enter details -->
 <form id="ad-form">
 <div class="card">
-  <div class="ct">Step 2 — Enter Your GST Portal Details</div>
+  <div class="ct">Enter Your GST Portal Details</div>
   <div class="fg2">
     <div class="fg"><label>GSTIN *</label>
       <input type="text" id="ad-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
@@ -782,11 +738,42 @@ footer a{color:var(--accent);text-decoration:none}
 
 <!-- Download results -->
 <div class="card dw" id="ad-dw">
-  <div class="ct">Downloaded Files</div>
+  <div class="ct">✅ Downloaded Files</div>
   <div class="dl-g" id="ad-dlg"></div>
-  <p style="color:var(--muted);font-size:.7rem;margin-top:.65rem;font-family:var(--mono)">
-    ⬇️ Click Download to save each file. Then upload them to the Reconciliation tab.
+  <div style="margin-top:.9rem;display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+    <button onclick="adTransferToRecon()"
+            style="padding:.55rem 1.2rem;background:linear-gradient(135deg,var(--accent),var(--accent2));
+                   border:none;border-radius:8px;color:#000;font-weight:800;font-size:.82rem;cursor:pointer">
+      📤 Use These Files in Reconciliation Tab →
+    </button>
+    <span style="font-size:.7rem;color:var(--muted);font-family:var(--mono)">
+      Auto-loads downloaded returns into the Reconciliation tab
+    </span>
+  </div>
+  <p style="color:var(--muted);font-size:.68rem;margin-top:.55rem;font-family:var(--mono)">
+    ⏳ Files deleted after 2 hours. Download ZIP before closing.
   </p>
+</div>
+
+<!-- Failure Screenshots Panel (auto download tab) -->
+<div class="card" id="ad-fail-shots" style="display:none">
+  <div class="ct" style="color:var(--red)">
+    📸 Failure Screenshots
+    <span id="ad-fail-count" style="font-size:.7rem;color:var(--muted);font-family:var(--mono);margin-left:.4rem"></span>
+    <button onclick="refreshFailShots()"
+            style="margin-left:auto;padding:.22rem .65rem;background:var(--surf2);
+                   border:1px solid var(--bdr);border-radius:6px;color:var(--muted);
+                   font-family:var(--mono);font-size:.65rem;cursor:pointer">
+      🔄 Refresh
+    </button>
+  </div>
+  <p style="color:var(--muted);font-size:.74rem;line-height:1.65;margin-bottom:.85rem">
+    These screenshots were captured <strong style="color:var(--txt)">automatically</strong>
+    at each point where a download failed or a button was not found —
+    so you can see exactly what the GST portal showed at that moment.
+    Share these with support if downloads are not working.
+  </p>
+  <div id="ad-fail-grid" style="display:flex;flex-direction:column;gap:1.1rem"></div>
 </div>
 
 </div><!-- /tab-autodl -->
@@ -1026,6 +1013,47 @@ document.getElementById('recon-form').addEventListener('submit', async e=>{
   await startJob(fd,'r','Generate Reconciliation + GSTR-1 Detail →');
 });
 
+// ── Recon reset ───────────────────────────────────────────────────
+function resetRecon(){
+  // Clear text inputs
+  document.getElementById('r-gstin').value='';
+  document.getElementById('r-name').value='';
+  document.getElementById('r-fy').value='2025-26';
+  document.getElementById('r-state').value='';
+
+  // Clear all file zones for reconciliation tab
+  ['r1','r1a','r2b','r2a','r3b','cust','taxlib'].forEach(zone=>{
+    zoneFiles[zone]=[];
+    const cnt=document.getElementById('cnt-'+zone);
+    const el=document.getElementById('zone-'+zone);
+    if(cnt) cnt.textContent='No file'+(zone==='r1'||zone==='r1a'||zone==='r2b'||zone==='r2a'||zone==='r3b'?'s':'');
+    if(el){
+      el.classList.remove('has-files');
+      const inp=el.querySelector('input[type=file]');
+      if(inp) inp.value='';
+    }
+  });
+
+  // Hide progress & download panels
+  const pw=document.getElementById('r-pw');
+  const dw=document.getElementById('r-dw');
+  if(pw) pw.style.display='none';
+  if(dw) dw.style.display='none';
+
+  // Re-enable submit button
+  const btn=document.getElementById('r-submit');
+  if(btn){btn.disabled=false;btn.textContent='Generate Reconciliation + GSTR-1 Detail →';}
+
+  // Clear log & progress bar
+  const lb=document.getElementById('r-lb');
+  const pb=document.getElementById('r-pb');
+  if(lb) lb.innerHTML='';
+  if(pb) pb.style.width='0%';
+
+  // Reset badge
+  setBadge('r','p','Running');
+}
+
 // ── GSTR-1 form ───────────────────────────────────────────────────
 document.getElementById('g1-form').addEventListener('submit', async e=>{
   e.preventDefault();
@@ -1144,6 +1172,11 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
   document.getElementById('ad-lb').innerHTML='';
   document.getElementById('ad-pb').style.width='0%';
   setBadge('ad','p','Running');
+  // Reset failure screenshots panel for new job
+  _failShotsRendered = 0;
+  document.getElementById('ad-fail-shots').style.display='none';
+  document.getElementById('ad-fail-grid').innerHTML='';
+  document.getElementById('ad-fail-count').textContent='';
   const btn=document.getElementById('ad-submit');
   btn.disabled=true;btn.textContent='Starting…';
   addLog('ad','info','Starting browser on server — GST portal login in progress...');
@@ -1203,6 +1236,30 @@ async function _adPoll(jid){
       }
     }
 
+    // Show files as they arrive during download (live update)
+    if(d.files && d.files.length){
+      const grid = document.getElementById('ad-dlg');
+      const sec  = document.getElementById('ad-dw');
+      if(sec) sec.style.display = 'block';
+      if(grid && grid.children.length !== d.files.length){
+        grid.innerHTML = '';
+        d.files.forEach(f => {
+          const icon = f.name.endsWith('.pdf') ? '📄' : f.name.endsWith('.zip') ? '🗜' : '📊';
+          const c = document.createElement('div'); c.className = 'dlc';
+          c.innerHTML = `<div style="font-size:1.4rem">${icon}</div>
+            <div class="dl-n">${f.name}</div>
+            <div class="dl-s">${f.size||''}</div>
+            <a href="/api/dl-file/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
+          grid.appendChild(c);
+        });
+      }
+    }
+
+    // Live-update failure screenshots during polling
+    if(d.failure_screenshots && d.failure_screenshots.length > _failShotsRendered){
+      _renderFailShots(d.failure_screenshots);
+    }
+
     if(d.status==='done'){
       setBadge('ad','d','Complete');
       document.getElementById('ad-pb').style.width='100%';
@@ -1210,7 +1267,13 @@ async function _adPoll(jid){
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
       if(captchaCard) captchaCard.style.display='none';
       if(reloginCard) reloginCard.style.display='none';
-      _adShowFiles(jid,d.files);return;
+      // Auto-fill Download Status job ID
+      const dsJid = document.getElementById('ds-jid');
+      if(dsJid) dsJid.value = jid;
+      _adShowFiles(jid, d.files);
+      // Final refresh of failure screenshots
+      refreshFailShots();
+      return;
     }
     if(d.status==='error'){
       addLog('ad','err',d.error||'Unknown error');setBadge('ad','e','Failed');
@@ -1280,18 +1343,103 @@ function showBmInstr(browser){
 function bookmarkletClick(e){e.preventDefault();}
 
 
-function _adShowFiles(jid,files){
-  const sec=document.getElementById('ad-dw'),grid=document.getElementById('ad-dlg');
-  sec.style.display='block';grid.innerHTML='';
-  if(!files||!files.length){grid.innerHTML='<p style="color:var(--muted);font-size:.8rem">No files. Check logs.</p>';return;}
-  files.forEach(f=>{
-    const c=document.createElement('div');c.className='dlc';
-    c.innerHTML=`<div style="font-size:1.5rem">📥</div>
-      <div class="dl-n">${f.name}</div><div class="dl-s">${f.size||''}</div>
+// Store job files globally for transfer
+let _adLastJobId = '';
+let _adLastFiles = [];
+
+function _adShowFiles(jid, files){
+  _adLastJobId = jid;
+  _adLastFiles = files || [];
+  const sec = document.getElementById('ad-dw'), grid = document.getElementById('ad-dlg');
+  sec.style.display = 'block'; grid.innerHTML = '';
+  if(!files || !files.length){
+    grid.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No files downloaded. Check logs above.</p>';
+    return;
+  }
+  files.forEach(f => {
+    const icon = f.name.endsWith('.pdf') ? '📄' : f.name.endsWith('.zip') ? '🗜' : '📊';
+    const c = document.createElement('div'); c.className = 'dlc';
+    c.innerHTML = `<div style="font-size:1.4rem">${icon}</div>
+      <div class="dl-n">${f.name}</div>
+      <div class="dl-s">${f.size || ''}</div>
       <a href="/api/dl-file/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
     grid.appendChild(c);
   });
+
+  // Also update Download Status tab automatically
+  const dlStatus = {};
+  files.forEach(f => {
+    const m = f.name.match(/^(GSTR[^_]+)_([A-Za-z]+)_(\d{4})/);
+    if(m){
+      const rt = m[1].replace('-',''), mon = m[2];
+      dlStatus[`${mon}_${rt}`] = 'OK';
+    }
+  });
+  if(Object.keys(dlStatus).length) renderDlStatus(dlStatus, jid);
 }
+
+async function adTransferToRecon(){
+  if(!_adLastJobId || !_adLastFiles.length){
+    alert('No downloaded files to transfer. Run Auto Download first.'); return;
+  }
+  // Switch to reconciliation tab
+  switchTab('recon', null);
+  // Show notification
+  addLog('r','ok','📥 Files from Auto Download are being fetched...');
+  document.getElementById('r-pw').style.display='block';
+
+  // Fetch each file and add to drop zones
+  const zoneMap = {
+    'GSTR1': 'r1', 'GSTR1A': 'r1a',
+    'GSTR2B': 'r2b', 'GSTR2A': 'r2a', 'GSTR3B': 'r3b'
+  };
+  const fetched = {r1:[], r1a:[], r2b:[], r2a:[], r3b:[]};
+
+  for(const f of _adLastFiles){
+    if(f.name.endsWith('.zip') && f.name.startsWith('GST_Downloads')) continue; // skip master zip
+    const m = f.name.match(/^(GSTR[^_]+)_/);
+    if(!m) continue;
+    const rt = m[1].replace('-','').replace('GSTR','GSTR');
+    const zone = zoneMap[rt];
+    if(!zone) continue;
+    try{
+      const resp = await fetch(`/api/dl-file/${_adLastJobId}/${encodeURIComponent(f.name)}`);
+      if(!resp.ok) continue;
+      const blob = await resp.blob();
+      const file = new File([blob], f.name, {type: blob.type});
+      fetched[zone].push(file);
+    }catch(e){ console.warn('Fetch failed:', f.name, e); }
+  }
+
+  // Load into zone files and update UI
+  let total = 0;
+  for(const [zone, files] of Object.entries(fetched)){
+    if(!files.length) continue;
+    zoneFiles[zone] = (zoneFiles[zone] || []).concat(files);
+    const cnt = document.getElementById('cnt-'+zone);
+    const el = document.getElementById('zone-'+zone);
+    if(cnt) cnt.textContent = zoneFiles[zone].length + ' file' + (zoneFiles[zone].length>1?'s':'') + ' selected';
+    if(el) el.classList.add('has-files');
+    total += files.length;
+  }
+
+  addLog('r','ok',`✅ ${total} file(s) transferred to Reconciliation tab — fill in GSTIN and click Generate!`);
+  document.getElementById('r-pw').style.display='none';
+
+  // Auto-fill company name and GSTIN if available
+  const adName = document.getElementById('ad-name');
+  const adGstin = document.getElementById('ad-gstin');
+  if(adName && adName.value){
+    const rName = document.getElementById('r-name');
+    if(rName && !rName.value) rName.value = adName.value;
+  }
+  if(adGstin && adGstin.value){
+    const rGstin = document.getElementById('r-gstin');
+    if(rGstin && !rGstin.value) rGstin.value = adGstin.value;
+  }
+}
+
+
 
 const MONS=['April','May','June','July','August','September',
             'October','November','December','January','February','March'];
@@ -1577,6 +1725,91 @@ function _bulkShowFiles(jid, files){
       <a href="/api/dl-file/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
     grid.appendChild(c);
   });
+}
+
+// ── Failure Screenshots ──────────────────────────────────────────
+let _failShotsRendered = 0;
+
+async function refreshFailShots(){
+  if(!_adJobId) return;
+  try{
+    const res = await fetch(`/api/failure-screenshots/${_adJobId}`);
+    const d   = await res.json();
+    if(d.error || !d.screenshots) return;
+    _renderFailShots(d.screenshots);
+  }catch(e){ console.warn('Failure shots fetch error:', e); }
+}
+
+function _renderFailShots(shots){
+  const panel = document.getElementById('ad-fail-shots');
+  const grid  = document.getElementById('ad-fail-grid');
+  const count = document.getElementById('ad-fail-count');
+  if(!panel || !grid) return;
+
+  if(!shots || shots.length === 0){
+    panel.style.display = 'none';
+    _failShotsRendered = 0;
+    return;
+  }
+
+  panel.style.display = 'block';
+  count.textContent = `(${shots.length} screenshot${shots.length>1?'s':''})`;
+
+  // Only add newly arrived screenshots (don't re-render existing ones)
+  const newShots = shots.slice(_failShotsRendered);
+  newShots.forEach((shot, i) => {
+    const idx = _failShotsRendered + i + 1;
+    const card = document.createElement('div');
+    card.style.cssText = 'background:var(--surf2);border:1px solid rgba(255,23,68,.25);border-radius:10px;padding:.85rem;';
+
+    // Header row
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;gap:.6rem;margin-bottom:.6rem;flex-wrap:wrap;';
+    hdr.innerHTML = `
+      <span style="background:rgba(255,23,68,.15);color:var(--red);border:1px solid rgba(255,23,68,.3);
+                   border-radius:100px;font-size:.62rem;font-weight:700;padding:.18rem .55rem;
+                   font-family:var(--mono)">#${idx}</span>
+      <span style="font-size:.78rem;font-weight:700;color:var(--txt);flex:1">${escHtml(shot.label)}</span>
+      <span style="font-size:.65rem;color:var(--muted);font-family:var(--mono)">⏰ ${escHtml(shot.ts)}</span>`;
+    card.appendChild(hdr);
+
+    // Screenshot image
+    const img = document.createElement('img');
+    img.src = 'data:image/png;base64,' + shot.img_b64;
+    img.alt = shot.label;
+    img.style.cssText = 'width:100%;border-radius:7px;border:1px solid var(--bdr);cursor:zoom-in;display:block;';
+    img.title = 'Click to open full size';
+    img.onclick = () => {
+      const win = window.open();
+      win.document.write(`<html><head><title>${escHtml(shot.label)}</title>
+        <style>body{margin:0;background:#111;display:flex;flex-direction:column;align-items:center;padding:1rem}
+        img{max-width:100%;border-radius:8px}
+        p{color:#aaa;font-family:monospace;font-size:.8rem;margin:.5rem 0}</style></head>
+        <body><p>📸 ${escHtml(shot.label)} — ${escHtml(shot.ts)}</p>
+        <img src="data:image/png;base64,${shot.img_b64}"></body></html>`);
+    };
+    card.appendChild(img);
+
+    // Download link
+    const dlRow = document.createElement('div');
+    dlRow.style.cssText = 'margin-top:.5rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;';
+    const dlBtn = document.createElement('a');
+    dlBtn.href = 'data:image/png;base64,' + shot.img_b64;
+    dlBtn.download = `failure_${idx}_${shot.label.replace(/[^a-zA-Z0-9]/g,'_').slice(0,40)}.png`;
+    dlBtn.className = 'btn-dl';
+    dlBtn.style.cssText = 'font-size:.68rem;padding:.3rem .75rem;';
+    dlBtn.textContent = '⬇ Download PNG';
+    dlRow.appendChild(dlBtn);
+    const hint = document.createElement('span');
+    hint.style.cssText = 'font-size:.65rem;color:var(--muted);font-family:var(--mono);';
+    hint.textContent = 'Click image to open full size • Download to save for reference';
+    dlRow.appendChild(hint);
+    card.appendChild(dlRow);
+
+    grid.appendChild(card);
+  });
+
+  _failShotsRendered = shots.length;
 }
 
 // ── Self-Ping to Keep Render App Alive ────────────────────────────
@@ -1933,6 +2166,10 @@ def api_job(job_id):
             return jsonify(error="Job not found"), 404
         new_logs = job["logs"][:]
         job["logs"] = []
+        # Return failure screenshots (without img data in poll — just label+ts for count)
+        # Full images are fetched via /api/failure-screenshots/<job_id>
+        fail_shots = job.get("failure_screenshots", [])
+        fail_shots_light = [{"label": s["label"], "ts": s["ts"], "img_b64": s["img_b64"]} for s in fail_shots]
         return jsonify(
             status=job["status"], progress=job["progress"],
             logs=new_logs, files=job["files"], error=job["error"],
@@ -1941,6 +2178,7 @@ def api_job(job_id):
             captcha_img=job.get("captcha_img", None),
             captcha_company=job.get("captcha_company", None),
             counter=job.get("counter",""),
+            failure_screenshots=fail_shots_light,
         )
 
 @app.route("/api/download/<job_id>/<filename>")
@@ -2080,6 +2318,21 @@ def debug_screenshot(job_id):
 
 
 
+# ── Failure screenshots endpoint ─────────────────────────────────
+@app.route("/api/failure-screenshots/<job_id>")
+def failure_screenshots(job_id):
+    """Returns list of failure screenshots captured during auto download."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        return jsonify(error="job not found"), 404
+    shots = job.get("failure_screenshots", [])
+    # Return label, ts, and img_b64 for each
+    return jsonify(count=len(shots), screenshots=[
+        {"label": s["label"], "ts": s["ts"], "img_b64": s["img_b64"]}
+        for s in shots
+    ])
+
 # ── CAPTCHA image endpoint ────────────────────────────────────────
 @app.route("/api/captcha-img/<job_id>")
 def captcha_img(job_id):
@@ -2207,6 +2460,7 @@ def api_auto_download():
             "files": [], "error": None,
             "captcha_needed": False, "captcha_img": None,
             "out_dir": str(out_dir),
+            "failure_screenshots": [],   # list of {label, img_b64, ts}
         }
 
     sess = {
@@ -2278,6 +2532,24 @@ def _auto_download(job_id, gstin, client_name,
             if job_id in jobs:
                 jobs[job_id]["captcha_needed"] = False
                 jobs[job_id]["captcha_img"]    = None
+
+    def save_failure_screenshot(label):
+        """Capture current browser state and store as a failure screenshot for reference."""
+        try:
+            img_b64 = _screenshot_b64()
+            if not img_b64:
+                return
+            entry = {
+                "label": label,
+                "img_b64": img_b64,
+                "ts": datetime.now().strftime("%H:%M:%S"),
+            }
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id].setdefault("failure_screenshots", []).append(entry)
+            log(f"  📸 Failure screenshot saved: {label}", "warn")
+        except Exception as _se:
+            log(f"  ⚠ Could not save failure screenshot: {_se}", "warn")
 
     def wait_for_captcha_input():
         """Block until user submits CAPTCHA text from web UI. Returns the text."""
@@ -2935,11 +3207,14 @@ def _auto_download(job_id, gstin, client_name,
                             downloaded.append({"name": save_name, "size": f"{sz} KB"})
                         else:
                             triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                            save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
                     else:
                         triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
+                        save_failure_screenshot(f"GSTR3B {month_name} {year} — Tile Not Found on Dashboard")
                 except Exception as e:
                     log(f"  GSTR3B error [{month_name}]: {e}", "warn")
                     triggered[f"{key}_GSTR3B"] = f"ERR:{e}"
+                    save_failure_screenshot(f"GSTR3B {month_name} {year} — Exception: {str(e)[:60]}")
 
             # GSTR-1: trigger GENERATE JSON
             if "GSTR1" in returns_set:
@@ -2956,11 +3231,14 @@ def _auto_download(job_id, gstin, client_name,
                             time.sleep(2)
                         else:
                             triggered[f"{key}_GSTR1"] = "GEN_FAIL"
+                            save_failure_screenshot(f"GSTR1 {month_name} {year} — Generate Button Not Found")
                     else:
                         triggered[f"{key}_GSTR1"] = "TILE_FAIL"
+                        save_failure_screenshot(f"GSTR1 {month_name} {year} — Tile Not Found on Dashboard")
                 except Exception as e:
                     log(f"  GSTR1 trigger error [{month_name}]: {e}", "warn")
                     triggered[f"{key}_GSTR1"] = f"ERR:{e}"
+                    save_failure_screenshot(f"GSTR1 {month_name} {year} — Exception: {str(e)[:60]}")
 
             # GSTR-1A: trigger GENERATE JSON
             if "GSTR1A" in returns_set:
@@ -2977,11 +3255,14 @@ def _auto_download(job_id, gstin, client_name,
                             time.sleep(2)
                         else:
                             triggered[f"{key}_GSTR1A"] = "GEN_FAIL"
+                            save_failure_screenshot(f"GSTR1A {month_name} {year} — Generate Button Not Found")
                     else:
                         triggered[f"{key}_GSTR1A"] = "TILE_NOT_FOUND"
+                        save_failure_screenshot(f"GSTR1A {month_name} {year} — Tile Not Found on Dashboard")
                 except Exception as e:
                     log(f"  GSTR1A trigger error [{month_name}]: {e}", "warn")
                     triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
+                    save_failure_screenshot(f"GSTR1A {month_name} {year} — Exception: {str(e)[:60]}")
 
             # GSTR-2B: GENERATE EXCEL + download immediately (generates in seconds)
             if "GSTR2B" in returns_set:
@@ -2999,11 +3280,14 @@ def _auto_download(job_id, gstin, client_name,
                             downloaded.append({"name": save_name, "size": f"{sz} KB"})
                         else:
                             triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
+                            save_failure_screenshot(f"GSTR2B {month_name} {year} — Download Link Not Found")
                     else:
                         triggered[f"{key}_GSTR2B"] = "TILE_FAIL"
+                        save_failure_screenshot(f"GSTR2B {month_name} {year} — Tile Not Found on Dashboard")
                 except Exception as e:
                     log(f"  GSTR2B error [{month_name}]: {e}", "warn")
                     triggered[f"{key}_GSTR2B"] = f"ERR:{e}"
+                    save_failure_screenshot(f"GSTR2B {month_name} {year} — Exception: {str(e)[:60]}")
 
             # GSTR-2A: trigger GENERATE EXCEL
             if "GSTR2A" in returns_set:
@@ -3020,11 +3304,14 @@ def _auto_download(job_id, gstin, client_name,
                             time.sleep(2)
                         else:
                             triggered[f"{key}_GSTR2A"] = "GEN_FAIL"
+                            save_failure_screenshot(f"GSTR2A {month_name} {year} — Generate Button Not Found")
                     else:
                         triggered[f"{key}_GSTR2A"] = "TILE_FAIL"
+                        save_failure_screenshot(f"GSTR2A {month_name} {year} — Tile Not Found on Dashboard")
                 except Exception as e:
                     log(f"  GSTR2A trigger error [{month_name}]: {e}", "warn")
                     triggered[f"{key}_GSTR2A"] = f"ERR:{e}"
+                    save_failure_screenshot(f"GSTR2A {month_name} {year} — Exception: {str(e)[:60]}")
 
         prog(55)
 
@@ -3076,11 +3363,14 @@ def _auto_download(job_id, gstin, client_name,
                                 downloaded.append({"name": save_name, "size": f"{sz} KB"})
                             else:
                                 triggered[tkey] = "NOT_FOUND"
+                                save_failure_screenshot(f"{ret_type} {month_name} {year} — Download Link Not Found (Phase 2)")
                         else:
                             triggered[tkey] = "TILE_FAIL"
+                            save_failure_screenshot(f"{ret_type} {month_name} {year} — Tile Not Found (Phase 2)")
                     except Exception as e:
                         log(f"  {ret_type} download error [{month_name}]: {e}", "warn")
                         triggered[tkey] = f"ERR:{e}"
+                        save_failure_screenshot(f"{ret_type} {month_name} {year} — Exception Phase 2: {str(e)[:60]}")
 
                     p2_done += 1
                     prog(55 + int(p2_done / max(p2_total,1) * 40))
