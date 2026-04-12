@@ -1153,17 +1153,20 @@ async function _adPoll(jid){
                            d.captcha_company.name && d.captcha_company.name.includes('RE-LOGIN');
 
     if(waitCard){
+      const wasHidden = waitCard.style.display==='none' || waitCard.style.display==='';
       if(needingToken && !needingRelogin){
         waitCard.style.display='block';
-        waitCard.scrollIntoView({behavior:'smooth',block:'center'});
+        // Only scroll once when it first appears — never again while waiting
+        if(wasHidden) waitCard.scrollIntoView({behavior:'smooth',block:'nearest'});
       } else {
         waitCard.style.display='none';
       }
     }
     if(reloginCard){
+      const wasHidden2 = reloginCard.style.display==='none' || reloginCard.style.display==='';
       if(needingRelogin){
         reloginCard.style.display='block';
-        reloginCard.scrollIntoView({behavior:'smooth',block:'center'});
+        if(wasHidden2) reloginCard.scrollIntoView({behavior:'smooth',block:'nearest'});
       } else {
         reloginCard.style.display='none';
       }
