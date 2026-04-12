@@ -2483,84 +2483,57 @@ def _auto_download(job_id, gstin, client_name,
         log("  ✅ Login successful!", "ok")
         return True
 
-    def _is_on_returns_dashboard():
-        """
-        Returns True if browser is on the Returns Dashboard page.
-        The portal can land on either:
-          https://return.gst.gov.in/returns/auth/dashboard   (old)
-          https://services.gst.gov.in/services/auth/...      (then needs more clicks)
-        We confirm by checking for the FY/period dropdowns on the page.
-        """
-        cur = driver.current_url.lower()
-        # Already on correct returns dashboard (has period dropdowns)
-        if "return.gst.gov.in" in cur and "dashboard" in cur:
-            return True
-        # Some portal versions show dashboard on services domain too
-        if "gst.gov.in" in cur and "dashboard" in cur:
-            # Check if the FY select dropdown is present (proof it's the returns dashboard)
-            try:
-                sels = driver.find_elements(By.TAG_NAME, "select")
-                for s in sels:
-                    opts = [o.text for o in Select(s).options]
-                    if any("-" in o and len(o) <= 9 for o in opts):
-                        return True  # FY dropdown found = returns dashboard
-            except: pass
-        return False
-
     def _go_to_dashboard():
-        """Services → Returns → Returns Dashboard"""
-        if _is_on_returns_dashboard():
+        """Navigate to return.gst.gov.in/returns/auth/dashboard — the Returns Dashboard with tiles."""
+        cur = driver.current_url
+        # Already on the correct returns dashboard (has GSTR tiles)
+        if "return.gst.gov.in" in cur and "dashboard" in cur:
             return True
 
         if _is_session_lost():
             log("  ⚠ Session lost — re-logging in...", "warn")
             _do_login()
 
-        log("  Navigating: Services → Returns → Returns Dashboard")
+        log("  Navigating to Returns Dashboard...")
 
         for attempt in range(3):
             cur = driver.current_url
             log(f"  Nav attempt {attempt+1} from: {cur}")
 
-            # If we're on the services auth dashboard, we need to click Returns → Returns Dashboard
-            # from the top nav, not Services first
-            if "services.gst.gov.in" in cur and "dashboard" in cur:
-                # Already logged in dashboard — click Returns in top nav directly
-                clicked = _try_click([
-                    "//a[normalize-space(text())='Returns']",
-                    "//li//a[normalize-space()='Returns']",
-                    "//nav//a[normalize-space()='Returns']",
-                ])
-                time.sleep(1.5)
-                _try_click([
-                    "//a[contains(normalize-space(text()),'Returns Dashboard')]",
-                    "//a[contains(@href,'returnsdashboard')]",
-                    "//a[contains(@href,'returns/dashboard')]",
-                    "//a[contains(@href,'dashboard') and contains(@href,'return')]",
-                    "//*[contains(@class,'dropdown')]//a[contains(text(),'Dashboard')]",
-                ])
-                time.sleep(8)
-            else:
-                # Full Services → Returns → Returns Dashboard path
-                _try_click([
-                    "//a[normalize-space(text())='Services']",
-                    "//nav//a[normalize-space()='Services']",
-                    "//ul[contains(@class,'nav')]//a[contains(text(),'Services')]",
-                ])
-                time.sleep(1.5)
-                _try_click([
-                    "//a[normalize-space(text())='Returns']",
-                    "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
-                    "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
-                ])
-                time.sleep(1.5)
-                _try_click([
-                    "//a[contains(normalize-space(text()),'Returns Dashboard')]",
-                    "//a[contains(@href,'returnsdashboard')]",
-                    "//a[contains(@href,'returns/dashboard')]",
-                    "//li//a[contains(@href,'dashboard')]",
-                ])
-                time.sleep(8)
+            # Step 1: Click Services
+            _try_click([
+                "//a[normalize-space(text())='Services']",
+                "//nav//a[normalize-space()='Services']",
+                "//ul[contains(@class,'nav')]//a[contains(text(),'Services')]",
+            ])
+            time.sleep(1.5)
+
+            # Step 2: Click Returns (in dropdown)
+            _try_click([
+                "//a[normalize-space(text())='Returns']",
+                "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
+                "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
+                "//li[contains(@class,'open')]//a[normalize-space()='Returns']",
+            ])
+            time.sleep(1.5)
+
+            # Step 3: Click Returns Dashboard (in submenu)
+            clicked = _try_click([
+                "//a[contains(normalize-space(text()),'Returns Dashboard')]",
+                "//a[contains(@href,'returnsdashboard')]",
+                "//a[contains(@href,'returns/auth/dashboard')]",
+            ])
+            if not clicked:
+                # Scan all links for Returns Dashboard
+                for el in driver.find_elements(By.TAG_NAME, "a"):
+                    try:
+                        if "Returns Dashboard" in (el.text or "") and el.is_displayed():
+                            driver.execute_script("arguments[0].click();", el)
+                            clicked = True
+                            log("  Returns Dashboard clicked via scan ✓")
+                            break
+                    except: continue
+            time.sleep(10)
 
             final = driver.current_url
             log(f"  URL after nav attempt {attempt+1}: {final}")
@@ -2570,17 +2543,33 @@ def _auto_download(job_id, gstin, client_name,
                 _do_login()
                 continue
 
-            if _is_on_returns_dashboard():
-                log("  ✅ Returns Dashboard loaded", "ok")
+            # ✅ Correct dashboard on return.gst.gov.in
+            if "return.gst.gov.in" in final and "dashboard" in final:
+                log("  ✅ Returns Dashboard loaded (return.gst.gov.in)", "ok")
                 return True
 
-            # Log page content to understand where we are
+            # Landed on services dashboard — click FILE RETURNS link directly
+            if "services.gst.gov.in" in final and "dashboard" in final:
+                log("  On services dashboard — clicking FILE RETURNS link...")
+                clicked2 = _try_click([
+                    "//a[normalize-space(text())='FILE RETURNS']",
+                    "//a[contains(@href,'return.gst.gov.in')]",
+                    "//a[contains(@href,'returns/auth/dashboard')]",
+                ])
+                time.sleep(10)
+                final2 = driver.current_url
+                log(f"  URL after FILE RETURNS click: {final2}")
+                if "return.gst.gov.in" in final2 and "dashboard" in final2:
+                    log("  ✅ Returns Dashboard loaded via FILE RETURNS", "ok")
+                    return True
+
+            # Log page to understand where we are
             try:
-                pg = driver.find_element(By.TAG_NAME, "body").text[:200].replace("\n"," ")
-                log(f"  Page content: {pg}", "info")
+                pg = driver.find_element(By.TAG_NAME, "body").text[:300].replace("\n"," ")
+                log(f"  Page: {pg}", "info")
             except: pass
 
-        raise RuntimeError(f"Could not reach Returns Dashboard. Last URL: {driver.current_url}")
+        raise RuntimeError(f"Could not reach return.gst.gov.in dashboard. Last URL: {driver.current_url}")
 
     def _select_and_search(month_name):
         """Select FY, Quarter, Period then click SEARCH (mirrors select_and_search)"""
