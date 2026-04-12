@@ -666,23 +666,23 @@ footer a{color:var(--accent);text-decoration:none}
 
   <div style="border-top:1px solid var(--bdr);padding-top:.8rem">
     <div style="font-size:.74rem;color:var(--muted);line-height:1.8">
-      <strong style="color:var(--txt)">How to use (after saving bookmark):</strong><br>
-      1. Fill form below &amp; click <strong style="color:var(--org)">🚀 Start Auto Download</strong><br>
-      2. GST portal login tab opens automatically<br>
-      3. Login with username + password + CAPTCHA<br>
-      4. <strong style="color:#a78bfa">Open your bookmarks → click "🔖 GST Token Capture"</strong><br>
-      5. Green popup appears → token sent → download begins!
+      <strong style="color:var(--txt)">How it works:</strong><br>
+      1. Fill in your GSTIN, Company Name, Username &amp; Password below<br>
+      2. Click <strong style="color:var(--org)">🚀 Start Auto Download</strong><br>
+      3. Server opens a browser on portal — a CAPTCHA screenshot appears here<br>
+      4. <strong style="color:var(--accent)">Type the CAPTCHA letters in the box and click Submit</strong><br>
+      5. Server logs in and downloads all your returns automatically!
     </div>
   </div>
   <div class="info-box" style="margin-top:.8rem;font-size:.72rem">
-    <strong>Already have a token?</strong> Paste it in the Token field below instead — bookmarklet is optional.
+    Your password is used only for this session and never stored.
   </div>
 </div>
 
-<!-- Step 2: Enter details + token -->
+<!-- Step 2: Enter details -->
 <form id="ad-form">
 <div class="card">
-  <div class="ct">Step 2 — Enter Details &amp; Token</div>
+  <div class="ct">Step 2 — Enter Your GST Portal Details</div>
   <div class="fg2">
     <div class="fg"><label>GSTIN *</label>
       <input type="text" id="ad-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
@@ -690,9 +690,8 @@ footer a{color:var(--accent);text-decoration:none}
       <input type="text" id="ad-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Username *</label>
       <input type="text" id="ad-username" placeholder="Your GST portal username" required></div>
-    <div class="fg"><label>Session Token <span style="color:var(--muted)">(optional — bookmarklet will auto-fill)</span></label>
-      <input type="text" id="ad-token" placeholder="Leave blank to use bookmarklet, or paste AuthToken here"
-             style="font-size:.72rem"></div>
+    <div class="fg"><label>Password *</label>
+      <input type="password" id="ad-password" placeholder="Your GST portal password" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="ad-fy">
         <option value="2025-26">2025-26</option>
@@ -723,34 +722,36 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="lb" id="ad-lb"></div>
 </div>
 
-<!-- Waiting for bookmarklet token card -->
-<div class="card" id="ad-waiting-token-card" style="display:none">
-  <div class="ct">🔖 Waiting for Token — Open GST Portal &amp; Click Bookmark</div>
-  <div class="info-box" style="margin-bottom:.8rem;font-size:.75rem;text-align:center">
-    <div style="font-size:2rem;margin-bottom:.4rem">⏳</div>
-    <strong style="color:var(--txt)">Waiting for your login token…</strong><br>
-    <span style="color:var(--muted)">Login to GST portal, then click the <strong style="color:#a78bfa">🔖 GST Token Capture</strong> bookmark</span>
+<!-- CAPTCHA card (shown when server browser needs CAPTCHA input) -->
+<div class="card" id="ad-captcha-card" style="display:none">
+  <div class="ct">🔐 CAPTCHA Required — Type Below</div>
+  <div class="info-box" style="margin-bottom:.8rem;font-size:.75rem">
+    The server has opened GST portal and needs you to solve the CAPTCHA.<br>
+    <strong style="color:var(--txt)">Type exactly what you see in the image, then click Submit.</strong>
   </div>
   <div style="text-align:center;margin-bottom:.8rem">
-    <a href="https://services.gst.gov.in/services/login" target="_blank"
-       style="display:inline-block;padding:.6rem 1.3rem;background:linear-gradient(135deg,#ff6d00,#ff9100);
-              border-radius:8px;color:#000;font-weight:800;font-size:.82rem;text-decoration:none;
-              letter-spacing:.04em;text-transform:uppercase">
-      🔐 Open GST Portal Login →
-    </a>
-  </div>
-  <div class="info-box warn" style="font-size:.72rem">
-    <strong>Don't have the bookmark?</strong> Paste token manually below:<br>
-    <div style="display:flex;gap:.5rem;margin-top:.4rem">
-      <input type="text" id="ad-manual-token-input" placeholder="Paste AuthToken here"
-             style="font-size:.7rem;flex:1">
-      <button onclick="submitAdManualToken()"
-              style="padding:.4rem .9rem;background:var(--accent);border:none;border-radius:6px;
-                     color:#000;font-weight:700;font-size:.75rem;cursor:pointer;white-space:nowrap">
-        Submit →
-      </button>
+    <img id="ad-captcha-img" src="" alt="CAPTCHA"
+         style="max-width:100%;border-radius:8px;border:2px solid var(--accent);
+                background:#fff;padding:4px;cursor:pointer"
+         title="Click to refresh screenshot"
+         onclick="refreshAdCaptcha()">
+    <div style="font-size:.68rem;color:var(--muted);margin-top:.35rem;font-family:var(--mono)">
+      Click image to refresh screenshot
     </div>
   </div>
+  <div style="display:flex;gap:.5rem;align-items:center">
+    <input type="text" id="ad-captcha-input"
+           placeholder="Type CAPTCHA letters here"
+           style="flex:1;font-size:.85rem;letter-spacing:.15em;text-transform:uppercase"
+           onkeydown="if(event.key==='Enter')submitAdCaptcha()">
+    <button onclick="submitAdCaptcha()"
+            style="padding:.55rem 1.2rem;background:linear-gradient(135deg,var(--accent),var(--accent2));
+                   border:none;border-radius:8px;color:#000;font-weight:800;font-size:.82rem;
+                   cursor:pointer;white-space:nowrap">
+      Submit →
+    </button>
+  </div>
+  <div id="ad-captcha-err" style="color:var(--red);font-size:.72rem;margin-top:.4rem;font-family:var(--mono)"></div>
 </div>
 
 <!-- Re-login card (shown if token expires mid-download) -->
@@ -1123,13 +1124,14 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
   const gstin=document.getElementById('ad-gstin').value.trim().toUpperCase();
   const cname=document.getElementById('ad-name').value.trim();
   const username=document.getElementById('ad-username').value.trim();
-  const token=document.getElementById('ad-token').value.trim();
+  const password=document.getElementById('ad-password').value;
+  const token='';
   const fy=document.getElementById('ad-fy').value;
   const returns=document.getElementById('ad-returns').value;
   if(!gstin||gstin.length!==15){alert('Enter valid 15-char GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
   if(!username){alert('Enter username');return;}
-  // token is now optional — bookmarklet sends it automatically
+  if(!password){alert('Enter your GST portal password');return;}
   document.getElementById('ad-pw').style.display='block';
   document.getElementById('ad-dw').style.display='none';
   document.getElementById('ad-lb').innerHTML='';
@@ -1137,26 +1139,18 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
   setBadge('ad','p','Running');
   const btn=document.getElementById('ad-submit');
   btn.disabled=true;btn.textContent='Starting…';
-  const msg=token?'Using your session token to connect to GST portal...':'Waiting for bookmarklet token — please login to GST portal now…';
-  addLog('ad','info',msg);
+  addLog('ad','info','Starting browser on server — GST portal login in progress...');
   try{
     const res=await fetch('/api/auto-download',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({gstin,client_name:cname,username,token,fy,returns})});
+      body:JSON.stringify({gstin,client_name:cname,username,password,token,fy,returns})});
     let d;try{d=await res.json();}catch(_){
       addLog('ad','err','Server error — try again');setBadge('ad','e','Failed');
       btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
     if(d.error){addLog('ad','err',d.error);setBadge('ad','e','Failed');
       btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
     _adJobId=d.job_id;
-    // Update bookmarklet with job ID now that we have it
-    _updateBookmarklet(_adJobId);
     btn.textContent='Running…';
-    if(!token){
-      // Auto-open GST portal login in new tab
-      window.open('https://services.gst.gov.in/services/login','_blank');
-      addLog('ad','info','🔐 GST portal login tab opened — login then click 🔖 bookmark');
-    }
     _adPoll(_adJobId);
   }catch(err){addLog('ad','err','Network error: '+err.message);setBadge('ad','e','Failed');
     btn.disabled=false;btn.textContent='🚀 Start Auto Download';}
@@ -1169,32 +1163,33 @@ async function _adPoll(jid){
     if(d.logs)d.logs.forEach(l=>addLog('ad',l.type,l.msg));
     if(d.progress!=null)document.getElementById('ad-pb').style.width=d.progress+'%';
 
-    const waitCard   = document.getElementById('ad-waiting-token-card');
-    const reloginCard= document.getElementById('ad-relogin-card');
+    const captchaCard = document.getElementById('ad-captcha-card');
+    const reloginCard = document.getElementById('ad-relogin-card');
 
-    // Show waiting-for-token card when server is waiting for bookmarklet
-    // (captcha_needed=true AND no captcha_img means "waiting for token", not "show CAPTCHA")
-    const needingToken = d.captcha_needed && !d.captcha_img;
-    const needingRelogin = d.captcha_needed && !d.captcha_img && d.captcha_company && 
-                           d.captcha_company.name && d.captcha_company.name.includes('RE-LOGIN');
-
-    if(waitCard){
-      const wasHidden = waitCard.style.display==='none' || waitCard.style.display==='';
-      if(needingToken && !needingRelogin){
-        waitCard.style.display='block';
-        // Only scroll once when it first appears — never again while waiting
-        if(wasHidden) waitCard.scrollIntoView({behavior:'smooth',block:'nearest'});
+    // Show CAPTCHA card when server has a screenshot waiting
+    if(captchaCard){
+      const wasHidden = captchaCard.style.display === 'none' || captchaCard.style.display === '';
+      if(d.captcha_needed && d.captcha_img){
+        // Update image
+        document.getElementById('ad-captcha-img').src = 'data:image/png;base64,' + d.captcha_img;
+        captchaCard.style.display = 'block';
+        if(wasHidden){
+          captchaCard.scrollIntoView({behavior:'smooth', block:'nearest'});
+          document.getElementById('ad-captcha-input').focus();
+        }
       } else {
-        waitCard.style.display='none';
+        captchaCard.style.display = 'none';
+        document.getElementById('ad-captcha-input').value = '';
       }
     }
+
     if(reloginCard){
-      const wasHidden2 = reloginCard.style.display==='none' || reloginCard.style.display==='';
-      if(needingRelogin){
-        reloginCard.style.display='block';
-        if(wasHidden2) reloginCard.scrollIntoView({behavior:'smooth',block:'nearest'});
+      const wasHidden2 = reloginCard.style.display === 'none' || reloginCard.style.display === '';
+      if(d.captcha_needed && !d.captcha_img){
+        reloginCard.style.display = 'block';
+        if(wasHidden2) reloginCard.scrollIntoView({behavior:'smooth', block:'nearest'});
       } else {
-        reloginCard.style.display='none';
+        reloginCard.style.display = 'none';
       }
     }
 
@@ -1203,7 +1198,7 @@ async function _adPoll(jid){
       document.getElementById('ad-pb').style.width='100%';
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
-      if(waitCard) waitCard.style.display='none';
+      if(captchaCard) captchaCard.style.display='none';
       if(reloginCard) reloginCard.style.display='none';
       _adShowFiles(jid,d.files);return;
     }
@@ -1211,12 +1206,39 @@ async function _adPoll(jid){
       addLog('ad','err',d.error||'Unknown error');setBadge('ad','e','Failed');
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
-      if(waitCard) waitCard.style.display='none';
+      if(captchaCard) captchaCard.style.display='none';
       if(reloginCard) reloginCard.style.display='none';
       return;
     }
     setTimeout(()=>_adPoll(jid),1500);
   }catch(e){setTimeout(()=>_adPoll(jid),3000);}
+}
+
+async function submitAdCaptcha(){
+  const text=document.getElementById('ad-captcha-input').value.trim();
+  if(!text){document.getElementById('ad-captcha-err').textContent='Please type the CAPTCHA first';return;}
+  document.getElementById('ad-captcha-err').textContent='';
+  try{
+    const res=await fetch(`/api/captcha-submit/${_adJobId}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({captcha:text})});
+    const d=await res.json();
+    if(d.ok){
+      document.getElementById('ad-captcha-input').value='';
+      addLog('ad','ok','CAPTCHA submitted — logging in...');
+    } else {
+      document.getElementById('ad-captcha-err').textContent='Error: '+(d.error||'Failed');
+    }
+  }catch(err){document.getElementById('ad-captcha-err').textContent='Network error: '+err.message;}
+}
+
+async function refreshAdCaptcha(){
+  if(!_adJobId)return;
+  try{
+    const res=await fetch(`/api/captcha-refresh/${_adJobId}`,{method:'POST'});
+    const d=await res.json();
+    if(d.img)document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.img;
+  }catch(e){}
 }
 
 async function submitAdRelogin(){
@@ -1232,7 +1254,7 @@ async function submitAdRelogin(){
     if(d.ok){
       document.getElementById('ad-relogin-card').style.display='none';
       document.getElementById('ad-relogin-token').value='';
-      addLog('ad','ok','New token submitted — resuming download…');
+      addLog('ad','ok','Re-login submitted — resuming download…');
     } else {
       alert('Error: '+(d.error||'Failed'));
     }
@@ -1240,82 +1262,14 @@ async function submitAdRelogin(){
   btn.disabled=false;btn.textContent='Submit New Token →';
 }
 
-async function submitAdManualToken(){
-  const token=document.getElementById('ad-manual-token-input').value.trim();
-  if(!token){alert('Paste AuthToken first');return;}
-  if(!_adJobId){alert('No active job. Start download first.');return;}
-  try{
-    const res=await fetch(`/api/receive-token/${_adJobId}`,{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({token})});
-    const d=await res.json();
-    if(d.ok){
-      document.getElementById('ad-waiting-token-card').style.display='none';
-      document.getElementById('ad-manual-token-input').value='';
-      addLog('ad','ok','Token submitted manually — download starting…');
-    } else {
-      alert('Error: '+(d.error||'Failed'));
-    }
-  }catch(err){alert('Network error: '+err.message);}
-}
-
-function bookmarkletClick(e){
-  e.preventDefault();
-  alert('👉 Right-click the purple "🔖 GST Token Capture" button → then click "Bookmark link" / "Add to favourites". Do NOT left-click it here.');
-}
 function showBmInstr(browser){
   document.querySelectorAll('.bm-instr').forEach(el=>el.style.display='none');
-  document.getElementById('bm-instr-'+browser).style.display='block';
-  document.querySelectorAll('.bm-tab').forEach(b=>{
-    b.style.background='var(--surf2)';b.style.borderColor='var(--bdr)';b.style.color='var(--muted)';
-    b.classList.remove('active');
-  });
-  const tab=document.getElementById('bmt-'+browser);
-  tab.style.background='rgba(0,229,255,.1)';tab.style.borderColor='var(--accent)';tab.style.color='var(--accent)';
-  tab.classList.add('active');
+  const el=document.getElementById('bm-instr-'+browser);
+  if(el)el.style.display='block';
 }
+function bookmarkletClick(e){e.preventDefault();}
 
-// Generates the bookmarklet href with current server origin + job_id
-function _buildBookmarklet(jobId){
-  const origin=window.location.origin;
-  // The bookmarklet code — runs on gst.gov.in, reads cookie, sends to our server
-  const code=`(function(){
-var t=document.cookie.split(';').map(c=>c.trim()).reduce(function(o,c){var p=c.indexOf('=');if(p>0)o[c.slice(0,p).trim()]=c.slice(p+1).trim();return o;},{});
-var tok=t['AuthToken']||t['token']||t['auth_token']||t['AUTHTOKEN']||'';
-if(!tok){alert('No AuthToken found. Make sure you are logged in to the GST Portal.');return;}
-var jid='${jobId||"JOB_ID_PENDING"}';
-var url='${origin}/api/receive-token/'+jid;
-fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok})})
-.then(function(r){return r.json();})
-.then(function(d){
-  if(d.ok){
-    var div=document.createElement('div');
-    div.style.cssText='position:fixed;top:20px;right:20px;z-index:99999;background:#00c853;color:#000;padding:14px 20px;border-radius:10px;font-family:sans-serif;font-size:14px;font-weight:bold;box-shadow:0 4px 20px rgba(0,0,0,.3)';
-    div.innerHTML='✅ Token sent! Switch back to GST Reconciliation Portal';
-    document.body.appendChild(div);
-    setTimeout(function(){div.remove();},4000);
-  } else {
-    alert('Error sending token: '+(d.error||'Unknown error'));
-  }
-}).catch(function(e){alert('Network error: '+e.message);});
-})();`;
-  return 'javascript:'+encodeURIComponent(code);
-}
 
-function _updateBookmarklet(jobId){
-  const a=document.getElementById('gst-bookmarklet-link');
-  if(a) a.href=_buildBookmarklet(jobId);
-}
-
-// Initialize bookmarklet with placeholder on page load
-(function(){
-  _updateBookmarklet('');
-  // When user focuses GSTIN or username field, update bookmarklet in case they pre-fill form
-  ['ad-gstin','ad-username','ad-name'].forEach(id=>{
-    const el=document.getElementById(id);
-    if(el) el.addEventListener('blur',()=>_updateBookmarklet(_adJobId||''));
-  });
-})();
 function _adShowFiles(jid,files){
   const sec=document.getElementById('ad-dw'),grid=document.getElementById('ad-dlg');
   sec.style.display='block';grid.innerHTML='';
@@ -2255,24 +2209,30 @@ def api_auto_download():
 def _auto_download(job_id, gstin, client_name,
                     username, password, fy, returns, sess, token=""):
     """
-    Token-based download — user logs into GST portal in their own browser,
-    copies AuthToken from cookies, server uses it to download files.
-    No CAPTCHA, no password sent to server after initial auth.
+    Selenium-based download — exactly follows gst_suite_final.py flow:
+      1. Open www.gst.gov.in → LOGIN button → fill username + password
+      2. Show CAPTCHA screenshot → user types CAPTCHA in web UI → click LOGIN
+      3. Services → Returns → Returns Dashboard
+      4. For each month: select FY/Quarter/Period → SEARCH → click tile DOWNLOAD
+         GSTR-3B  : PDF downloads directly
+         GSTR-1/1A: GENERATE JSON → wait → download link
+         GSTR-2B/2A: GENERATE EXCEL → wait → download link
+      5. ZIP all files → done
     """
-    import requests as _req, base64
+    import base64, tempfile, shutil as _shutil
 
     def log(msg, t="info"):
         print(f"[{job_id}] {msg}")
         with jobs_lock:
             if job_id in jobs:
-                jobs[job_id]["logs"].append({"type":t,"msg":msg})
+                jobs[job_id]["logs"].append({"type": t, "msg": msg})
 
     def prog(p):
         with jobs_lock:
             if job_id in jobs:
                 jobs[job_id]["progress"] = p
 
-    def set_captcha(img_b64):
+    def show_captcha(img_b64):
         sess["screenshot"] = img_b64
         with jobs_lock:
             if job_id in jobs:
@@ -2285,8 +2245,20 @@ def _auto_download(job_id, gstin, client_name,
                 jobs[job_id]["captcha_needed"] = False
                 jobs[job_id]["captcha_img"]    = None
 
+    def wait_for_captcha_input():
+        """Block until user submits CAPTCHA text from web UI. Returns the text."""
+        while not sess["captcha_q"].empty():
+            try: sess["captcha_q"].get_nowait()
+            except: pass
+        log("⏳ CAPTCHA screenshot shown — please type the CAPTCHA in the box above and click Submit")
+        try:
+            return sess["captcha_q"].get(timeout=600)
+        except _queue.Empty:
+            raise RuntimeError("CAPTCHA timeout — no input received in 10 minutes")
+
+    # ── FY and months setup ──────────────────────────────────────────
     fy_start = int(fy.split("-")[0])
-    MONTHS = [
+    MONTHS_LIST = [
         ("April","04",str(fy_start)),    ("May","05",str(fy_start)),
         ("June","06",str(fy_start)),     ("July","07",str(fy_start)),
         ("August","08",str(fy_start)),   ("September","09",str(fy_start)),
@@ -2294,181 +2266,714 @@ def _auto_download(job_id, gstin, client_name,
         ("December","12",str(fy_start)), ("January","01",str(fy_start+1)),
         ("February","02",str(fy_start+1)),("March","03",str(fy_start+1)),
     ]
+    QUARTER_MAP_LOCAL = {
+        "April":"Quarter 1 (Apr - Jun)","May":"Quarter 1 (Apr - Jun)","June":"Quarter 1 (Apr - Jun)",
+        "July":"Quarter 2 (Jul - Sep)","August":"Quarter 2 (Jul - Sep)","September":"Quarter 2 (Jul - Sep)",
+        "October":"Quarter 3 (Oct - Dec)","November":"Quarter 3 (Oct - Dec)","December":"Quarter 3 (Oct - Dec)",
+        "January":"Quarter 4 (Jan - Mar)","February":"Quarter 4 (Jan - Mar)","March":"Quarter 4 (Jan - Mar)",
+    }
+
     out_dir = Path(jobs[job_id]["out_dir"])
+    dl_dir  = out_dir / "browser_downloads"
+    dl_dir.mkdir(parents=True, exist_ok=True)
     downloaded = []
+    driver = None
 
-    S = _req.Session()
-    S.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
-        "Referer": "https://services.gst.gov.in/services/login",
-        "Origin":  "https://services.gst.gov.in",
-    })
-
+    # ── Selenium imports ────────────────────────────────────────────
     try:
-        log("✅ Starting download using your GST portal session...")
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait, Select
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.chrome.options import Options as ChromeOptions
+        from selenium.webdriver.chrome.service import Service as ChromeService
+        import selenium.common.exceptions as SeEx
+    except ImportError:
+        raise RuntimeError("Selenium not installed on server. Run: pip install selenium")
+
+    # ── Helper functions (mirrors gst_suite_final.py) ───────────────
+    def _try_click(xpaths, timeout=8):
+        for xp in xpaths:
+            try:
+                el = WebDriverWait(driver, timeout).until(
+                    EC.element_to_be_clickable((By.XPATH, xp)))
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                time.sleep(0.3)
+                try: el.click()
+                except: driver.execute_script("arguments[0].click();", el)
+                return True
+            except: continue
+        return False
+
+    def _human_type(by, val, text):
+        try:
+            el = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((by, val)))
+            driver.execute_script("arguments[0].scrollIntoView(true);", el)
+            time.sleep(0.3); el.click(); time.sleep(0.2)
+            el.clear(); time.sleep(0.2)
+            for ch in str(text): el.send_keys(ch); time.sleep(0.03)
+            time.sleep(0.3)
+            return True
+        except Exception as e:
+            log(f"  Type failed {val}: {e}", "warn")
+            return False
+
+    def _is_session_lost():
+        try:
+            url = driver.current_url.lower()
+            if "accessdenied" in url: return True
+            if "login" in url and "fowelcome" not in url and "gst.gov.in" in url: return True
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            for phrase in ["session expired","you are not logged in","please login again","access denied"]:
+                if phrase in body: return True
+        except: pass
+        return False
+
+    def _screenshot_b64():
+        try: return base64.b64encode(driver.get_screenshot_as_png()).decode()
+        except: return None
+
+    def _do_login():
+        """Navigate to GST portal, fill creds, show CAPTCHA screenshot, wait for user input."""
+        log("🌐 Opening www.gst.gov.in ...")
+        driver.get("https://www.gst.gov.in")
+        time.sleep(4)
+
+        log("  Clicking LOGIN button...")
+        _try_click([
+            "//a[normalize-space()='LOGIN']",
+            "//a[normalize-space()='Login']",
+            "//button[normalize-space()='LOGIN']",
+            "//a[contains(@href,'login')]",
+        ])
+        time.sleep(8)
+        log(f"  Login page: {driver.current_url}")
+
+        log(f"  Filling username: {username}")
+        filled = False
+        from selenium.webdriver.common.by import By as _By
+        for by, val in [
+            (_By.ID,"username"),(_By.NAME,"username"),
+            (_By.ID,"user_name"),(_By.NAME,"user_name"),
+            (_By.CSS_SELECTOR,"input[placeholder*='sername']"),
+            (_By.CSS_SELECTOR,"input[type='text']:not([readonly])"),
+        ]:
+            if _human_type(by, val, username):
+                filled = True; break
+        if not filled:
+            raise RuntimeError("Cannot find username field on GST portal login page")
+
+        time.sleep(2)
+        log("  Filling password...")
+        filled = False
+        for by, val in [
+            (_By.ID,"user_pass"),(_By.NAME,"user_pass"),
+            (_By.ID,"password"),(_By.NAME,"password"),
+            (_By.CSS_SELECTOR,"input[type='password']"),
+        ]:
+            if _human_type(by, val, password):
+                filled = True; break
+        if not filled:
+            raise RuntimeError("Cannot find password field on GST portal login page")
+
+        time.sleep(2)
+
+        # Show CAPTCHA screenshot to user
+        log("📸 Taking CAPTCHA screenshot — please type the CAPTCHA in the box below...")
+        img = _screenshot_b64()
+        show_captcha(img)
+
+        # Wait for user to type CAPTCHA in web UI
+        captcha_text = wait_for_captcha_input()
+        clear_captcha()
+        log(f"  CAPTCHA received: {'*' * len(captcha_text)}")
+
+        # Fill CAPTCHA in browser
+        log("  Filling CAPTCHA in browser...")
+        captcha_filled = False
+        for by, val in [
+            (_By.ID,"captcha"),(_By.NAME,"captcha"),
+            (_By.ID,"imgCaptcha"),(_By.NAME,"imgCaptcha"),
+            (_By.CSS_SELECTOR,"input[placeholder*='aptcha']"),
+            (_By.CSS_SELECTOR,"input[placeholder*='APTCHA']"),
+            (_By.XPATH,"//input[@id='captcha' or @name='captcha' or contains(@placeholder,'aptcha')]"),
+        ]:
+            try:
+                if _human_type(by, val, captcha_text):
+                    captcha_filled = True; break
+            except: continue
+
+        if not captcha_filled:
+            log("  ⚠ Could not auto-fill CAPTCHA field — please type it manually in the browser", "warn")
+            # Give user 30 seconds to fill it manually
+            time.sleep(30)
+
+        time.sleep(2)
+
+        # Click LOGIN button
+        log("  Clicking LOGIN button...")
+        _try_click([
+            "//button[@id='btnlogin']",
+            "//button[normalize-space()='LOGIN']",
+            "//button[normalize-space()='Login']",
+            "//button[@type='submit']",
+            "//input[@type='submit']",
+        ])
+        time.sleep(10)
+
+        # OTP check
+        try:
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            if "otp" in body and ("enter" in body or "verify" in body):
+                log("📱 OTP required — please enter OTP in the browser...")
+                img = _screenshot_b64()
+                show_captcha(img)
+                otp = wait_for_captcha_input()
+                clear_captcha()
+                for by, val in [
+                    (By.ID,"otp"),(By.NAME,"otp"),
+                    (By.CSS_SELECTOR,"input[placeholder*='OTP']"),
+                    (By.CSS_SELECTOR,"input[placeholder*='otp']"),
+                ]:
+                    try:
+                        if _human_type(by, val, otp): break
+                    except: continue
+                _try_click(["//button[contains(text(),'VERIFY')]","//button[contains(text(),'Submit')]","//button[@type='submit']"])
+                time.sleep(8)
+        except: pass
+
+        cur = driver.current_url.lower()
+        log(f"  Post-login URL: {driver.current_url}")
+        if "accessdenied" in cur or ("login" in cur and "fowelcome" not in cur):
+            raise RuntimeError("Login failed — wrong username/password/CAPTCHA. Please try again.")
+        log("  ✅ Login successful!", "ok")
+        return True
+
+    def _go_to_dashboard():
+        """Services → Returns → Returns Dashboard (mirrors go_to_returns_dashboard)"""
+        cur = driver.current_url
+        if "return.gst.gov.in" in cur and "dashboard" in cur:
+            return True
+
+        if _is_session_lost():
+            log("  ⚠ Session lost — re-logging in...", "warn")
+            _do_login()
+
+        log("  Navigating: Services → Returns → Returns Dashboard")
+
+        for attempt in range(2):
+            # Click Services
+            _try_click([
+                "//a[normalize-space(text())='Services']",
+                "//li[contains(@class,'nav')]//a[normalize-space()='Services']",
+                "//nav//a[normalize-space()='Services']",
+            ])
+            time.sleep(1.5)
+
+            # Click Returns
+            _try_click([
+                "//a[normalize-space(text())='Returns']",
+                "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
+                "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
+            ])
+            time.sleep(1.5)
+
+            # Click Returns Dashboard
+            _try_click([
+                "//a[contains(normalize-space(text()),'Returns Dashboard')]",
+                "//li//a[contains(@href,'dashboard')]",
+            ])
+            time.sleep(8)
+
+            final = driver.current_url
+            log(f"  URL after nav attempt {attempt+1}: {final}")
+            if "accessdenied" in final.lower():
+                log("  Access Denied — re-logging in...", "warn")
+                _do_login()
+                continue
+            if "dashboard" in final.lower() and "return.gst.gov.in" in final.lower():
+                log("  ✅ Returns Dashboard loaded", "ok")
+                return True
+
+        raise RuntimeError("Could not navigate to Returns Dashboard after 2 attempts")
+
+    def _select_and_search(month_name):
+        """Select FY, Quarter, Period then click SEARCH (mirrors select_and_search)"""
+        log(f"  Setting: FY={fy}  Quarter={QUARTER_MAP_LOCAL.get(month_name,'')}  Period={month_name}")
+        time.sleep(3)
+
+        all_sels = driver.find_elements(By.TAG_NAME, "select")
+        # FY
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any("-" in o and len(o) <= 9 for o in opts):
+                    for opt in s.options:
+                        if fy in opt.text:
+                            s.select_by_visible_text(opt.text)
+                            log(f"  FY: {opt.text} ✓")
+                            break
+                    break
+            except: continue
+        time.sleep(1)
+
+        all_sels = driver.find_elements(By.TAG_NAME, "select")
+        # Quarter
+        qtr = QUARTER_MAP_LOCAL.get(month_name, "")
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any("quarter" in o.lower() for o in opts):
+                    for opt in s.options:
+                        if qtr[:9].lower() in opt.text.lower():
+                            s.select_by_visible_text(opt.text)
+                            log(f"  Quarter: {opt.text} ✓")
+                            break
+                    break
+            except: continue
+        time.sleep(1)
+
+        all_sels = driver.find_elements(By.TAG_NAME, "select")
+        # Period/Month
+        month_names_lower = ["january","february","march","april","may","june",
+                             "july","august","september","october","november","december"]
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any(m in " ".join(opts).lower() for m in month_names_lower):
+                    for opt in s.options:
+                        if month_name.lower() in opt.text.lower():
+                            s.select_by_visible_text(opt.text)
+                            log(f"  Period: {opt.text} ✓")
+                            break
+                    break
+            except: continue
+        time.sleep(1)
+
+        # SEARCH
+        clicked = _try_click([
+            "//button[normalize-space()='SEARCH']",
+            "//button[normalize-space()='Search']",
+            "//button[contains(text(),'SEARCH')]",
+            "//input[@value='SEARCH']",
+        ])
+        if not clicked:
+            driver.execute_script("""
+                var btns=document.querySelectorAll('button,input[type=submit]');
+                for(var i=0;i<btns.length;i++){
+                    if((btns[i].innerText||btns[i].value||'').toUpperCase().includes('SEARCH')){
+                        btns[i].click(); break;
+                    }
+                }
+            """)
+        time.sleep(8)
+        log(f"  Tiles loaded after SEARCH ✓")
+
+    def _click_tile_download(tile_name):
+        """Find tile and click its DOWNLOAD button (mirrors click_tile_download)"""
+        log(f"  Finding {tile_name} tile DOWNLOAD button...")
+        time.sleep(3)
+        name_variants = {
+            "GSTR1":  ["GSTR1","GSTR-1"],
+            "GSTR1A": ["GSTR1A","GSTR-1A"],
+            "GSTR2B": ["GSTR2B","GSTR-2B"],
+            "GSTR2A": ["GSTR2A","GSTR-2A"],
+            "GSTR3B": ["GSTR3B","GSTR-3B"],
+        }
+        variants = name_variants.get(tile_name.upper().replace("-",""), [tile_name])
+        for variant in variants:
+            try:
+                subtitle_els = driver.find_elements(By.XPATH, f"//*[normalize-space(text())='{variant}']")
+                for subtitle_el in subtitle_els:
+                    if not subtitle_el.is_displayed(): continue
+                    parent = subtitle_el
+                    for level in range(6):
+                        try:
+                            parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                            if parent is None: break
+                            btns = parent.find_elements(By.XPATH,
+                                ".//button[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD')] | "
+                                ".//a[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD')]")
+                            for btn in btns:
+                                if btn.is_displayed():
+                                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                                    time.sleep(0.4)
+                                    driver.execute_script("arguments[0].click();", btn)
+                                    log(f"  {tile_name} DOWNLOAD clicked ✓")
+                                    return True
+                        except: break
+            except: continue
+        log(f"  ⚠ {tile_name} DOWNLOAD tile not found", "warn")
+        return False
+
+    def _get_latest_file(extensions):
+        files = []
+        for ext in extensions:
+            files.extend(dl_dir.glob(f"*{ext}"))
+        if not files: return None
+        return max(files, key=lambda f: f.stat().st_mtime)
+
+    def _rename_latest(save_name, extensions):
+        try:
+            f = _get_latest_file(extensions)
+            if f:
+                dest = dl_dir / save_name
+                if not dest.exists():
+                    f.rename(dest)
+                log(f"  ✅ Saved: {save_name}", "ok")
+                return True
+        except Exception as e:
+            log(f"  Rename failed: {e}", "warn")
+        return False
+
+    def _generate_and_download(save_name, gen_xpaths, dl_extensions, max_wait=120):
+        """Click GENERATE → poll for download link → click it (mirrors generate_then_download_immediate)"""
+        time.sleep(3)
+        log(f"  Generate page: {driver.current_url}")
+
+        gen_clicked = _try_click(gen_xpaths, timeout=10)
+        if gen_clicked:
+            log(f"  GENERATE clicked — polling for download link...")
+        else:
+            log(f"  ⚠ GENERATE button not found — checking for existing link...", "warn")
+        time.sleep(3)
+
+        DOWNLOAD_XP = [
+            "//a[contains(text(),'Click here to download')]",
+            "//a[contains(text(),'click here to download')]",
+            "//a[contains(text(),'File 1')]",
+            "//a[contains(text(),'File 2')]",
+            "//a[contains(@href,'.xlsx')]",
+            "//a[contains(@href,'.zip')]",
+            "//a[contains(@href,'filedownload')]",
+            "//a[contains(@href,'download') and string-length(@href) > 50]",
+            "//button[contains(text(),'Download') or contains(text(),'DOWNLOAD')]",
+        ]
+
+        elapsed = 0
+        while elapsed < max_wait:
+            for xp in DOWNLOAD_XP:
+                try:
+                    els = driver.find_elements(By.XPATH, xp)
+                    for el in els:
+                        if el.is_displayed():
+                            href = el.get_attribute("href") or ""
+                            if len(href) > 20:
+                                txt = el.text.strip() or href[:50]
+                                log(f"  Download link found: '{txt}'")
+                                log(f"  Downloading: {save_name}")
+                                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                                time.sleep(0.5)
+                                driver.execute_script("arguments[0].click();", el)
+                                time.sleep(10)
+                                if _rename_latest(save_name, dl_extensions):
+                                    return True
+                except: continue
+
+            elapsed += 5
+            time.sleep(5)
+
+            if elapsed % 30 == 0:
+                log(f"  Still waiting... ({elapsed}s) — refreshing page")
+                try:
+                    driver.refresh()
+                    time.sleep(4)
+                    if _is_session_lost():
+                        log("  Session lost during wait — re-logging in...", "warn")
+                        _do_login()
+                        _go_to_dashboard()
+                        _select_and_search(current_month[0])
+                        _click_tile_download(current_tile[0])
+                        time.sleep(8)
+                except: pass
+
+        log(f"  ⚠ No download link found for {save_name} after {max_wait}s", "warn")
+        return False
+
+    # Mutable refs for session recovery inside _generate_and_download
+    current_month = [""]
+    current_tile  = [""]
+
+    GENERATE_JSON_XP = [
+        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE JSON')]",
+        "//button[contains(text(),'Generate JSON')]",
+        "//a[contains(text(),'GENERATE JSON')]",
+    ]
+    GENERATE_EXCEL_XP = [
+        "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE EXCEL')]",
+        "//button[contains(text(),'Generate Excel')]",
+        "//a[contains(text(),'GENERATE EXCEL')]",
+        # fallback to JSON if no Excel button
+        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'Generate JSON')]",
+    ]
+
+    returns_set = set()
+    if returns in ("all","gstr1"):  returns_set.add("GSTR1")
+    if returns in ("all","gstr1a"): returns_set.add("GSTR1A")
+    if returns in ("all","gstr2b"): returns_set.add("GSTR2B")
+    if returns in ("all","gstr2a"): returns_set.add("GSTR2A")
+    if returns in ("all","gstr3b"): returns_set.add("GSTR3B")
+    if returns == "gstr1":  returns_set = {"GSTR1"}
+    if returns == "gstr1a": returns_set = {"GSTR1A"}
+    if returns == "gstr2b": returns_set = {"GSTR2B"}
+    if returns == "gstr2a": returns_set = {"GSTR2A"}
+    if returns == "gstr3b": returns_set = {"GSTR3B"}
+
+    # ── Setup browser ────────────────────────────────────────────────
+    try:
+        opts = ChromeOptions()
+        opts.add_argument("--headless=new")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--window-size=1280,900")
+        opts.add_argument("--disable-blink-features=AutomationControlled")
+        opts.add_argument(
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+        opts.add_experimental_option("prefs", {
+            "download.default_directory": str(dl_dir),
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": True,
+        })
+        opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
+        opts.add_experimental_option("useAutomationExtension", False)
+
+        try:
+            from webdriver_manager.chrome import ChromeDriverManager
+            driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=opts)
+        except Exception:
+            driver = webdriver.Chrome(options=opts)
+
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+        })
+        log("✅ Headless Chrome started", "ok")
         prog(5)
 
-        # ── Use the token provided by the user (or wait for bookmarklet) ─
-        if not token:
-            log("⏳ No token provided — waiting for you to login to GST portal and click the 🔖 bookmark…", "info")
-            with jobs_lock:
-                if job_id in jobs:
-                    jobs[job_id]["captcha_needed"]  = True
-                    jobs[job_id]["captcha_company"] = {"name": client_name, "gstin": gstin, "username": username}
-            # Wait up to 15 minutes for bookmarklet to send token
-            try:
-                token = sess["captcha_q"].get(timeout=900)
-                with jobs_lock:
-                    if job_id in jobs:
-                        jobs[job_id]["captcha_needed"] = False
-                log("✅ Token received from bookmarklet!", "ok")
-            except _queue.Empty:
-                raise RuntimeError("Timed out waiting for token. Please start again and click the bookmark after login.")
+        # ── Step 1: Login ────────────────────────────────────────────
+        if not password and not token:
+            # Token mode — inject cookie instead of full login
+            log("  Using session token to authenticate...")
+            driver.get("https://services.gst.gov.in/services/login")
+            time.sleep(2)
+            driver.add_cookie({"name": "AuthToken", "value": token, "domain": ".gst.gov.in"})
+            driver.add_cookie({"name": "token",     "value": token, "domain": ".gst.gov.in"})
+            driver.get("https://services.gst.gov.in/services/auth/api/profile")
+            time.sleep(3)
+        else:
+            _do_login()
 
+        prog(15)
 
-        # Set auth headers with the user's token
-        S.headers["Authorization"] = f"Bearer {token}"
-        S.cookies.set("AuthToken", token, domain=".gst.gov.in")
-        S.cookies.set("token", token, domain=".gst.gov.in")
+        # ── Step 2: Phase 1 — GSTR-3B (immediate PDF) + trigger generators ─
+        triggered = {}
+        total_months = len(MONTHS_LIST)
 
-        log("✅ Session token received — verifying with GST portal...")
-        prog(10)
+        log(f"\n📋 Phase 1 — Triggering file generation for {total_months} months...")
+        log(f"   Returns: {', '.join(sorted(returns_set))}")
 
-        # Verify the token works by hitting the user profile endpoint
-        try:
-            vr = S.get("https://services.gst.gov.in/services/api/search/taxpayerDetails"
-                       f"?gstin={gstin}", timeout=20)
-            if vr.status_code == 401 or vr.status_code == 403:
-                raise RuntimeError(
-                    "Token rejected by GST portal (401/403). "
-                    "Please login again and copy a fresh AuthToken.")
-            log(f"✅ Token verified — portal responded OK ({vr.status_code})", "ok")
-        except RuntimeError:
-            raise
-        except Exception as ve:
-            log(f"  Token check: {ve} — continuing anyway...", "warn")
+        for idx, (month_name, month_num, year) in enumerate(MONTHS_LIST):
+            key = f"{month_name}_{year}"
+            current_month[0] = month_name
+            prog(15 + int(idx / total_months * 40))
 
-        prog(25)
-        log("✅ Session active — starting downloads...", "ok")
-        prog(30)
-
-        # ── Step 6: Download returns ──────────────────────────────
-        total = sum([
-            12 if returns in ["all","gstr1"]  else 0,
-            12 if returns in ["all","gstr1a"] else 0,
-            12 if returns in ["all","gstr2b"] else 0,
-            12 if returns in ["all","gstr2a"] else 0,
-            12 if returns in ["all","gstr3b"] else 0,
-        ])
-        done_n = 0
-        BASE_RET = "https://return.gst.gov.in/returns/auth"
-
-        def dl_one(ret_type, mon_name, mon_num, mon_yr):
-            nonlocal done_n
-            period = f"{mon_num}{mon_yr}"
-            ext    = {"gstr1":".zip","gstr1a":".zip","gstr2b":".xlsx","gstr2a":".xlsx","gstr3b":".pdf"}.get(ret_type,".zip")
-            fname  = f"{ret_type.upper()}_{mon_name}_{mon_yr}{ext}"
-            fpath  = out_dir / fname
-            urls_to_try = [
-                f"{BASE_RET}/{ret_type}/download?gstin={gstin}&ret_period={period}&action_type=download",
-                f"{BASE_RET}/{ret_type}?action=download&gstin={gstin}&ret_period={period}",
-                f"https://return.gst.gov.in/returns/api/{ret_type}/{gstin}/{period}/download",
-            ]
-            for url in urls_to_try:
+            # GSTR-3B: PDF direct download
+            if "GSTR3B" in returns_set:
                 try:
-                    r = S.get(url, timeout=60, stream=True)
-                    if r.status_code == 200 and len(r.content) > 500:
-                        # Check if portal returned a JSON error instead of a file (token expired)
-                        ct = r.headers.get("content-type","")
-                        if "application/json" in ct:
-                            try:
-                                ec = r.json().get("errorCode","")
-                                if ec in ("AUTH4033","AUTH4035","SWEB_9000","GSP_PDG"):
-                                    log("⚠ Token expired — please login to GST portal again and paste a fresh AuthToken", "warn")
-                                    # Signal UI to ask for new token
-                                    set_captcha(None)
-                                    with jobs_lock:
-                                        if job_id in jobs:
-                                            jobs[job_id]["captcha_company"] = {
-                                                "name": client_name, "gstin": gstin, "username": username}
-                                    # Wait for new token (up to 10 min)
-                                    while not sess["captcha_q"].empty():
-                                        try: sess["captcha_q"].get_nowait()
-                                        except: pass
-                                    try:
-                                        new_tok = sess["captcha_q"].get(timeout=600)
-                                        S.headers["Authorization"] = f"Bearer {new_tok}"
-                                        S.cookies.set("AuthToken", new_tok, domain=".gst.gov.in")
-                                        S.cookies.set("token",     new_tok, domain=".gst.gov.in")
-                                        clear_captcha()
-                                        log("✅ New token received — resuming download…", "ok")
-                                        # Retry this URL with new token
-                                        r2 = S.get(url, timeout=60)
-                                        if r2.status_code == 200 and len(r2.content) > 500:
-                                            fpath.write_bytes(r2.content)
-                                            sz = fpath.stat().st_size // 1024
-                                            log(f"  ✓ {fname} ({sz} KB)", "ok")
-                                            downloaded.append({"name":fname,"size":f"{sz} KB"})
-                                            done_n += 1
-                                            prog(30 + int(done_n / max(total,1) * 65))
-                                            return
-                                    except _queue.Empty:
-                                        log("⏱ Re-login timeout — skipping remaining files", "warn")
-                                        return
-                            except Exception:
-                                pass
-                            continue
-                        fpath.write_bytes(r.content)
-                        sz = fpath.stat().st_size // 1024
-                        log(f"  ✓ {fname} ({sz} KB)", "ok")
-                        downloaded.append({"name":fname,"size":f"{sz} KB"})
-                        done_n += 1
-                        prog(30 + int(done_n / max(total,1) * 65))
-                        return
-                except Exception: pass
-            log(f"  ⚠ {ret_type.upper()} {mon_name} {mon_yr} — not available", "warn")
-            done_n += 1
-            prog(30 + int(done_n / max(total,1) * 65))
+                    log(f"\n── {month_name} {year}: GSTR-3B ──")
+                    _go_to_dashboard()
+                    _select_and_search(month_name)
+                    save_name = f"GSTR3B_{month_name}_{year}.pdf"
+                    current_tile[0] = "GSTR3B"
+                    if _click_tile_download("GSTR3B"):
+                        time.sleep(11)
+                        if _rename_latest(save_name, [".pdf"]):
+                            triggered[f"{key}_GSTR3B"] = "OK"
+                            sz = (dl_dir / save_name).stat().st_size // 1024
+                            downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                        else:
+                            triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                    else:
+                        triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
+                except Exception as e:
+                    log(f"  GSTR3B error [{month_name}]: {e}", "warn")
+                    triggered[f"{key}_GSTR3B"] = f"ERR:{e}"
 
-        if returns in ["all","gstr1"]:
-            log("── Downloading GSTR-1 ──────────────────────────────")
-            for mn,mm,my in MONTHS:
-                log(f"  GSTR-1 {mn} {my}...")
-                dl_one("gstr1",mn,mm,my)
+            # GSTR-1: trigger GENERATE JSON
+            if "GSTR1" in returns_set:
+                try:
+                    log(f"\n── {month_name} {year}: GSTR-1 (trigger generate) ──")
+                    _go_to_dashboard()
+                    _select_and_search(month_name)
+                    current_tile[0] = "GSTR1"
+                    if _click_tile_download("GSTR1"):
+                        time.sleep(8)
+                        if _try_click(GENERATE_JSON_XP, timeout=8):
+                            log(f"  GSTR-1 GENERATE JSON clicked ✓")
+                            triggered[f"{key}_GSTR1"] = "TRIGGERED"
+                            time.sleep(2)
+                        else:
+                            triggered[f"{key}_GSTR1"] = "GEN_FAIL"
+                    else:
+                        triggered[f"{key}_GSTR1"] = "TILE_FAIL"
+                except Exception as e:
+                    log(f"  GSTR1 trigger error [{month_name}]: {e}", "warn")
+                    triggered[f"{key}_GSTR1"] = f"ERR:{e}"
 
-        if returns in ["all","gstr1a"]:
-            log("── Downloading GSTR-1A (Amendments) ───────────────")
-            for mn,mm,my in MONTHS:
-                log(f"  GSTR-1A {mn} {my}...")
-                dl_one("gstr1a",mn,mm,my)
+            # GSTR-1A: trigger GENERATE JSON
+            if "GSTR1A" in returns_set:
+                try:
+                    log(f"\n── {month_name} {year}: GSTR-1A (trigger generate) ──")
+                    _go_to_dashboard()
+                    _select_and_search(month_name)
+                    current_tile[0] = "GSTR1A"
+                    if _click_tile_download("GSTR1A"):
+                        time.sleep(8)
+                        if _try_click(GENERATE_JSON_XP, timeout=8):
+                            log(f"  GSTR-1A GENERATE JSON clicked ✓")
+                            triggered[f"{key}_GSTR1A"] = "TRIGGERED"
+                            time.sleep(2)
+                        else:
+                            triggered[f"{key}_GSTR1A"] = "GEN_FAIL"
+                    else:
+                        triggered[f"{key}_GSTR1A"] = "TILE_NOT_FOUND"
+                except Exception as e:
+                    log(f"  GSTR1A trigger error [{month_name}]: {e}", "warn")
+                    triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
 
-        if returns in ["all","gstr2b"]:
-            log("── Downloading GSTR-2B ─────────────────────────────")
-            for mn,mm,my in MONTHS:
-                log(f"  GSTR-2B {mn} {my}...")
-                dl_one("gstr2b",mn,mm,my)
+            # GSTR-2B: GENERATE EXCEL + download immediately (generates in seconds)
+            if "GSTR2B" in returns_set:
+                try:
+                    log(f"\n── {month_name} {year}: GSTR-2B (generate + download) ──")
+                    _go_to_dashboard()
+                    _select_and_search(month_name)
+                    save_name = f"GSTR2B_{month_name}_{year}.xlsx"
+                    current_tile[0] = "GSTR2B"
+                    if _click_tile_download("GSTR2B"):
+                        time.sleep(8)
+                        if _generate_and_download(save_name, GENERATE_EXCEL_XP, [".xlsx",".zip"], max_wait=90):
+                            triggered[f"{key}_GSTR2B"] = "OK"
+                            sz = (dl_dir / save_name).stat().st_size // 1024
+                            downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                        else:
+                            triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
+                    else:
+                        triggered[f"{key}_GSTR2B"] = "TILE_FAIL"
+                except Exception as e:
+                    log(f"  GSTR2B error [{month_name}]: {e}", "warn")
+                    triggered[f"{key}_GSTR2B"] = f"ERR:{e}"
 
-        if returns in ["all","gstr2a"]:
-            log("── Downloading GSTR-2A ─────────────────────────────")
-            for mn,mm,my in MONTHS:
-                log(f"  GSTR-2A {mn} {my}...")
-                dl_one("gstr2a",mn,mm,my)
+            # GSTR-2A: trigger GENERATE EXCEL
+            if "GSTR2A" in returns_set:
+                try:
+                    log(f"\n── {month_name} {year}: GSTR-2A (trigger generate) ──")
+                    _go_to_dashboard()
+                    _select_and_search(month_name)
+                    current_tile[0] = "GSTR2A"
+                    if _click_tile_download("GSTR2A"):
+                        time.sleep(8)
+                        if _try_click(GENERATE_EXCEL_XP, timeout=8):
+                            log(f"  GSTR-2A GENERATE EXCEL clicked ✓")
+                            triggered[f"{key}_GSTR2A"] = "TRIGGERED"
+                            time.sleep(2)
+                        else:
+                            triggered[f"{key}_GSTR2A"] = "GEN_FAIL"
+                    else:
+                        triggered[f"{key}_GSTR2A"] = "TILE_FAIL"
+                except Exception as e:
+                    log(f"  GSTR2A trigger error [{month_name}]: {e}", "warn")
+                    triggered[f"{key}_GSTR2A"] = f"ERR:{e}"
 
-        if returns in ["all","gstr3b"]:
-            log("── Downloading GSTR-3B ─────────────────────────────")
-            for mn,mm,my in MONTHS:
-                log(f"  GSTR-3B {mn} {my}...")
-                dl_one("gstr3b",mn,mm,my)
+        prog(55)
+
+        # ── Step 3: Phase 2 — Download generated files (GSTR-1, 1A, 2A) ─
+        need_phase2 = any(
+            triggered.get(f"{month_name}_{year}_{rt}") == "TRIGGERED"
+            for month_name, month_num, year in MONTHS_LIST
+            for rt in ("GSTR1","GSTR1A","GSTR2A")
+        )
+
+        if need_phase2:
+            log(f"\n📥 Phase 2 — Downloading generated files (portal generates in ~30s-2min)...")
+            log("  Waiting 60 seconds for portal to finish generating files...")
+            time.sleep(60)
+
+            ret_config = {
+                "GSTR1":  (GENERATE_JSON_XP,  [".zip",".json"]),
+                "GSTR1A": (GENERATE_JSON_XP,  [".zip",".json"]),
+                "GSTR2A": (GENERATE_EXCEL_XP, [".zip",".xlsx"]),
+            }
+            p2_total = sum(
+                1 for mn, mm, yr in MONTHS_LIST
+                for rt in ret_config
+                if triggered.get(f"{mn}_{yr}_{rt}") == "TRIGGERED"
+            )
+            p2_done = 0
+
+            for idx2, (month_name, month_num, year) in enumerate(MONTHS_LIST):
+                key = f"{month_name}_{year}"
+                current_month[0] = month_name
+
+                for ret_type, (gen_xp, dl_exts) in ret_config.items():
+                    if ret_type not in returns_set: continue
+                    tkey = f"{key}_{ret_type}"
+                    if triggered.get(tkey) != "TRIGGERED": continue
+
+                    save_name = f"{ret_type}_{month_name}_{year}" + (".zip" if ret_type != "GSTR2A" else ".xlsx")
+                    log(f"\n── {month_name} {year}: {ret_type} (download) ──")
+                    current_tile[0] = ret_type
+
+                    try:
+                        _go_to_dashboard()
+                        _select_and_search(month_name)
+                        if _click_tile_download(ret_type):
+                            time.sleep(8)
+                            if _generate_and_download(save_name, gen_xp, dl_exts, max_wait=120):
+                                triggered[tkey] = "OK"
+                                sz = (dl_dir / save_name).stat().st_size // 1024
+                                downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                            else:
+                                triggered[tkey] = "NOT_FOUND"
+                        else:
+                            triggered[tkey] = "TILE_FAIL"
+                    except Exception as e:
+                        log(f"  {ret_type} download error [{month_name}]: {e}", "warn")
+                        triggered[tkey] = f"ERR:{e}"
+
+                    p2_done += 1
+                    prog(55 + int(p2_done / max(p2_total,1) * 40))
+
+        prog(97)
+
+        # ── Step 4: Copy all downloaded files to job output + ZIP ───────
+        log("\n📦 Packaging files...")
+        import zipfile as _zf
+        zip_name = f"GST_Downloads_{client_name.replace(' ','_')}_{fy}.zip"
+        zip_path = out_dir / zip_name
+        with _zf.ZipFile(str(zip_path), "w", _zf.ZIP_DEFLATED) as zf:
+            for item in downloaded:
+                src = dl_dir / item["name"]
+                if src.exists():
+                    dest_in_job = out_dir / item["name"]
+                    _shutil.copy2(str(src), str(dest_in_job))
+                    zf.write(str(src), item["name"])
+        if zip_path.exists():
+            sz = zip_path.stat().st_size // 1024
+            downloaded.insert(0, {"name": zip_name, "size": f"{sz} KB"})
+            log(f"✅ ZIP created: {zip_name} ({sz} KB)", "ok")
 
         prog(100)
-        n = len(downloaded)
-        if n > 0:
-            log(f"✅ Done! {n} file(s) ready to download below.", "ok")
-        else:
-            log("⚠ No files saved — GST portal may require browser session.", "warn")
-            log("  Tip: Download files manually and use the Reconciliation tab.", "warn")
+        n = len([d for d in downloaded if not d["name"].endswith(".zip")]) if len(downloaded) > 1 else 0
+        log(f"✅ Complete! {n} file(s) downloaded. Click ZIP to save all.", "ok")
 
         with jobs_lock:
             jobs[job_id]["status"] = "done"
@@ -2482,6 +2987,11 @@ def _auto_download(job_id, gstin, client_name,
         with jobs_lock:
             jobs[job_id]["status"] = "error"
             jobs[job_id]["error"]  = str(exc)
+    finally:
+        if driver:
+            try: driver.quit()
+            except: pass
+
 
 # ═══════════════════════════════════════════════════════════════════
 # BULK DOWNLOAD — multiple companies from Excel list
