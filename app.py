@@ -52,8 +52,8 @@ _bridge_last_seen = 0       # epoch seconds of last PC poll
 _bridge_lock = threading.Lock()
 
 def _bridge_connected():
-    """True if PC polled within last 8 seconds"""
-    return (time.time() - _bridge_last_seen) < 8
+    """Server-side mode — no bridge needed, always connected"""
+    return True
 
 # ── Rate limiting ─────────────────────────────────────────────────
 _rate = {}
@@ -170,6 +170,8 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="dark">
 <title>GST Reconciliation Portal — Free</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -194,10 +196,10 @@ header{text-align:center;padding:2rem 0 1.25rem}
   border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.4rem}
 .logo-text{font-size:1rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
   background:linear-gradient(135deg,var(--accent),var(--accent2));
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 h1{font-size:clamp(1.5rem,3.2vw,2.2rem);font-weight:800;letter-spacing:-.02em;line-height:1.1}
 h1 span{background:linear-gradient(135deg,var(--accent),var(--accent2));
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .sub{color:var(--muted);font-size:.82rem;margin-top:.35rem;font-family:var(--mono)}
 .badges{display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin-top:.6rem}
 .badge{display:inline-flex;align-items:center;gap:.3rem;padding:.28rem .8rem;border-radius:100px;
@@ -652,7 +654,7 @@ footer a{color:var(--accent);text-decoration:none}
     <img id="ad-captcha-img" src="" alt="CAPTCHA"
          style="border:2px solid var(--accent);border-radius:8px;max-width:220px;background:#fff;padding:4px">
     <br>
-    <button type="button" onclick="refreshCaptcha()"
+    <button type="button" onclick="adRefreshCaptcha()"
             style="margin-top:.5rem;background:none;border:1px solid var(--bdr);border-radius:5px;
                    color:var(--muted);font-size:.7rem;padding:.3rem .7rem;cursor:pointer">
       🔄 Refresh CAPTCHA
@@ -665,7 +667,7 @@ footer a{color:var(--accent);text-decoration:none}
            style="font-size:1.1rem;letter-spacing:.15em;text-align:center">
   </div>
   <div style="max-width:260px;margin:.75rem auto 0">
-    <button type="button" class="btn" id="ad-captcha-submit" onclick="submitCaptcha()">
+    <button type="button" class="btn" id="ad-captcha-submit" onclick="adSubmitCaptcha()">
       Submit CAPTCHA &amp; Login →
     </button>
   </div>
@@ -788,9 +790,8 @@ document.querySelectorAll('.dz').forEach(z=>{
   z.addEventListener('drop',e=>{
     e.preventDefault();z.classList.remove('drag-over');
     const inp=z.querySelector('input[type=file]');if(!inp) return;
-    const dt=new DataTransfer();
-    [...e.dataTransfer.files].forEach(f=>dt.items.add(f));
-    inp.files=dt.files; updateZone(inp.dataset.zone,inp);
+    try{const dt=new DataTransfer();[...e.dataTransfer.files].forEach(f=>dt.items.add(f));inp.files=dt.files;}catch(_){}
+    updateZone(inp.dataset.zone,inp);
   });
 });
 
@@ -840,7 +841,8 @@ async function startJob(fd, pfx, btnLbl){
   btn.disabled=true;btn.textContent='Uploading...';
   try{
     const res=await fetch('/api/upload',{method:'POST',body:fd});
-    const d=await res.json();
+    let d;
+    try{d=await res.json();}catch(_){throw new Error('Server error (HTTP '+res.status+'). Try again.');}
     if(!d.job_id) throw new Error(d.error||'Upload failed');
     addLog(pfx,'info','Files uploaded. Processing started...');
     btn.textContent='Processing...';
@@ -856,7 +858,7 @@ async function startJob(fd, pfx, btnLbl){
 async function pollJob(jid,pfx,btnLbl){
   try{
     const res=await fetch('/api/job/'+jid);
-    const d=await res.json();
+    let d;try{d=await res.json();}catch(_){setTimeout(()=>pollJob(jid,pfx,btnLbl),3000);return;}
     if(d.logs) d.logs.forEach(l=>addLog(pfx,l.type,l.msg));
     if(d.progress!==undefined)
       document.getElementById(pfx+'-pb').style.width=d.progress+'%';
@@ -925,7 +927,7 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
   if(!username||!password){alert('Enter username and password');return;}
   document.getElementById('ad-pw').style.display='block';
   document.getElementById('ad-dw').style.display='none';
-  document.getElementById('ad-captcha-box').style.display='none';
+  document.getElementById('ad-step2').style.display='none';
   document.getElementById('ad-lb').innerHTML='';
   document.getElementById('ad-pb').style.width='0%';
   const btn=document.getElementById('ad-submit');
@@ -935,7 +937,7 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
     const res=await fetch('/api/auto-download',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({gstin,client_name:cname,username,password,fy,returns})});
-    const d=await res.json();
+    let d;try{d=await res.json();}catch(_){addLog('ad','err','Server error — try again');setBadge('ad','e','Failed');btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
     if(d.error){addLog('ad','err',d.error);setBadge('ad','e','Failed');
       btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
     _adJobId=d.job_id;btn.textContent='Running…';_adPoll(_adJobId);
@@ -946,15 +948,16 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
 let _adCapShown=false;
 async function _adPoll(jid){
   try{
-    const r=await fetch('/api/job/'+jid);const d=await r.json();
+    const r=await fetch('/api/job/'+jid);
+    let d;try{d=await r.json();}catch(_){setTimeout(()=>_adPoll(jid),3000);return;}
     if(d.logs)d.logs.forEach(l=>addLog('ad',l.type,l.msg));
     if(d.progress!=null)document.getElementById('ad-pb').style.width=d.progress+'%';
-    if(d.captcha_needed&&d.captcha_img&&!_adCapShown){
+    if(d.captcha_needed&&!_adCapShown){
       _adCapShown=true;
-      document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.captcha_img;
-      document.getElementById('ad-captcha-box').style.display='block';
-      document.getElementById('ad-captcha-val').value='';
-      document.getElementById('ad-captcha-val').focus();
+      if(d.captcha_img){document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.captcha_img;document.getElementById('ad-captcha-img').style.display='block';}else{document.getElementById('ad-captcha-img').style.display='none';}
+      document.getElementById('ad-step2').style.display='block';
+      document.getElementById('ad-captcha-input').value='';
+      setTimeout(()=>document.getElementById('ad-captcha-input').focus(),100);
     }
     if(!d.captcha_needed)_adCapShown=false;
     if(d.status==='done'){
@@ -962,14 +965,14 @@ async function _adPoll(jid){
       document.getElementById('ad-pb').style.width='100%';
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
-      document.getElementById('ad-captcha-box').style.display='none';
+      document.getElementById('ad-step2').style.display='none';
       _adShowFiles(jid,d.files);return;
     }
     if(d.status==='error'){
       addLog('ad','err',d.error||'Unknown error');setBadge('ad','e','Failed');
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
-      document.getElementById('ad-captcha-box').style.display='none';return;
+      document.getElementById('ad-step2').style.display='none';return;
     }
     setTimeout(()=>_adPoll(jid),1500);
   }catch(e){setTimeout(()=>_adPoll(jid),3000);}
@@ -980,21 +983,21 @@ async function adRefreshCaptcha(){
     const r=await fetch('/api/captcha-refresh/'+_adJobId,{method:'POST'});
     const d=await r.json();
     if(d.img){document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.img;
-      document.getElementById('ad-captcha-val').value='';
-      document.getElementById('ad-captcha-val').focus();}
+      document.getElementById('ad-captcha-input').value='';
+      document.getElementById('ad-captcha-input').focus();}
   }catch(e){}
 }
 async function adSubmitCaptcha(){
-  const txt=document.getElementById('ad-captcha-val').value.trim();
+  const txt=document.getElementById('ad-captcha-input').value.trim();
   if(!txt){alert('Type the CAPTCHA first');return;}
-  const btn=document.getElementById('ad-captcha-btn');
+  const btn=document.getElementById('ad-captcha-submit');
   btn.disabled=true;btn.textContent='Submitting…';
   try{
     const r=await fetch('/api/captcha-submit/'+_adJobId,{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({captcha:txt})});
     const d=await r.json();
     if(d.ok){addLog('ad','info','CAPTCHA submitted — logging in...');
-      document.getElementById('ad-captcha-box').style.display='none';_adCapShown=false;}
+      document.getElementById('ad-step2').style.display='none';_adCapShown=false;}
     else{addLog('ad','warn','Wrong CAPTCHA — refreshing...');await adRefreshCaptcha();}
   }catch(e){addLog('ad','warn','Submit failed — try again');}
   btn.disabled=false;btn.textContent='Submit & Login →';
