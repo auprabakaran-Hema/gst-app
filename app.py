@@ -612,44 +612,70 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
-<!-- Step 1: Bookmarklet auto-capture -->
+<!-- Step 1: Bookmarklet setup -->
 <div class="card" id="ad-step1">
-  <div class="ct">Step 1 — Setup Bookmarklet <span class="sbg badge-grn" style="font-size:.6rem">ONE TIME ONLY</span></div>
-  <div class="info-box success" style="margin-bottom:.9rem;font-size:.76rem">
-    <strong>🚀 No F12 needed!</strong> Drag the purple button below to your browser's bookmarks bar.<br>
-    After that, logging in and sending your token is just <strong style="color:var(--txt)">one click</strong>.
+  <div class="ct">Step 1 — Save the Bookmark <span class="sbg badge-grn" style="font-size:.6rem">ONE TIME ONLY</span></div>
+
+  <!-- Main instruction box -->
+  <div class="info-box success" style="margin-bottom:1rem;font-size:.76rem;line-height:1.8">
+    <strong>✅ No F12 / No copy-paste!</strong> Save the bookmark below once. After that, one click sends your token automatically.
   </div>
-  <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.9rem">
-    <div style="font-size:.78rem;color:var(--muted);line-height:1.6">
-      <strong style="color:var(--txt)">Drag this button →</strong><br>
-      to your bookmarks bar
+
+  <!-- The bookmarklet link — right-click to bookmark -->
+  <div style="background:var(--surf2);border:2px dashed var(--accent2);border-radius:12px;padding:1.1rem;text-align:center;margin-bottom:1rem">
+    <div style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem;font-family:var(--mono)">
+      👇 RIGHT-CLICK this button → "Bookmark this link" / "Add to bookmarks"
     </div>
     <a id="gst-bookmarklet-link" href="#"
-       ondragstart="event.dataTransfer.setData('text/uri-list', this.href); event.dataTransfer.setData('text/plain', this.href);"
-       style="display:inline-block;padding:.7rem 1.3rem;
+       style="display:inline-block;padding:.8rem 1.8rem;
               background:linear-gradient(135deg,#7c3aed,#a78bfa);
-              border-radius:10px;color:#fff;font-weight:800;font-size:.85rem;
+              border-radius:10px;color:#fff;font-weight:800;font-size:1rem;
               text-decoration:none;letter-spacing:.04em;white-space:nowrap;
-              box-shadow:0 4px 18px rgba(124,58,237,.4);cursor:grab"
-       onclick="return false;" title="Drag me to your bookmarks bar!">
+              box-shadow:0 4px 18px rgba(124,58,237,.4)"
+       onclick="bookmarkletClick(event)">
       🔖 GST Token Capture
     </a>
-    <div style="font-size:.72rem;color:var(--muted);font-family:var(--mono)">
-      ↑ Drag this to bookmarks bar
+    <div style="font-size:.68rem;color:var(--muted);margin-top:.6rem;font-family:var(--mono)">
+      Right-click → "Bookmark link" or "Add to favourites"
     </div>
   </div>
-  <div style="border-top:1px solid var(--bdr);padding-top:.85rem;margin-top:.1rem">
+
+  <!-- Step by step instructions with browser tabs -->
+  <div style="margin-bottom:.8rem">
+    <div style="display:flex;gap:.4rem;margin-bottom:.6rem;flex-wrap:wrap" id="bm-browser-tabs">
+      <button onclick="showBmInstr('chrome')" class="bm-tab active" id="bmt-chrome"
+        style="padding:.3rem .8rem;border-radius:6px;border:1px solid var(--accent);background:rgba(0,229,255,.1);
+               color:var(--accent);font-size:.7rem;font-weight:700;cursor:pointer">Chrome / Edge</button>
+      <button onclick="showBmInstr('firefox')" class="bm-tab" id="bmt-firefox"
+        style="padding:.3rem .8rem;border-radius:6px;border:1px solid var(--bdr);background:var(--surf2);
+               color:var(--muted);font-size:.7rem;font-weight:700;cursor:pointer">Firefox</button>
+    </div>
+    <div id="bm-instr-chrome" class="bm-instr" style="font-size:.74rem;color:var(--muted);line-height:1.8;background:var(--surf2);border-radius:8px;padding:.75rem">
+      1. <strong style="color:var(--txt)">Right-click</strong> the purple button above<br>
+      2. Click <strong style="color:var(--txt)">"Bookmark link"</strong> (or "Add to favourites")<br>
+      3. Save it anywhere — desktop, bookmarks bar, anywhere<br>
+      4. Done! ✅
+    </div>
+    <div id="bm-instr-firefox" class="bm-instr" style="display:none;font-size:.74rem;color:var(--muted);line-height:1.8;background:var(--surf2);border-radius:8px;padding:.75rem">
+      1. <strong style="color:var(--txt)">Right-click</strong> the purple button above<br>
+      2. Click <strong style="color:var(--txt)">"Bookmark This Link"</strong><br>
+      3. Choose a folder and click Save<br>
+      4. Done! ✅
+    </div>
+  </div>
+
+  <div style="border-top:1px solid var(--bdr);padding-top:.8rem">
     <div style="font-size:.74rem;color:var(--muted);line-height:1.8">
-      <strong style="color:var(--txt)">How to use (after setup):</strong><br>
-      1. Fill in the form below &amp; click <strong style="color:var(--org)">Start Auto Download</strong><br>
-      2. A GST portal login tab opens automatically<br>
-      3. Login with your username, password &amp; CAPTCHA<br>
-      4. <strong style="color:var(--accent)">Click the 🔖 GST Token Capture bookmark</strong> — token sent automatically!<br>
-      5. Download begins on its own — no copy-paste needed
+      <strong style="color:var(--txt)">How to use (after saving bookmark):</strong><br>
+      1. Fill form below &amp; click <strong style="color:var(--org)">🚀 Start Auto Download</strong><br>
+      2. GST portal login tab opens automatically<br>
+      3. Login with username + password + CAPTCHA<br>
+      4. <strong style="color:#a78bfa">Open your bookmarks → click "🔖 GST Token Capture"</strong><br>
+      5. Green popup appears → token sent → download begins!
     </div>
   </div>
   <div class="info-box" style="margin-top:.8rem;font-size:.72rem">
-    <strong>Token field below is optional</strong> — if you already have a token, paste it directly. Otherwise leave it blank and use the bookmarklet after login.
+    <strong>Already have a token?</strong> Paste it in the Token field below instead — bookmarklet is optional.
   </div>
 </div>
 
@@ -1233,7 +1259,22 @@ async function submitAdManualToken(){
   }catch(err){alert('Network error: '+err.message);}
 }
 
-// ── Bookmarklet builder ──────────────────────────────────────────
+function bookmarkletClick(e){
+  e.preventDefault();
+  alert('👉 Right-click the purple "🔖 GST Token Capture" button → then click "Bookmark link" / "Add to favourites". Do NOT left-click it here.');
+}
+function showBmInstr(browser){
+  document.querySelectorAll('.bm-instr').forEach(el=>el.style.display='none');
+  document.getElementById('bm-instr-'+browser).style.display='block';
+  document.querySelectorAll('.bm-tab').forEach(b=>{
+    b.style.background='var(--surf2)';b.style.borderColor='var(--bdr)';b.style.color='var(--muted)';
+    b.classList.remove('active');
+  });
+  const tab=document.getElementById('bmt-'+browser);
+  tab.style.background='rgba(0,229,255,.1)';tab.style.borderColor='var(--accent)';tab.style.color='var(--accent)';
+  tab.classList.add('active');
+}
+
 // Generates the bookmarklet href with current server origin + job_id
 function _buildBookmarklet(jobId){
   const origin=window.location.origin;
