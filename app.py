@@ -717,7 +717,14 @@ footer a{color:var(--accent);text-decoration:none}
 
 <!-- Progress & logs -->
 <div class="card pw" id="ad-pw">
-  <div class="ct">Progress <span class="sbg s-p pulse" id="ad-badge">Running</span></div>
+  <div class="ct">Progress <span class="sbg s-p pulse" id="ad-badge">Running</span>
+    <a id="ad-screenshot-link" href="#" target="_blank"
+       style="display:none;margin-left:.8rem;font-size:.7rem;padding:.2rem .6rem;
+              background:rgba(0,229,255,.12);border:1px solid var(--accent);border-radius:5px;
+              color:var(--accent);text-decoration:none;font-family:var(--mono)">
+      🖥 View Live Screenshot
+    </a>
+  </div>
   <div class="pb-w"><div class="pb" id="ad-pb"></div></div>
   <div class="lb" id="ad-lb"></div>
 </div>
@@ -1150,6 +1157,9 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
     if(d.error){addLog('ad','err',d.error);setBadge('ad','e','Failed');
       btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
     _adJobId=d.job_id;
+    // Show live screenshot link
+    const ssLink=document.getElementById('ad-screenshot-link');
+    if(ssLink){ssLink.href='/api/debug-screenshot/'+d.job_id;ssLink.style.display='inline';}
     btn.textContent='Running…';
     _adPoll(_adJobId);
   }catch(err){addLog('ad','err','Network error: '+err.message);setBadge('ad','e','Failed');
@@ -2046,6 +2056,30 @@ def health():
 def browser_status():
     return jsonify(connected=True, mode="server")
 
+@app.route("/api/debug-screenshot/<job_id>")
+def debug_screenshot(job_id):
+    """Returns the latest screenshot as an HTML page for easy viewing."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+    img = (job or {}).get("captcha_img") or ""
+    with _sess_lock:
+        s = _sessions.get(job_id, {})
+    img = img or s.get("screenshot") or ""
+    if not img:
+        return "<h2>No screenshot available yet</h2><p>Run the download first, then refresh.</p>"
+    return f"""<!DOCTYPE html><html><head>
+    <title>Debug Screenshot - Job {job_id}</title>
+    <meta http-equiv="refresh" content="3">
+    <style>body{{background:#111;color:#eee;font-family:monospace;padding:20px}}
+    img{{max-width:100%;border:2px solid #0f0;border-radius:8px}}</style>
+    </head><body>
+    <h3>🖥 Server Browser Screenshot — Job {job_id}</h3>
+    <p style="color:#0f0">Auto-refreshes every 3 seconds</p>
+    <img src="data:image/png;base64,{img}">
+    </body></html>"""
+
+
+
 # ── CAPTCHA image endpoint ────────────────────────────────────────
 @app.route("/api/captcha-img/<job_id>")
 def captcha_img(job_id):
@@ -2621,43 +2655,108 @@ def _auto_download(job_id, gstin, client_name,
                 }
             """)
         time.sleep(8)
+        # ── Debug: screenshot + page dump after SEARCH ────────────────
+        try:
+            img_b64 = _screenshot_b64()
+            if img_b64:
+                show_captcha(img_b64)   # reuse captcha slot to show screenshot
+                time.sleep(0.5)
+                clear_captcha()
+        except: pass
+        try:
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            # Log all visible text to find tile names
+            lines = [l.strip() for l in body_text.split("\n") if l.strip()]
+            log(f"  Page text after SEARCH ({len(lines)} lines): {' | '.join(lines[:30])}", "info")
+            # Log all buttons
+            btns_txt = [b.text.strip() for b in driver.find_elements(By.TAG_NAME, "button") if b.is_displayed() and b.text.strip()]
+            log(f"  Visible buttons: {btns_txt[:15]}", "info")
+            # Log all links
+            links_txt = [(a.text.strip(), (a.get_attribute("href") or "")[:60])
+                         for a in driver.find_elements(By.TAG_NAME, "a")
+                         if a.is_displayed() and a.text.strip()]
+            log(f"  Visible links: {links_txt[:15]}", "info")
+        except Exception as _de:
+            log(f"  Debug dump error: {_de}", "warn")
         log(f"  Tiles loaded after SEARCH ✓")
 
     def _click_tile_download(tile_name):
-        """Find tile and click its DOWNLOAD button (mirrors click_tile_download)"""
+        """Find tile and click its DOWNLOAD button"""
         log(f"  Finding {tile_name} tile DOWNLOAD button...")
         time.sleep(3)
+
+        # Log full page text to diagnose tile names on this portal version
+        try:
+            all_text = driver.find_element(By.TAG_NAME, "body").text
+            log(f"  Page has text: {bool('GSTR' in all_text or 'gstr' in all_text.lower())}")
+            # Find all elements containing GSTR to see what's on the page
+            gstr_els = driver.find_elements(By.XPATH, "//*[contains(text(),'GSTR') or contains(text(),'gstr')]")
+            gstr_texts = list(set(e.text.strip()[:40] for e in gstr_els if e.is_displayed() and e.text.strip()))
+            log(f"  GSTR elements on page: {gstr_texts[:20]}", "info")
+        except: pass
+
         name_variants = {
-            "GSTR1":  ["GSTR1","GSTR-1"],
-            "GSTR1A": ["GSTR1A","GSTR-1A"],
-            "GSTR2B": ["GSTR2B","GSTR-2B"],
-            "GSTR2A": ["GSTR2A","GSTR-2A"],
-            "GSTR3B": ["GSTR3B","GSTR-3B"],
+            "GSTR1":  ["GSTR1","GSTR-1","GSTR 1","gstr1","Gstr1"],
+            "GSTR1A": ["GSTR1A","GSTR-1A","GSTR 1A","gstr1a"],
+            "GSTR2B": ["GSTR2B","GSTR-2B","GSTR 2B","gstr2b"],
+            "GSTR2A": ["GSTR2A","GSTR-2A","GSTR 2A","gstr2a"],
+            "GSTR3B": ["GSTR3B","GSTR-3B","GSTR 3B","gstr3b"],
         }
         variants = name_variants.get(tile_name.upper().replace("-",""), [tile_name])
+
+        # Strategy 1: find subtitle text → walk up to container → find DOWNLOAD button inside
         for variant in variants:
             try:
-                subtitle_els = driver.find_elements(By.XPATH, f"//*[normalize-space(text())='{variant}']")
+                subtitle_els = driver.find_elements(By.XPATH,
+                    f"//*[normalize-space(text())='{variant}' or "
+                    f"contains(normalize-space(text()),'{variant}')]")
                 for subtitle_el in subtitle_els:
                     if not subtitle_el.is_displayed(): continue
                     parent = subtitle_el
-                    for level in range(6):
+                    for level in range(8):
                         try:
                             parent = driver.execute_script("return arguments[0].parentElement;", parent)
                             if parent is None: break
                             btns = parent.find_elements(By.XPATH,
-                                ".//button[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD')] | "
-                                ".//a[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD')]")
+                                ".//*[contains(translate(normalize-space(.),'download','DOWNLOAD'),'DOWNLOAD') "
+                                "and (self::button or self::a)]")
                             for btn in btns:
                                 if btn.is_displayed():
                                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
                                     time.sleep(0.4)
                                     driver.execute_script("arguments[0].click();", btn)
-                                    log(f"  {tile_name} DOWNLOAD clicked ✓")
+                                    log(f"  ✅ {tile_name} DOWNLOAD clicked (strategy 1, level {level})", "ok")
                                     return True
                         except: break
             except: continue
-        log(f"  ⚠ {tile_name} DOWNLOAD tile not found", "warn")
+
+        # Strategy 2: scan all DOWNLOAD buttons, find the one near the tile title
+        try:
+            all_dl_btns = driver.find_elements(By.XPATH,
+                "//*[contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD') "
+                "and (self::button or self::a) and not(contains(text(),'GENERATE'))]")
+            log(f"  All DOWNLOAD buttons on page: {[b.text.strip() for b in all_dl_btns if b.is_displayed()][:10]}", "info")
+            for btn in all_dl_btns:
+                if not btn.is_displayed(): continue
+                # Check if any ancestor contains the tile name
+                try:
+                    parent = btn
+                    for _ in range(10):
+                        parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                        if parent is None: break
+                        ptext = (driver.execute_script("return arguments[0].innerText;", parent) or "").upper()
+                        tile_key = tile_name.upper().replace("-","")
+                        if tile_key in ptext.replace("-","").replace(" ",""):
+                            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                            time.sleep(0.4)
+                            driver.execute_script("arguments[0].click();", btn)
+                            log(f"  ✅ {tile_name} DOWNLOAD clicked (strategy 2)", "ok")
+                            return True
+                except: continue
+        except Exception as e:
+            log(f"  Strategy 2 error: {e}", "warn")
+
+        log(f"  ⚠ {tile_name} DOWNLOAD tile not found — check page dump above", "warn")
         return False
 
     def _get_latest_file(extensions):
