@@ -384,6 +384,7 @@ footer a{color:var(--accent);text-decoration:none}
   <button class="tb" onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
   <button class="tb" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
   <button class="tb" onclick="switchTab('autodl',event)">🌐 Auto Download</button>
+  <button class="tb" onclick="switchTab('bulk',event)">📋 Bulk Download</button>
 </div>
 
 <!-- ══ TAB 1: RECONCILIATION ══ -->
@@ -682,6 +683,25 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="lb" id="ad-lb"></div>
 </div>
 
+<!-- Re-login card (shown if token expires mid-download) -->
+<div class="card" id="ad-relogin-card" style="display:none">
+  <div class="ct">🔄 Token Expired — Re-login Required</div>
+  <div class="info-box warn" style="margin-bottom:.75rem;font-size:.74rem">
+    Your GST portal session expired during download.<br>
+    <strong>1.</strong> <a href="https://services.gst.gov.in/services/login" target="_blank"
+       style="color:var(--accent);font-weight:700">Login to GST Portal again →</a><br>
+    <strong>2.</strong> Press F12 → Application → Cookies → copy fresh <strong>AuthToken</strong><br>
+    <strong>3.</strong> Paste below — download will resume automatically
+  </div>
+  <div class="fg">
+    <label>Fresh AuthToken *</label>
+    <input type="text" id="ad-relogin-token" placeholder="Paste new AuthToken here" style="font-size:.72rem">
+  </div>
+  <button class="btn" onclick="submitAdRelogin()" id="ad-relogin-btn" style="margin-top:.5rem">
+    Submit New Token →
+  </button>
+</div>
+
 <!-- Download results -->
 <div class="card dw" id="ad-dw">
   <div class="ct">Downloaded Files</div>
@@ -692,6 +712,120 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 
 </div><!-- /tab-autodl -->
+
+<!-- ══ TAB 5: BULK DOWNLOAD ══ -->
+<div class="tp" id="tab-bulk">
+
+<div class="card">
+  <div class="ct">📋 Bulk Download — Multiple Companies</div>
+  <div class="pills">
+    <span class="pill">Multiple GSTINs</span><span class="pill">One by one</span>
+    <span class="pill">CAPTCHA per company</span><span class="pill">Auto ZIP output</span>
+  </div>
+  <div class="info-box" style="margin-top:.75rem">
+    <strong>How it works:</strong><br>
+    1. Download the Excel template below → fill in your company list<br>
+    2. Upload it here → Click Start Bulk Download<br>
+    3. For each company, login to GST portal → copy AuthToken → paste here → Download proceeds<br>
+    4. All files are saved and available to download as a ZIP<br><br>
+    <strong style="color:var(--grn)">✅ No limit on number of companies. Each uses its own login session.</strong>
+  </div>
+  <a href="/api/bulk-template" class="btn-dl"
+     style="display:inline-block;padding:.55rem 1.1rem;margin-top:.5rem">
+    ⬇ Download Excel Template
+  </a>
+</div>
+
+<div class="card">
+  <div class="ct">Upload Company List</div>
+  <div class="fg2">
+    <div class="fg">
+      <label>Company List Excel *</label>
+      <div class="dz" id="zone-bulk" style="min-height:70px;flex-direction:row;padding:.6rem .75rem;gap:.65rem">
+        <div class="dz-ic" style="font-size:1.2rem">📊</div>
+        <div style="text-align:left">
+          <div class="dz-lb">companies.xlsx</div>
+          <div class="dz-cn" id="cnt-bulk">No file</div>
+        </div>
+        <input type="file" accept=".xlsx,.xls" data-zone="bulk" onchange="updateZone('bulk',this)">
+      </div>
+    </div>
+    <div class="fg">
+      <label>Financial Year</label>
+      <select id="bulk-fy">
+        <option value="2025-26">2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+      </select>
+    </div>
+    <div class="fg">
+      <label>Returns to Download</label>
+      <select id="bulk-returns">
+        <option value="all">All Returns (GSTR-1, 1A, 2B, 2A, 3B)</option>
+        <option value="gstr1">GSTR-1 Only</option>
+        <option value="gstr2b">GSTR-2B Only</option>
+        <option value="gstr2a">GSTR-2A Only</option>
+        <option value="gstr3b">GSTR-3B Only</option>
+      </select>
+    </div>
+  </div>
+  <button class="btn-orange" onclick="startBulk()" id="bulk-submit" style="margin-top:.5rem">
+    🚀 Start Bulk Download
+  </button>
+</div>
+
+<!-- Per-company CAPTCHA card (shown one at a time) -->
+<div class="card" id="bulk-captcha-card" style="display:none">
+  <div class="ct">🔐 Login Required — <span id="bulk-co-name" style="color:var(--accent)"></span></div>
+  <div class="info-box" style="margin-bottom:.8rem;font-size:.75rem">
+    <strong>Step 1:</strong>
+    <a href="https://services.gst.gov.in/services/login" target="_blank"
+       style="color:var(--accent);font-weight:700">Open GST Portal Login →</a>
+    login with username &amp; password + CAPTCHA<br>
+    <strong>Step 2:</strong> Press F12 → Application → Cookies → copy <strong>AuthToken</strong><br>
+    <strong>Step 3:</strong> Paste it below and click Submit
+  </div>
+  <div class="fg2">
+    <div class="fg">
+      <label>GSTIN</label>
+      <input type="text" id="bulk-cap-gstin" readonly style="opacity:.6">
+    </div>
+    <div class="fg">
+      <label>Username</label>
+      <input type="text" id="bulk-cap-user" readonly style="opacity:.6">
+    </div>
+  </div>
+  <div class="fg" style="margin-top:.6rem">
+    <label>AuthToken from GST Portal Cookies *</label>
+    <input type="text" id="bulk-token-input" placeholder="Paste AuthToken here"
+           style="font-size:.72rem">
+  </div>
+  <button class="btn" onclick="submitBulkToken()" id="bulk-token-btn" style="margin-top:.5rem">
+    Submit Token &amp; Download →
+  </button>
+  <div id="bulk-token-err" style="color:var(--red);font-size:.72rem;margin-top:.4rem;font-family:var(--mono)"></div>
+</div>
+
+<!-- Progress -->
+<div class="card" id="bulk-pw" style="display:none">
+  <div class="ct">Bulk Progress <span class="sbg s-p pulse" id="bulk-badge">Running</span>
+    <span id="bulk-counter" style="font-size:.7rem;color:var(--muted);font-family:var(--mono);margin-left:.5rem"></span>
+  </div>
+  <div class="pb-w"><div class="pb" id="bulk-pb"></div></div>
+  <div class="lb" id="bulk-lb"></div>
+</div>
+
+<!-- Results -->
+<div class="card" id="bulk-dw" style="display:none">
+  <div class="ct">✅ Bulk Download Complete</div>
+  <div class="dl-g" id="bulk-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted after 2 hours. Download the ZIP and upload each company's files to Reconciliation tab.
+  </p>
+</div>
+
+</div><!-- /tab-bulk -->
 
 <!-- ══ FEEDBACK SECTION ══ -->
 <div class="fb-card" id="feedback-section">
@@ -954,20 +1088,54 @@ async function _adPoll(jid){
     let d;try{d=await r.json();}catch(_){setTimeout(()=>_adPoll(jid),3000);return;}
     if(d.logs)d.logs.forEach(l=>addLog('ad',l.type,l.msg));
     if(d.progress!=null)document.getElementById('ad-pb').style.width=d.progress+'%';
+
+    // Handle token expiry — show re-login card inline
+    const reloginCard = document.getElementById('ad-relogin-card');
+    if(d.captcha_needed && reloginCard){
+      reloginCard.style.display='block';
+      reloginCard.scrollIntoView({behavior:'smooth',block:'center'});
+    } else if(reloginCard){
+      reloginCard.style.display='none';
+    }
+
     if(d.status==='done'){
       setBadge('ad','d','Complete');
       document.getElementById('ad-pb').style.width='100%';
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
+      if(reloginCard) reloginCard.style.display='none';
       _adShowFiles(jid,d.files);return;
     }
     if(d.status==='error'){
       addLog('ad','err',d.error||'Unknown error');setBadge('ad','e','Failed');
       document.getElementById('ad-submit').disabled=false;
-      document.getElementById('ad-submit').textContent='🚀 Start Auto Download';return;
+      document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
+      if(reloginCard) reloginCard.style.display='none';
+      return;
     }
     setTimeout(()=>_adPoll(jid),1500);
   }catch(e){setTimeout(()=>_adPoll(jid),3000);}
+}
+
+async function submitAdRelogin(){
+  const token=document.getElementById('ad-relogin-token').value.trim();
+  if(!token){alert('Paste the new AuthToken');return;}
+  const btn=document.getElementById('ad-relogin-btn');
+  btn.disabled=true;btn.textContent='Submitting…';
+  try{
+    const res=await fetch(`/api/captcha-submit/${_adJobId}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({captcha:token})});
+    const d=await res.json();
+    if(d.ok){
+      document.getElementById('ad-relogin-card').style.display='none';
+      document.getElementById('ad-relogin-token').value='';
+      addLog('ad','ok','New token submitted — resuming download…');
+    } else {
+      alert('Error: '+(d.error||'Failed'));
+    }
+  }catch(err){alert('Network error: '+err.message);}
+  btn.disabled=false;btn.textContent='Submit New Token →';
 }
 function _adShowFiles(jid,files){
   const sec=document.getElementById('ad-dw'),grid=document.getElementById('ad-dlg');
@@ -1144,6 +1312,129 @@ function escHtml(s){
 
 // Load feedback on page open
 loadFeedback();
+
+// ── Bulk Download ─────────────────────────────────────────────────
+let _bulkJobId = null;
+let _bulkPollTimer = null;
+
+async function startBulk(){
+  const files = zoneFiles['bulk'] || [];
+  if(!files.length){ alert('Upload a company list Excel first'); return; }
+  const fy      = document.getElementById('bulk-fy').value;
+  const returns = document.getElementById('bulk-returns').value;
+  const fd = new FormData();
+  files.forEach(f => fd.append('companies_file', f));
+  fd.append('fy', fy);
+  fd.append('returns', returns);
+
+  document.getElementById('bulk-pw').style.display = 'block';
+  document.getElementById('bulk-dw').style.display = 'none';
+  document.getElementById('bulk-captcha-card').style.display = 'none';
+  document.getElementById('bulk-lb').innerHTML = '';
+  document.getElementById('bulk-pb').style.width = '0%';
+  setBadge('bulk','p','Running');
+  const btn = document.getElementById('bulk-submit');
+  btn.disabled = true; btn.textContent = 'Starting…';
+  addLog('bulk','info','Uploading company list…');
+  try{
+    const res = await fetch('/api/bulk-start', {method:'POST', body:fd});
+    const d   = await res.json();
+    if(d.error){ addLog('bulk','err',d.error); setBadge('bulk','e','Failed'); btn.disabled=false; btn.textContent='🚀 Start Bulk Download'; return; }
+    _bulkJobId = d.job_id;
+    addLog('bulk','ok',`Loaded ${d.total} companies. Starting downloads…`);
+    _bulkPoll(_bulkJobId);
+  }catch(err){
+    addLog('bulk','err','Network error: '+err.message);
+    setBadge('bulk','e','Failed');
+    btn.disabled=false; btn.textContent='🚀 Start Bulk Download';
+  }
+}
+
+async function _bulkPoll(jid){
+  try{
+    const r = await fetch('/api/job/'+jid);
+    let d; try{ d = await r.json(); }catch(_){ _bulkPollTimer=setTimeout(()=>_bulkPoll(jid),3000); return; }
+    if(d.logs) d.logs.forEach(l=>addLog('bulk',l.type,l.msg));
+    if(d.progress!=null) document.getElementById('bulk-pb').style.width=d.progress+'%';
+    if(d.counter) document.getElementById('bulk-counter').textContent=d.counter;
+
+    // Company needs token
+    if(d.captcha_needed && d.captcha_company){
+      _showBulkTokenCard(d.captcha_company);
+    } else {
+      document.getElementById('bulk-captcha-card').style.display='none';
+    }
+
+    if(d.status==='done'){
+      setBadge('bulk','d','Complete');
+      document.getElementById('bulk-pb').style.width='100%';
+      document.getElementById('bulk-captcha-card').style.display='none';
+      document.getElementById('bulk-submit').disabled=false;
+      document.getElementById('bulk-submit').textContent='🚀 Start Bulk Download';
+      _bulkShowFiles(jid, d.files);
+      return;
+    }
+    if(d.status==='error'){
+      setBadge('bulk','e','Failed');
+      document.getElementById('bulk-captcha-card').style.display='none';
+      document.getElementById('bulk-submit').disabled=false;
+      document.getElementById('bulk-submit').textContent='🚀 Start Bulk Download';
+      return;
+    }
+    _bulkPollTimer = setTimeout(()=>_bulkPoll(jid), 1500);
+  }catch(e){ _bulkPollTimer=setTimeout(()=>_bulkPoll(jid),3000); }
+}
+
+function _showBulkTokenCard(company){
+  document.getElementById('bulk-captcha-card').style.display='block';
+  document.getElementById('bulk-co-name').textContent = company.name || company.gstin;
+  document.getElementById('bulk-cap-gstin').value = company.gstin || '';
+  document.getElementById('bulk-cap-user').value  = company.username || '';
+  document.getElementById('bulk-token-input').value = '';
+  document.getElementById('bulk-token-err').textContent = '';
+  document.getElementById('bulk-token-btn').disabled = false;
+  document.getElementById('bulk-token-btn').textContent = 'Submit Token & Download →';
+  // Scroll into view
+  document.getElementById('bulk-captcha-card').scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+async function submitBulkToken(){
+  const token = document.getElementById('bulk-token-input').value.trim();
+  if(!token){ document.getElementById('bulk-token-err').textContent='Please paste the AuthToken'; return; }
+  const btn = document.getElementById('bulk-token-btn');
+  btn.disabled=true; btn.textContent='Submitting…';
+  document.getElementById('bulk-token-err').textContent='';
+  try{
+    const res = await fetch(`/api/bulk-token/${_bulkJobId}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({token})
+    });
+    const d = await res.json();
+    if(!d.ok){
+      document.getElementById('bulk-token-err').textContent = d.error||'Failed';
+      btn.disabled=false; btn.textContent='Submit Token & Download →';
+      return;
+    }
+    document.getElementById('bulk-captcha-card').style.display='none';
+    addLog('bulk','ok','Token submitted — downloading…');
+  }catch(err){
+    document.getElementById('bulk-token-err').textContent='Network error: '+err.message;
+    btn.disabled=false; btn.textContent='Submit Token & Download →';
+  }
+}
+
+function _bulkShowFiles(jid, files){
+  const sec=document.getElementById('bulk-dw'), grid=document.getElementById('bulk-dlg');
+  sec.style.display='block'; grid.innerHTML='';
+  if(!files||!files.length){ grid.innerHTML='<p style="color:var(--muted);font-size:.8rem">No files downloaded.</p>'; return; }
+  files.forEach(f=>{
+    const c=document.createElement('div'); c.className='dlc';
+    c.innerHTML=`<div style="font-size:1.4rem">📥</div>
+      <div class="dl-n">${f.name}</div><div class="dl-s">${f.size||''}</div>
+      <a href="/api/dl-file/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
+    grid.appendChild(c);
+  });
+}
 
 // ── Self-Ping to Keep Render App Alive ────────────────────────────
 // Pings every 4 minutes while page is open (prevents Render free tier sleep)
@@ -1495,17 +1786,19 @@ def api_upload():
 def api_job(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
-    if not job:
-        return jsonify(error="Job not found"), 404
-    new_logs = job["logs"][:]
-    job["logs"] = []
-    return jsonify(
-        status=job["status"], progress=job["progress"],
-        logs=new_logs, files=job["files"], error=job["error"],
-        dl_status=job.get("dl_status",{}),
-        captcha_needed=job.get("captcha_needed", False),
-        captcha_img=job.get("captcha_img", None),
-    )
+        if not job:
+            return jsonify(error="Job not found"), 404
+        new_logs = job["logs"][:]
+        job["logs"] = []
+        return jsonify(
+            status=job["status"], progress=job["progress"],
+            logs=new_logs, files=job["files"], error=job["error"],
+            dl_status=job.get("dl_status",{}),
+            captcha_needed=job.get("captcha_needed", False),
+            captcha_img=job.get("captcha_img", None),
+            captcha_company=job.get("captcha_company", None),
+            counter=job.get("counter",""),
+        )
 
 @app.route("/api/download/<job_id>/<filename>")
 @rate_limit(limit=30, window=60)
@@ -1851,6 +2144,46 @@ def _auto_download(job_id, gstin, client_name,
                 try:
                     r = S.get(url, timeout=60, stream=True)
                     if r.status_code == 200 and len(r.content) > 500:
+                        # Check if portal returned a JSON error instead of a file (token expired)
+                        ct = r.headers.get("content-type","")
+                        if "application/json" in ct:
+                            try:
+                                ec = r.json().get("errorCode","")
+                                if ec in ("AUTH4033","AUTH4035","SWEB_9000","GSP_PDG"):
+                                    log("⚠ Token expired — please login to GST portal again and paste a fresh AuthToken", "warn")
+                                    # Signal UI to ask for new token
+                                    set_captcha(None)
+                                    with jobs_lock:
+                                        if job_id in jobs:
+                                            jobs[job_id]["captcha_company"] = {
+                                                "name": client_name, "gstin": gstin, "username": username}
+                                    # Wait for new token (up to 10 min)
+                                    while not sess["captcha_q"].empty():
+                                        try: sess["captcha_q"].get_nowait()
+                                        except: pass
+                                    try:
+                                        new_tok = sess["captcha_q"].get(timeout=600)
+                                        S.headers["Authorization"] = f"Bearer {new_tok}"
+                                        S.cookies.set("AuthToken", new_tok, domain=".gst.gov.in")
+                                        S.cookies.set("token",     new_tok, domain=".gst.gov.in")
+                                        clear_captcha()
+                                        log("✅ New token received — resuming download…", "ok")
+                                        # Retry this URL with new token
+                                        r2 = S.get(url, timeout=60)
+                                        if r2.status_code == 200 and len(r2.content) > 500:
+                                            fpath.write_bytes(r2.content)
+                                            sz = fpath.stat().st_size // 1024
+                                            log(f"  ✓ {fname} ({sz} KB)", "ok")
+                                            downloaded.append({"name":fname,"size":f"{sz} KB"})
+                                            done_n += 1
+                                            prog(30 + int(done_n / max(total,1) * 65))
+                                            return
+                                    except _queue.Empty:
+                                        log("⏱ Re-login timeout — skipping remaining files", "warn")
+                                        return
+                            except Exception:
+                                pass
+                            continue
                         fpath.write_bytes(r.content)
                         sz = fpath.stat().st_size // 1024
                         log(f"  ✓ {fname} ({sz} KB)", "ok")
@@ -1913,6 +2246,344 @@ def _auto_download(job_id, gstin, client_name,
         with jobs_lock:
             jobs[job_id]["status"] = "error"
             jobs[job_id]["error"]  = str(exc)
+
+# ═══════════════════════════════════════════════════════════════════
+# BULK DOWNLOAD — multiple companies from Excel list
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/bulk-template")
+def bulk_template():
+    """Return a sample Excel template for bulk download."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Companies"
+    headers = ["COMPANY NAME", "GSTIN", "USERNAME", "NOTES"]
+    widths  = [30, 20, 20, 30]
+    for i,(h,w) in enumerate(zip(headers,widths),1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1a2235")
+        c.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[chr(64+i)].width = w
+    examples = [
+        ["ABC Traders", "33ABCDE1234F1ZX", "abctraders_gst", "Example row"],
+        ["XYZ Pvt Ltd", "29XYZAB5678G2ZY", "xyz_gst_login",  ""],
+    ]
+    for row in examples:
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    from flask import Response
+    return Response(buf.read(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=bulk_companies_template.xlsx"})
+
+
+@app.route("/api/bulk-start", methods=["POST"])
+@rate_limit(limit=5, window=60)
+def api_bulk_start():
+    fobj = request.files.get("companies_file")
+    if not fobj:
+        return jsonify(error="No file uploaded"), 400
+    fy      = request.form.get("fy","2025-26")
+    returns = request.form.get("returns","all")
+
+    # Parse the Excel
+    import io, openpyxl
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(fobj.read()), read_only=True, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+    except Exception as e:
+        return jsonify(error=f"Cannot read Excel: {e}"), 400
+
+    if not rows or len(rows) < 2:
+        return jsonify(error="Excel is empty or has only headers"), 400
+
+    headers = [str(c or "").strip().upper() for c in rows[0]]
+    def _col(*names):
+        for n in names:
+            if n in headers: return headers.index(n)
+        return -1
+
+    ci_name = _col("COMPANY NAME","NAME","COMPANY")
+    ci_gst  = _col("GSTIN","GSTIN NO","GST")
+    ci_user = _col("USERNAME","USER","LOGIN","USER NAME")
+
+    if ci_gst < 0:
+        return jsonify(error="Column 'GSTIN' not found in Excel"), 400
+
+    companies = []
+    for row in rows[1:]:
+        gstin = str(row[ci_gst] or "").strip().upper() if ci_gst >= 0 else ""
+        if not gstin or len(gstin) != 15:
+            continue
+        companies.append({
+            "name":     str(row[ci_name] or "").strip() if ci_name >= 0 else gstin,
+            "gstin":    gstin,
+            "username": str(row[ci_user] or "").strip() if ci_user >= 0 else "",
+        })
+
+    if not companies:
+        return jsonify(error="No valid GSTINs found in Excel"), 400
+
+    job_id  = str(uuid.uuid4())[:8]
+    out_dir = OUTPUT_DIR / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with jobs_lock:
+        jobs[job_id] = {
+            "status":"running","progress":0,
+            "logs":[{"type":"info","msg":f"Loaded {len(companies)} companies. Starting…"}],
+            "files":[],"error":None,
+            "captcha_needed":False,"captcha_img":None,"captcha_company":None,
+            "out_dir":str(out_dir),"counter":"",
+        }
+
+    sess = {"token_q": _queue.Queue(), "screenshot": None, "refresh_event": threading.Event()}
+    with _sess_lock:
+        _sessions[job_id] = sess
+
+    def _run():
+        try:
+            _bulk_worker(job_id, companies, fy, returns, sess, out_dir)
+        except Exception as exc:
+            import traceback as _tb
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id]["status"] = "error"
+                    jobs[job_id]["error"]  = str(exc)
+                    for ln in _tb.format_exc().split("\n"):
+                        if ln.strip():
+                            jobs[job_id]["logs"].append({"type":"err","msg":ln})
+        finally:
+            with _sess_lock:
+                _sessions.pop(job_id, None)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify(job_id=job_id, total=len(companies))
+
+
+@app.route("/api/bulk-token/<job_id>", methods=["POST"])
+def api_bulk_token(job_id):
+    """User submits token for a company during bulk download."""
+    token = (request.get_json(silent=True) or {}).get("token","").strip()
+    if not token:
+        return jsonify(ok=False, error="Empty token")
+    with _sess_lock:
+        sess = _sessions.get(job_id)
+    if not sess:
+        return jsonify(ok=False, error="No active session")
+    sess["token_q"].put(token)
+    # Clear captcha_needed immediately so UI hides the card
+    with jobs_lock:
+        if job_id in jobs:
+            jobs[job_id]["captcha_needed"]  = False
+            jobs[job_id]["captcha_company"] = None
+    return jsonify(ok=True)
+
+
+def _bulk_worker(job_id, companies, fy, returns, sess, out_dir):
+    """Process each company one by one, requesting a token for each."""
+    import requests as _req
+
+    def log(msg, t="info"):
+        print(f"[BULK {job_id}] {msg}")
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["logs"].append({"type":t,"msg":msg})
+
+    def prog(p):
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["progress"] = p
+
+    def set_counter(i, total):
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["counter"] = f"Company {i}/{total}"
+
+    total = len(companies)
+    all_files = []
+    out_path  = Path(out_dir)
+
+    for idx, company in enumerate(companies, 1):
+        set_counter(idx, total)
+        name     = company["name"]
+        gstin    = company["gstin"]
+        username = company["username"]
+        log(f"━━━ [{idx}/{total}] {name} ({gstin}) ━━━", "info")
+        prog(int((idx-1)/total*100))
+
+        # ── Ask user for token ──────────────────────────────────────
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"]  = True
+                jobs[job_id]["captcha_company"] = {"name":name,"gstin":gstin,"username":username}
+
+        log(f"  Waiting for AuthToken from user for {name}…")
+
+        # Wait up to 15 minutes for token
+        try:
+            token = sess["token_q"].get(timeout=900)
+        except _queue.Empty:
+            log(f"  ⏱ Timeout waiting for token — skipping {name}", "warn")
+            continue
+
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"]  = False
+                jobs[job_id]["captcha_company"] = None
+
+        log(f"  Token received — starting download for {name}…", "ok")
+
+        # ── Download returns for this company ───────────────────────
+        company_dir = out_path / gstin
+        company_dir.mkdir(exist_ok=True)
+
+        S = _req.Session()
+        S.headers.update({
+            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept":          "application/json, text/plain, */*",
+            "Accept-Language": "en-IN,en-US;q=0.9,en;q=0.8",
+            "Authorization":   f"Bearer {token}",
+        })
+        S.cookies.set("AuthToken", token, domain=".gst.gov.in")
+        S.cookies.set("token",     token, domain=".gst.gov.in")
+
+        # Verify token
+        try:
+            vr = S.get(f"https://services.gst.gov.in/services/api/search/taxpayerDetails?gstin={gstin}",
+                       timeout=15)
+            if vr.status_code in (401, 403):
+                log(f"  ⚠ Token rejected for {name} — skipping", "warn")
+                continue
+        except Exception as ve:
+            log(f"  Token check warning: {ve} — continuing", "warn")
+
+        fy_start = int(fy.split("-")[0])
+        MONTHS = [
+            ("April","04",str(fy_start)),    ("May","05",str(fy_start)),
+            ("June","06",str(fy_start)),     ("July","07",str(fy_start)),
+            ("August","08",str(fy_start)),   ("September","09",str(fy_start)),
+            ("October","10",str(fy_start)),  ("November","11",str(fy_start)),
+            ("December","12",str(fy_start)), ("January","01",str(fy_start+1)),
+            ("February","02",str(fy_start+1)),("March","03",str(fy_start+1)),
+        ]
+        BASE_RET = "https://return.gst.gov.in/returns/auth"
+        co_files = []
+
+        def dl_one(ret_type, mon_name, mon_num, mon_yr):
+            period = f"{mon_num}{mon_yr}"
+            ext    = {"gstr1":".zip","gstr1a":".zip","gstr2b":".xlsx",
+                      "gstr2a":".xlsx","gstr3b":".pdf"}.get(ret_type,".zip")
+            fname  = f"{gstin}_{ret_type.upper()}_{mon_name}_{mon_yr}{ext}"
+            fpath  = company_dir / fname
+            urls   = [
+                f"{BASE_RET}/{ret_type}/download?gstin={gstin}&ret_period={period}&action_type=download",
+                f"{BASE_RET}/{ret_type}?action=download&gstin={gstin}&ret_period={period}",
+                f"https://return.gst.gov.in/returns/api/{ret_type}/{gstin}/{period}/download",
+            ]
+            for url in urls:
+                try:
+                    r = S.get(url, timeout=60)
+                    if r.status_code == 200 and len(r.content) > 500:
+                        # Check if token expired (portal returns JSON error instead of file)
+                        if r.headers.get("content-type","").startswith("application/json"):
+                            ec = r.json().get("errorCode","")
+                            if ec in ("AUTH4033","AUTH4035","SWEB_9000"):
+                                log(f"  ⚠ Token expired mid-download for {name}", "warn")
+                                return "TOKEN_EXPIRED"
+                        fpath.write_bytes(r.content)
+                        sz = fpath.stat().st_size // 1024
+                        co_files.append({"name":fname,"size":f"{sz} KB"})
+                        log(f"  ✓ {ret_type.upper()} {mon_name} {mon_yr} ({sz} KB)", "ok")
+                        return "OK"
+                except Exception:
+                    pass
+            log(f"  – {ret_type.upper()} {mon_name} {mon_yr}: not available", "warn")
+            return "SKIP"
+
+        ret_types = []
+        if returns in ("all","gstr1"):  ret_types.append("gstr1")
+        if returns in ("all","gstr1a"): ret_types.append("gstr1a")
+        if returns in ("all","gstr2b"): ret_types.append("gstr2b")
+        if returns in ("all","gstr2a"): ret_types.append("gstr2a")
+        if returns in ("all","gstr3b"): ret_types.append("gstr3b")
+
+        token_expired = False
+        for rt in ret_types:
+            if token_expired: break
+            log(f"  ── {rt.upper()} ──")
+            for mn, mm, my in MONTHS:
+                result = dl_one(rt, mn, mm, my)
+                if result == "TOKEN_EXPIRED":
+                    token_expired = True
+                    # Ask user for a fresh token
+                    log(f"  🔄 Token expired — requesting new token for {name}…", "warn")
+                    with jobs_lock:
+                        if job_id in jobs:
+                            jobs[job_id]["captcha_needed"]  = True
+                            jobs[job_id]["captcha_company"] = {
+                                "name": f"{name} (RE-LOGIN)", "gstin": gstin, "username": username}
+                    # Clear token queue and wait
+                    while not sess["token_q"].empty():
+                        try: sess["token_q"].get_nowait()
+                        except: pass
+                    try:
+                        new_token = sess["token_q"].get(timeout=600)
+                        S.headers["Authorization"] = f"Bearer {new_token}"
+                        S.cookies.set("AuthToken", new_token, domain=".gst.gov.in")
+                        S.cookies.set("token",     new_token, domain=".gst.gov.in")
+                        with jobs_lock:
+                            if job_id in jobs:
+                                jobs[job_id]["captcha_needed"]  = False
+                                jobs[job_id]["captcha_company"] = None
+                        token_expired = False
+                        log(f"  ✅ New token received — resuming {name}…", "ok")
+                        # Retry this month
+                        dl_one(rt, mn, mm, my)
+                    except _queue.Empty:
+                        log(f"  ⏱ Re-login timeout — stopping {name}", "warn")
+                        break
+
+        all_files.extend(co_files)
+        log(f"  ✅ {name}: {len(co_files)} file(s) downloaded", "ok")
+
+        # Update running file list
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["files"] = list(all_files)
+
+    # ── Create ZIP of everything ────────────────────────────────────
+    prog(98)
+    if all_files:
+        zip_name = f"BULK_DOWNLOAD_{fy}.zip"
+        zip_path = out_path / zip_name
+        import zipfile as _zf
+        with _zf.ZipFile(str(zip_path), "w", _zf.ZIP_DEFLATED) as zf:
+            for f in all_files:
+                # find the file
+                for sub in out_path.rglob(f["name"]):
+                    zf.write(str(sub), f["name"])
+                    break
+        sz = zip_path.stat().st_size // 1024
+        all_files.insert(0, {"name": zip_name, "size": f"{sz} KB"})
+        log(f"✅ ZIP created: {zip_name} ({sz} KB)", "ok")
+
+    prog(100)
+    log(f"✅ Bulk complete — {len(companies)} companies, {len(all_files)-1} total files.", "ok")
+    with jobs_lock:
+        if job_id in jobs:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = all_files
+            jobs[job_id]["captcha_needed"]  = False
+            jobs[job_id]["captcha_company"] = None
+
 
 # ── Startup ───────────────────────────────────────────────────────
 if __name__ == "__main__":
