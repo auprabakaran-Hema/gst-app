@@ -612,30 +612,44 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
-<!-- Step 1: Open GST portal + get token -->
+<!-- Step 1: Bookmarklet auto-capture -->
 <div class="card" id="ad-step1">
-  <div class="ct">Step 1 — Login to GST Portal &amp; Get Token</div>
-  <p style="color:var(--muted);font-size:.78rem;line-height:1.7;margin-bottom:.9rem">
-    1. Click the button below to open the GST portal in a new tab<br>
-    2. Login with your username, password and CAPTCHA as normal<br>
-    3. After login, open browser DevTools: press <strong style="color:var(--txt)">F12</strong> → Application → Cookies → services.gst.gov.in<br>
-    4. Copy the value of the cookie named <strong style="color:var(--accent)">AuthToken</strong> (or <strong style="color:var(--accent)">token</strong>)<br>
-    5. Paste it in the Token field below
-  </p>
-  <div style="text-align:center;margin-bottom:1rem">
-    <a href="https://services.gst.gov.in/services/login" target="_blank"
-       style="display:inline-block;padding:.65rem 1.4rem;background:linear-gradient(135deg,#ff6d00,#ff9100);
-              border-radius:8px;color:#000;font-weight:800;font-size:.85rem;text-decoration:none;
-              letter-spacing:.04em;text-transform:uppercase">
-      🔐 Open GST Portal Login →
-    </a>
+  <div class="ct">Step 1 — Setup Bookmarklet <span class="sbg badge-grn" style="font-size:.6rem">ONE TIME ONLY</span></div>
+  <div class="info-box success" style="margin-bottom:.9rem;font-size:.76rem">
+    <strong>🚀 No F12 needed!</strong> Drag the purple button below to your browser's bookmarks bar.<br>
+    After that, logging in and sending your token is just <strong style="color:var(--txt)">one click</strong>.
   </div>
-  <div class="info-box warn" style="margin-bottom:.8rem;font-size:.73rem">
-    <strong>Can't find AuthToken?</strong> After login, press F12 → Console tab → paste this and press Enter:<br>
-    <code style="color:var(--accent);font-size:.7rem;word-break:break-all">
-      Object.fromEntries(document.cookie.split("; ").map(c=>c.split("=")))
-    </code><br>
-    Look for <strong>AuthToken</strong> or <strong>token</strong> in the output.
+  <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.9rem">
+    <div style="font-size:.78rem;color:var(--muted);line-height:1.6">
+      <strong style="color:var(--txt)">Drag this button →</strong><br>
+      to your bookmarks bar
+    </div>
+    <a id="gst-bookmarklet-link" href="#"
+       ondragstart="event.dataTransfer.setData('text/uri-list', this.href); event.dataTransfer.setData('text/plain', this.href);"
+       style="display:inline-block;padding:.7rem 1.3rem;
+              background:linear-gradient(135deg,#7c3aed,#a78bfa);
+              border-radius:10px;color:#fff;font-weight:800;font-size:.85rem;
+              text-decoration:none;letter-spacing:.04em;white-space:nowrap;
+              box-shadow:0 4px 18px rgba(124,58,237,.4);cursor:grab"
+       onclick="return false;" title="Drag me to your bookmarks bar!">
+      🔖 GST Token Capture
+    </a>
+    <div style="font-size:.72rem;color:var(--muted);font-family:var(--mono)">
+      ↑ Drag this to bookmarks bar
+    </div>
+  </div>
+  <div style="border-top:1px solid var(--bdr);padding-top:.85rem;margin-top:.1rem">
+    <div style="font-size:.74rem;color:var(--muted);line-height:1.8">
+      <strong style="color:var(--txt)">How to use (after setup):</strong><br>
+      1. Fill in the form below &amp; click <strong style="color:var(--org)">Start Auto Download</strong><br>
+      2. A GST portal login tab opens automatically<br>
+      3. Login with your username, password &amp; CAPTCHA<br>
+      4. <strong style="color:var(--accent)">Click the 🔖 GST Token Capture bookmark</strong> — token sent automatically!<br>
+      5. Download begins on its own — no copy-paste needed
+    </div>
+  </div>
+  <div class="info-box" style="margin-top:.8rem;font-size:.72rem">
+    <strong>Token field below is optional</strong> — if you already have a token, paste it directly. Otherwise leave it blank and use the bookmarklet after login.
   </div>
 </div>
 
@@ -650,8 +664,8 @@ footer a{color:var(--accent);text-decoration:none}
       <input type="text" id="ad-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Username *</label>
       <input type="text" id="ad-username" placeholder="Your GST portal username" required></div>
-    <div class="fg"><label>Session Token * (from GST portal cookies)</label>
-      <input type="text" id="ad-token" placeholder="Paste AuthToken or token value here" required
+    <div class="fg"><label>Session Token <span style="color:var(--muted)">(optional — bookmarklet will auto-fill)</span></label>
+      <input type="text" id="ad-token" placeholder="Leave blank to use bookmarklet, or paste AuthToken here"
              style="font-size:.72rem"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="ad-fy">
@@ -683,15 +697,45 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="lb" id="ad-lb"></div>
 </div>
 
+<!-- Waiting for bookmarklet token card -->
+<div class="card" id="ad-waiting-token-card" style="display:none">
+  <div class="ct">🔖 Waiting for Token — Open GST Portal &amp; Click Bookmark</div>
+  <div class="info-box" style="margin-bottom:.8rem;font-size:.75rem;text-align:center">
+    <div style="font-size:2rem;margin-bottom:.4rem">⏳</div>
+    <strong style="color:var(--txt)">Waiting for your login token…</strong><br>
+    <span style="color:var(--muted)">Login to GST portal, then click the <strong style="color:#a78bfa">🔖 GST Token Capture</strong> bookmark</span>
+  </div>
+  <div style="text-align:center;margin-bottom:.8rem">
+    <a href="https://services.gst.gov.in/services/login" target="_blank"
+       style="display:inline-block;padding:.6rem 1.3rem;background:linear-gradient(135deg,#ff6d00,#ff9100);
+              border-radius:8px;color:#000;font-weight:800;font-size:.82rem;text-decoration:none;
+              letter-spacing:.04em;text-transform:uppercase">
+      🔐 Open GST Portal Login →
+    </a>
+  </div>
+  <div class="info-box warn" style="font-size:.72rem">
+    <strong>Don't have the bookmark?</strong> Paste token manually below:<br>
+    <div style="display:flex;gap:.5rem;margin-top:.4rem">
+      <input type="text" id="ad-manual-token-input" placeholder="Paste AuthToken here"
+             style="font-size:.7rem;flex:1">
+      <button onclick="submitAdManualToken()"
+              style="padding:.4rem .9rem;background:var(--accent);border:none;border-radius:6px;
+                     color:#000;font-weight:700;font-size:.75rem;cursor:pointer;white-space:nowrap">
+        Submit →
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Re-login card (shown if token expires mid-download) -->
 <div class="card" id="ad-relogin-card" style="display:none">
   <div class="ct">🔄 Token Expired — Re-login Required</div>
   <div class="info-box warn" style="margin-bottom:.75rem;font-size:.74rem">
     Your GST portal session expired during download.<br>
-    <strong>1.</strong> <a href="https://services.gst.gov.in/services/login" target="_blank"
-       style="color:var(--accent);font-weight:700">Login to GST Portal again →</a><br>
-    <strong>2.</strong> Press F12 → Application → Cookies → copy fresh <strong>AuthToken</strong><br>
-    <strong>3.</strong> Paste below — download will resume automatically
+    <strong>Option A (Easy):</strong> <a href="https://services.gst.gov.in/services/login" target="_blank"
+       style="color:var(--accent);font-weight:700">Login to GST Portal again →</a>
+    then click the <strong style="color:#a78bfa">🔖 GST Token Capture</strong> bookmark — token will be sent automatically<br>
+    <strong>Option B (Manual):</strong> Press F12 → Application → Cookies → copy fresh <strong>AuthToken</strong> → paste below
   </div>
   <div class="fg">
     <label>Fresh AuthToken *</label>
@@ -1059,7 +1103,7 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
   if(!gstin||gstin.length!==15){alert('Enter valid 15-char GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
   if(!username){alert('Enter username');return;}
-  if(!token){alert('Paste your GST portal session token (AuthToken from cookies)');return;}
+  // token is now optional — bookmarklet sends it automatically
   document.getElementById('ad-pw').style.display='block';
   document.getElementById('ad-dw').style.display='none';
   document.getElementById('ad-lb').innerHTML='';
@@ -1067,7 +1111,8 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
   setBadge('ad','p','Running');
   const btn=document.getElementById('ad-submit');
   btn.disabled=true;btn.textContent='Starting…';
-  addLog('ad','info','Connecting to GST portal using your session token...');
+  const msg=token?'Using your session token to connect to GST portal...':'Waiting for bookmarklet token — please login to GST portal now…';
+  addLog('ad','info',msg);
   try{
     const res=await fetch('/api/auto-download',{method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -1077,7 +1122,16 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
       btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
     if(d.error){addLog('ad','err',d.error);setBadge('ad','e','Failed');
       btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
-    _adJobId=d.job_id;btn.textContent='Running…';_adPoll(_adJobId);
+    _adJobId=d.job_id;
+    // Update bookmarklet with job ID now that we have it
+    _updateBookmarklet(_adJobId);
+    btn.textContent='Running…';
+    if(!token){
+      // Auto-open GST portal login in new tab
+      window.open('https://services.gst.gov.in/services/login','_blank');
+      addLog('ad','info','🔐 GST portal login tab opened — login then click 🔖 bookmark');
+    }
+    _adPoll(_adJobId);
   }catch(err){addLog('ad','err','Network error: '+err.message);setBadge('ad','e','Failed');
     btn.disabled=false;btn.textContent='🚀 Start Auto Download';}
 });
@@ -1089,13 +1143,30 @@ async function _adPoll(jid){
     if(d.logs)d.logs.forEach(l=>addLog('ad',l.type,l.msg));
     if(d.progress!=null)document.getElementById('ad-pb').style.width=d.progress+'%';
 
-    // Handle token expiry — show re-login card inline
-    const reloginCard = document.getElementById('ad-relogin-card');
-    if(d.captcha_needed && reloginCard){
-      reloginCard.style.display='block';
-      reloginCard.scrollIntoView({behavior:'smooth',block:'center'});
-    } else if(reloginCard){
-      reloginCard.style.display='none';
+    const waitCard   = document.getElementById('ad-waiting-token-card');
+    const reloginCard= document.getElementById('ad-relogin-card');
+
+    // Show waiting-for-token card when server is waiting for bookmarklet
+    // (captcha_needed=true AND no captcha_img means "waiting for token", not "show CAPTCHA")
+    const needingToken = d.captcha_needed && !d.captcha_img;
+    const needingRelogin = d.captcha_needed && !d.captcha_img && d.captcha_company && 
+                           d.captcha_company.name && d.captcha_company.name.includes('RE-LOGIN');
+
+    if(waitCard){
+      if(needingToken && !needingRelogin){
+        waitCard.style.display='block';
+        waitCard.scrollIntoView({behavior:'smooth',block:'center'});
+      } else {
+        waitCard.style.display='none';
+      }
+    }
+    if(reloginCard){
+      if(needingRelogin){
+        reloginCard.style.display='block';
+        reloginCard.scrollIntoView({behavior:'smooth',block:'center'});
+      } else {
+        reloginCard.style.display='none';
+      }
     }
 
     if(d.status==='done'){
@@ -1103,6 +1174,7 @@ async function _adPoll(jid){
       document.getElementById('ad-pb').style.width='100%';
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
+      if(waitCard) waitCard.style.display='none';
       if(reloginCard) reloginCard.style.display='none';
       _adShowFiles(jid,d.files);return;
     }
@@ -1110,6 +1182,7 @@ async function _adPoll(jid){
       addLog('ad','err',d.error||'Unknown error');setBadge('ad','e','Failed');
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
+      if(waitCard) waitCard.style.display='none';
       if(reloginCard) reloginCard.style.display='none';
       return;
     }
@@ -1137,6 +1210,68 @@ async function submitAdRelogin(){
   }catch(err){alert('Network error: '+err.message);}
   btn.disabled=false;btn.textContent='Submit New Token →';
 }
+
+async function submitAdManualToken(){
+  const token=document.getElementById('ad-manual-token-input').value.trim();
+  if(!token){alert('Paste AuthToken first');return;}
+  if(!_adJobId){alert('No active job. Start download first.');return;}
+  try{
+    const res=await fetch(`/api/receive-token/${_adJobId}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token})});
+    const d=await res.json();
+    if(d.ok){
+      document.getElementById('ad-waiting-token-card').style.display='none';
+      document.getElementById('ad-manual-token-input').value='';
+      addLog('ad','ok','Token submitted manually — download starting…');
+    } else {
+      alert('Error: '+(d.error||'Failed'));
+    }
+  }catch(err){alert('Network error: '+err.message);}
+}
+
+// ── Bookmarklet builder ──────────────────────────────────────────
+// Generates the bookmarklet href with current server origin + job_id
+function _buildBookmarklet(jobId){
+  const origin=window.location.origin;
+  // The bookmarklet code — runs on gst.gov.in, reads cookie, sends to our server
+  const code=`(function(){
+var t=document.cookie.split(';').map(c=>c.trim()).reduce(function(o,c){var p=c.indexOf('=');if(p>0)o[c.slice(0,p).trim()]=c.slice(p+1).trim();return o;},{});
+var tok=t['AuthToken']||t['token']||t['auth_token']||t['AUTHTOKEN']||'';
+if(!tok){alert('No AuthToken found. Make sure you are logged in to the GST Portal.');return;}
+var jid='${jobId||"JOB_ID_PENDING"}';
+var url='${origin}/api/receive-token/'+jid;
+fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok})})
+.then(function(r){return r.json();})
+.then(function(d){
+  if(d.ok){
+    var div=document.createElement('div');
+    div.style.cssText='position:fixed;top:20px;right:20px;z-index:99999;background:#00c853;color:#000;padding:14px 20px;border-radius:10px;font-family:sans-serif;font-size:14px;font-weight:bold;box-shadow:0 4px 20px rgba(0,0,0,.3)';
+    div.innerHTML='✅ Token sent! Switch back to GST Reconciliation Portal';
+    document.body.appendChild(div);
+    setTimeout(function(){div.remove();},4000);
+  } else {
+    alert('Error sending token: '+(d.error||'Unknown error'));
+  }
+}).catch(function(e){alert('Network error: '+e.message);});
+})();`;
+  return 'javascript:'+encodeURIComponent(code);
+}
+
+function _updateBookmarklet(jobId){
+  const a=document.getElementById('gst-bookmarklet-link');
+  if(a) a.href=_buildBookmarklet(jobId);
+}
+
+// Initialize bookmarklet with placeholder on page load
+(function(){
+  _updateBookmarklet('');
+  // When user focuses GSTIN or username field, update bookmarklet in case they pre-fill form
+  ['ad-gstin','ad-username','ad-name'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.addEventListener('blur',()=>_updateBookmarklet(_adJobId||''));
+  });
+})();
 function _adShowFiles(jid,files){
   const sec=document.getElementById('ad-dw'),grid=document.getElementById('ad-dlg');
   sec.style.display='block';grid.innerHTML='';
@@ -1952,7 +2087,53 @@ def captcha_submit(job_id):
     s["captcha_q"].put(text)
     return jsonify(ok=True)
 
-# ── Download file ─────────────────────────────────────────────────
+# ── Receive token from bookmarklet ───────────────────────────────
+@app.route("/api/receive-token/<job_id>", methods=["POST","OPTIONS"])
+def receive_token(job_id):
+    # CORS — bookmarklet runs on gst.gov.in, needs cross-origin POST
+    if request.method == "OPTIONS":
+        from flask import Response
+        r = Response("", 204)
+        r.headers["Access-Control-Allow-Origin"]  = "*"
+        r.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        r.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return r
+
+    data  = request.get_json(silent=True) or {}
+    token = str(data.get("token","")).strip()
+    if not token:
+        from flask import Response
+        r = Response('{"ok":false,"error":"empty token"}', 400, mimetype="application/json")
+        r.headers["Access-Control-Allow-Origin"] = "*"
+        return r
+
+    # Put token into the job's captcha_q so the background thread picks it up
+    with _sess_lock:
+        s = _sessions.get(job_id)
+    if s:
+        # Clear stale tokens first, then add new one
+        while not s["captcha_q"].empty():
+            try: s["captcha_q"].get_nowait()
+            except: pass
+        s["captcha_q"].put(token)
+        # Update job state so UI knows token arrived
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"] = False
+                jobs[job_id]["captcha_img"]    = None
+        from flask import Response
+        r = Response('{"ok":true,"msg":"Token received — download resuming!"}',
+                     200, mimetype="application/json")
+        r.headers["Access-Control-Allow-Origin"] = "*"
+        return r
+
+    # Job not found — but still return ok (bookmarklet shouldn't see errors)
+    from flask import Response
+    r = Response('{"ok":false,"error":"job not found"}', 404, mimetype="application/json")
+    r.headers["Access-Control-Allow-Origin"] = "*"
+    return r
+
+
 @app.route("/api/dl-file/<job_id>/<filename>")
 def dl_file(job_id, filename):
     filename = Path(filename).name
@@ -1980,9 +2161,8 @@ def api_auto_download():
         return jsonify(error="Company name required"), 400
     if not username:
         return jsonify(error="Username required"), 400
-    # Accept either token (new flow) or password (old flow)
-    if not token and not password:
-        return jsonify(error="Session token required — login to GST portal and copy AuthToken from cookies"), 400
+    # Accept either token (direct paste) or no token (bookmarklet will send later)
+    # password field kept for backwards compatibility
 
     job_id = str(uuid.uuid4())[:8]
     out_dir = OUTPUT_DIR / job_id
@@ -2086,11 +2266,23 @@ def _auto_download(job_id, gstin, client_name,
         log("✅ Starting download using your GST portal session...")
         prog(5)
 
-        # ── Use the token provided by the user ────────────────────
+        # ── Use the token provided by the user (or wait for bookmarklet) ─
         if not token:
-            raise RuntimeError(
-                "No session token provided. "
-                "Please login to GST portal in your browser and copy the AuthToken from cookies.")
+            log("⏳ No token provided — waiting for you to login to GST portal and click the 🔖 bookmark…", "info")
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id]["captcha_needed"]  = True
+                    jobs[job_id]["captcha_company"] = {"name": client_name, "gstin": gstin, "username": username}
+            # Wait up to 15 minutes for bookmarklet to send token
+            try:
+                token = sess["captcha_q"].get(timeout=900)
+                with jobs_lock:
+                    if job_id in jobs:
+                        jobs[job_id]["captcha_needed"] = False
+                log("✅ Token received from bookmarklet!", "ok")
+            except _queue.Empty:
+                raise RuntimeError("Timed out waiting for token. Please start again and click the bookmark after login.")
+
 
         # Set auth headers with the user's token
         S.headers["Authorization"] = f"Bearer {token}"
