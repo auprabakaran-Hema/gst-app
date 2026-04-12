@@ -52,7 +52,7 @@ _bridge_last_seen = 0       # epoch seconds of last PC poll
 _bridge_lock = threading.Lock()
 
 def _bridge_connected():
-    """Server-side — no bridge needed"""
+    """Server-side mode — always connected"""
     return True
 
 # ── Rate limiting ─────────────────────────────────────────────────
@@ -423,6 +423,12 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="dz-cn" id="cnt-r1">No files</div>
       <input type="file" multiple accept=".zip,.json" data-zone="r1" onchange="updateZone('r1',this)">
     </div>
+    <div class="dz" id="zone-r1a">
+      <div class="dz-ic">📋</div><div class="dz-lb">GSTR-1A</div>
+      <div class="dz-ht">ZIP files (amendments)</div>
+      <div class="dz-cn" id="cnt-r1a">No files</div>
+      <input type="file" multiple accept=".zip,.json" data-zone="r1a" onchange="updateZone('r1a',this)">
+    </div>
     <div class="dz" id="zone-r2b">
       <div class="dz-ic">🏦</div><div class="dz-lb">GSTR-2B</div>
       <div class="dz-ht">Excel (.xlsx)</div>
@@ -597,21 +603,45 @@ footer a{color:var(--accent);text-decoration:none}
 <div class="card">
   <div class="ct">🌐 Auto Download from GST Portal</div>
   <div class="pills">
-    <span class="pill">GSTR-1</span><span class="pill">GSTR-2B</span>
-    <span class="pill">GSTR-2A</span><span class="pill">GSTR-3B</span>
+    <span class="pill">GSTR-1</span><span class="pill">GSTR-1A</span>
+    <span class="pill">GSTR-2B</span><span class="pill">GSTR-2A</span><span class="pill">GSTR-3B</span>
   </div>
-  <p style="color:var(--muted);font-size:.78rem;line-height:1.65;margin-bottom:.5rem">
-    Enter your GST credentials below. The server opens the GST portal, fills your login,
-    then shows you the CAPTCHA image here — you type it and the rest downloads automatically.
-    <strong style="color:var(--txt)">No software to install on your PC.</strong>
-  </p>
+  <div class="info-box" style="margin-top:.7rem">
+    <strong>How it works:</strong> Login to GST portal in your browser → copy your session token → paste it here. The server uses that token to download all your returns automatically. <strong style="color:var(--txt)">No CAPTCHA issues. No software needed.</strong>
+  </div>
 </div>
 
-<!-- Step 1: Credentials form -->
-<div id="ad-step1">
+<!-- Step 1: Open GST portal + get token -->
+<div class="card" id="ad-step1">
+  <div class="ct">Step 1 — Login to GST Portal &amp; Get Token</div>
+  <p style="color:var(--muted);font-size:.78rem;line-height:1.7;margin-bottom:.9rem">
+    1. Click the button below to open the GST portal in a new tab<br>
+    2. Login with your username, password and CAPTCHA as normal<br>
+    3. After login, open browser DevTools: press <strong style="color:var(--txt)">F12</strong> → Application → Cookies → services.gst.gov.in<br>
+    4. Copy the value of the cookie named <strong style="color:var(--accent)">AuthToken</strong> (or <strong style="color:var(--accent)">token</strong>)<br>
+    5. Paste it in the Token field below
+  </p>
+  <div style="text-align:center;margin-bottom:1rem">
+    <a href="https://services.gst.gov.in/services/login" target="_blank"
+       style="display:inline-block;padding:.65rem 1.4rem;background:linear-gradient(135deg,#ff6d00,#ff9100);
+              border-radius:8px;color:#000;font-weight:800;font-size:.85rem;text-decoration:none;
+              letter-spacing:.04em;text-transform:uppercase">
+      🔐 Open GST Portal Login →
+    </a>
+  </div>
+  <div class="info-box warn" style="margin-bottom:.8rem;font-size:.73rem">
+    <strong>Can't find AuthToken?</strong> After login, press F12 → Console tab → paste this and press Enter:<br>
+    <code style="color:var(--accent);font-size:.7rem;word-break:break-all">
+      Object.fromEntries(document.cookie.split("; ").map(c=>c.split("=")))
+    </code><br>
+    Look for <strong>AuthToken</strong> or <strong>token</strong> in the output.
+  </div>
+</div>
+
+<!-- Step 2: Enter details + token -->
 <form id="ad-form">
 <div class="card">
-  <div class="ct">GST Portal Credentials</div>
+  <div class="ct">Step 2 — Enter Details &amp; Token</div>
   <div class="fg2">
     <div class="fg"><label>GSTIN *</label>
       <input type="text" id="ad-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
@@ -619,8 +649,9 @@ footer a{color:var(--accent);text-decoration:none}
       <input type="text" id="ad-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Username *</label>
       <input type="text" id="ad-username" placeholder="Your GST portal username" required></div>
-    <div class="fg"><label>Password *</label>
-      <input type="password" id="ad-password" placeholder="Your GST portal password" required></div>
+    <div class="fg"><label>Session Token * (from GST portal cookies)</label>
+      <input type="text" id="ad-token" placeholder="Paste AuthToken or token value here" required
+             style="font-size:.72rem"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="ad-fy">
         <option value="2025-26">2025-26</option>
@@ -630,10 +661,11 @@ footer a{color:var(--accent);text-decoration:none}
       </select></div>
     <div class="fg"><label>Returns to Download</label>
       <select id="ad-returns">
-        <option value="all">All Returns (GSTR-1, 2B, 2A, 3B)</option>
+        <option value="all">All Returns (GSTR-1, 1A, 2B, 2A, 3B)</option>
         <option value="gstr1">GSTR-1 Only</option>
         <option value="gstr1a">GSTR-1A Only</option>
         <option value="gstr2b">GSTR-2B Only</option>
+        <option value="gstr2a">GSTR-2A Only</option>
         <option value="gstr3b">GSTR-3B Only</option>
       </select></div>
   </div>
@@ -642,38 +674,6 @@ footer a{color:var(--accent);text-decoration:none}
   <button type="submit" class="btn-orange" id="ad-submit">🚀 Start Auto Download</button>
 </div>
 </form>
-</div><!-- /ad-step1 -->
-
-<!-- Step 2: CAPTCHA entry (hidden until server is ready) -->
-<div id="ad-step2" style="display:none">
-<div class="card">
-  <div class="ct">🔐 Type the CAPTCHA to Continue</div>
-  <p style="color:var(--muted);font-size:.8rem;margin-bottom:.9rem">
-    The GST portal login page is open on the server. Type the CAPTCHA characters shown below, then click Submit.
-  </p>
-  <div style="margin-bottom:1rem;text-align:center">
-    <img id="ad-captcha-img" src="" alt="CAPTCHA"
-         style="border:2px solid var(--accent);border-radius:8px;max-width:220px;background:#fff;padding:4px">
-    <br>
-    <button type="button" onclick="adRefreshCaptcha()"
-            style="margin-top:.5rem;background:none;border:1px solid var(--bdr);border-radius:5px;
-                   color:var(--muted);font-size:.7rem;padding:.3rem .7rem;cursor:pointer">
-      🔄 Refresh CAPTCHA
-    </button>
-  </div>
-  <div class="fg" style="max-width:260px;margin:0 auto">
-    <label>CAPTCHA Text *</label>
-    <input type="text" id="ad-captcha-input" placeholder="Type characters above"
-           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-           style="font-size:1.1rem;letter-spacing:.15em;text-align:center">
-  </div>
-  <div style="max-width:260px;margin:.75rem auto 0">
-    <button type="button" class="btn" id="ad-captcha-submit" onclick="adSubmitCaptcha()">
-      Submit CAPTCHA &amp; Login →
-    </button>
-  </div>
-</div>
-</div><!-- /ad-step2 -->
 
 <!-- Progress & logs -->
 <div class="card pw" id="ad-pw">
@@ -804,12 +804,12 @@ document.getElementById('recon-form').addEventListener('submit', async e=>{
   const fy=document.getElementById('r-fy').value.trim()||'2025-26';
   if(!gstin||gstin.length!==15){alert('Enter a valid 15-character GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
-  const hasFiles=['r1','r2b','r2a','r3b','cust','taxlib'].some(z=>(zoneFiles[z]||[]).length>0);
+  const hasFiles=['r1','r1a','r2b','r2a','r3b','cust','taxlib'].some(z=>(zoneFiles[z]||[]).length>0);
   if(!hasFiles){alert('Upload at least one return file');return;}
   const fd=new FormData();
   fd.append('gstin',gstin);fd.append('client_name',cname);
   fd.append('fy',fy);fd.append('mode','recon');
-  ['r1','r2b','r2a','r3b','cust','taxlib'].forEach(z=>
+  ['r1','r1a','r2b','r2a','r3b','cust','taxlib'].forEach(z=>
     (zoneFiles[z]||[]).forEach(f=>fd.append('files_'+z,f)));
   await startJob(fd,'r','Generate Reconciliation + GSTR-1 Detail →');
 });
@@ -912,32 +912,35 @@ function showDownloads(pfx,jid,files){
 
 // ── Auto Download ────────────────────────────────────────────────
 let _adJobId=null;
-function checkBrowserConnection(){} // server runs the browser
+function checkBrowserConnection(){}
 
 document.getElementById('ad-form').addEventListener('submit',async e=>{
   e.preventDefault();
   const gstin=document.getElementById('ad-gstin').value.trim().toUpperCase();
   const cname=document.getElementById('ad-name').value.trim();
   const username=document.getElementById('ad-username').value.trim();
-  const password=document.getElementById('ad-password').value;
+  const token=document.getElementById('ad-token').value.trim();
   const fy=document.getElementById('ad-fy').value;
   const returns=document.getElementById('ad-returns').value;
   if(!gstin||gstin.length!==15){alert('Enter valid 15-char GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
-  if(!username||!password){alert('Enter username and password');return;}
+  if(!username){alert('Enter username');return;}
+  if(!token){alert('Paste your GST portal session token (AuthToken from cookies)');return;}
   document.getElementById('ad-pw').style.display='block';
   document.getElementById('ad-dw').style.display='none';
-  document.getElementById('ad-step2').style.display='none';
   document.getElementById('ad-lb').innerHTML='';
   document.getElementById('ad-pb').style.width='0%';
+  setBadge('ad','p','Running');
   const btn=document.getElementById('ad-submit');
   btn.disabled=true;btn.textContent='Starting…';
-  addLog('ad','info','Connecting to GST portal on server...');
+  addLog('ad','info','Connecting to GST portal using your session token...');
   try{
     const res=await fetch('/api/auto-download',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({gstin,client_name:cname,username,password,fy,returns})});
-    let d;try{d=await res.json();}catch(_){addLog('ad','err','Server error — try again');setBadge('ad','e','Failed');btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
+      body:JSON.stringify({gstin,client_name:cname,username,token,fy,returns})});
+    let d;try{d=await res.json();}catch(_){
+      addLog('ad','err','Server error — try again');setBadge('ad','e','Failed');
+      btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
     if(d.error){addLog('ad','err',d.error);setBadge('ad','e','Failed');
       btn.disabled=false;btn.textContent='🚀 Start Auto Download';return;}
     _adJobId=d.job_id;btn.textContent='Running…';_adPoll(_adJobId);
@@ -945,56 +948,26 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
     btn.disabled=false;btn.textContent='🚀 Start Auto Download';}
 });
 
-let _adCapShown=false;
 async function _adPoll(jid){
   try{
     const r=await fetch('/api/job/'+jid);
     let d;try{d=await r.json();}catch(_){setTimeout(()=>_adPoll(jid),3000);return;}
     if(d.logs)d.logs.forEach(l=>addLog('ad',l.type,l.msg));
     if(d.progress!=null)document.getElementById('ad-pb').style.width=d.progress+'%';
-    if(d.captcha_needed&&!_adCapShown){_adCapShown=true;if(d.captcha_img){document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.captcha_img;document.getElementById('ad-captcha-img').style.display='block';}else{document.getElementById('ad-captcha-img').style.display='none';}document.getElementById('ad-step2').style.display='block';document.getElementById('ad-captcha-input').value='';setTimeout(()=>document.getElementById('ad-captcha-input').focus(),100);}
-    if(!d.captcha_needed)_adCapShown=false;
     if(d.status==='done'){
       setBadge('ad','d','Complete');
       document.getElementById('ad-pb').style.width='100%';
       document.getElementById('ad-submit').disabled=false;
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
-      document.getElementById('ad-step2').style.display='none';
       _adShowFiles(jid,d.files);return;
     }
     if(d.status==='error'){
       addLog('ad','err',d.error||'Unknown error');setBadge('ad','e','Failed');
       document.getElementById('ad-submit').disabled=false;
-      document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
-      document.getElementById('ad-step2').style.display='none';return;
+      document.getElementById('ad-submit').textContent='🚀 Start Auto Download';return;
     }
     setTimeout(()=>_adPoll(jid),1500);
   }catch(e){setTimeout(()=>_adPoll(jid),3000);}
-}
-async function adRefreshCaptcha(){
-  if(!_adJobId)return;
-  try{
-    const r=await fetch('/api/captcha-refresh/'+_adJobId,{method:'POST'});
-    const d=await r.json();
-    if(d.img){document.getElementById('ad-captcha-img').src='data:image/png;base64,'+d.img;
-      document.getElementById('ad-captcha-input').value='';
-      document.getElementById('ad-captcha-input').focus();}
-  }catch(e){}
-}
-async function adSubmitCaptcha(){
-  const txt=document.getElementById('ad-captcha-input').value.trim();
-  if(!txt){alert('Type the CAPTCHA first');return;}
-  const btn=document.getElementById('ad-captcha-submit');
-  btn.disabled=true;btn.textContent='Submitting…';
-  try{
-    const r=await fetch('/api/captcha-submit/'+_adJobId,{method:'POST',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({captcha:txt})});
-    const d=await r.json();
-    if(d.ok){addLog('ad','info','CAPTCHA submitted — logging in...');
-      document.getElementById('ad-step2').style.display='none';_adCapShown=false;}
-    else{addLog('ad','warn','Wrong CAPTCHA — refreshing...');await adRefreshCaptcha();}
-  }catch(e){addLog('ad','warn','Submit failed — try again');}
-  btn.disabled=false;btn.textContent='Submit & Login →';
 }
 function _adShowFiles(jid,files){
   const sec=document.getElementById('ad-dw'),grid=document.getElementById('ad-dlg');
@@ -1227,7 +1200,8 @@ def run_reconciliation(job_id):
         log(f"Starting: {client_name} ({gstin}) FY {fy}")
         prog(5)
 
-        for fpath in saved["r1"]:
+        # GSTR-1
+        for fpath in saved.get("r1", []):
             mon, yr = _detect_month(fpath, FY_MONTHS)
             if mon:
                 dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
@@ -1238,7 +1212,20 @@ def run_reconciliation(job_id):
             else:
                 log(f"  ⚠ Month not detected: {Path(fpath).name}", "warn")
 
-        for fpath in saved["r2b"]:
+        # GSTR-1A
+        for fpath in saved.get("r1a", []):
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            if mon:
+                dest = job_dir / f"GSTR1A_{mon}_{yr}.zip"
+                if not dest.exists():
+                    try: Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  GSTR-1A: {mon} {yr}"); set_dl(f"{mon}_GSTR1A", "OK")
+            else:
+                log(f"  ⚠ GSTR-1A month not detected: {Path(fpath).name}", "warn")
+
+        # GSTR-2B
+        for fpath in saved.get("r2b", []):
             mon, yr = _detect_month(fpath, FY_MONTHS)
             if mon:
                 dest = job_dir / f"GSTR2B_{mon}_{yr}.xlsx"
@@ -1247,7 +1234,8 @@ def run_reconciliation(job_id):
                     except: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-2B: {mon} {yr}"); set_dl(f"{mon}_GSTR2B", "OK")
 
-        for fpath in saved["r2a"]:
+        # GSTR-2A
+        for fpath in saved.get("r2a", []):
             mon, yr = _detect_month(fpath, FY_MONTHS)
             if mon:
                 ext = Path(fpath).suffix.lower()
@@ -1257,7 +1245,8 @@ def run_reconciliation(job_id):
                     except: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-2A: {mon} {yr}"); set_dl(f"{mon}_GSTR2A", "OK")
 
-        for fpath in saved["r3b"]:
+        # GSTR-3B
+        for fpath in saved.get("r3b", []):
             mon, yr = _detect_month(fpath, FY_MONTHS)
             if mon:
                 dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
@@ -1266,14 +1255,16 @@ def run_reconciliation(job_id):
                     except: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-3B: {mon} {yr}"); set_dl(f"{mon}_GSTR3B", "OK")
 
-        for fpath in saved["cust"]:
+        # Customer names
+        for fpath in saved.get("cust", []):
             dest = job_dir / "customer_names.xlsx"
             if not dest.exists():
                 try: Path(fpath).rename(dest)
                 except: shutil.copy2(fpath, str(dest))
             log("  Customer names loaded"); break
 
-        for fpath in saved["taxlib"]:
+        # Tax liability
+        for fpath in saved.get("taxlib", []):
             dest = job_dir / f"TAX_LIABILITY_{Path(fpath).name}"
             if not dest.exists():
                 try: Path(fpath).rename(dest)
@@ -1379,7 +1370,7 @@ def run_gstr1_only(job_id):
         log(f"GSTR-1 Detail: {client_name} FY {fy}")
         prog(5)
 
-        for fpath in saved["r1"]:
+        for fpath in saved.get("r1", []):
             mon, yr = _detect_month(fpath, FY_MONTHS)
             if mon:
                 dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
@@ -1390,13 +1381,13 @@ def run_gstr1_only(job_id):
             else:
                 log(f"  ⚠ Month not detected: {Path(fpath).name}", "warn")
 
-        for fpath in saved["r2b"] + saved["r2a"]:
+        for fpath in saved.get("r2b", []) + saved.get("r2a", []):
             dest = job_dir / Path(fpath).name
             if not dest.exists():
                 try: Path(fpath).rename(dest)
                 except: shutil.copy2(fpath, str(dest))
 
-        for fpath in saved["cust"]:
+        for fpath in saved.get("cust", []):
             dest = job_dir / "customer_names.xlsx"
             if not dest.exists():
                 try: Path(fpath).rename(dest)
@@ -1476,7 +1467,7 @@ def api_upload():
     job_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    saved = {k: [] for k in ("r1","r2b","r2a","r3b","cust","taxlib")}
+    saved = {k: [] for k in ("r1","r1a","r2b","r2a","r3b","cust","taxlib")}
     for zone in saved:
         for fobj in request.files.getlist(f"files_{zone}"):
             if not fobj.filename: continue
@@ -1686,6 +1677,7 @@ def api_auto_download():
     client_name = d.get("client_name","").strip()
     username    = d.get("username","").strip()
     password    = d.get("password","")
+    token       = d.get("token","").strip()
     fy          = d.get("fy","2025-26")
     returns     = d.get("returns","all")
 
@@ -1693,8 +1685,11 @@ def api_auto_download():
         return jsonify(error="Invalid GSTIN"), 400
     if not client_name:
         return jsonify(error="Company name required"), 400
-    if not username or not password:
-        return jsonify(error="Username and password required"), 400
+    if not username:
+        return jsonify(error="Username required"), 400
+    # Accept either token (new flow) or password (old flow)
+    if not token and not password:
+        return jsonify(error="Session token required — login to GST portal and copy AuthToken from cookies"), 400
 
     job_id = str(uuid.uuid4())[:8]
     out_dir = OUTPUT_DIR / job_id
@@ -1720,7 +1715,7 @@ def api_auto_download():
     def run_bg():
         try:
             _auto_download(job_id, gstin, client_name,
-                           username, password, fy, returns, sess)
+                           username, password, fy, returns, sess, token=token)
         except Exception as _bg_exc:
             import traceback as _tb
             _msg = str(_bg_exc)
@@ -1741,11 +1736,11 @@ def api_auto_download():
 
 
 def _auto_download(job_id, gstin, client_name,
-                    username, password, fy, returns, sess):
+                    username, password, fy, returns, sess, token=""):
     """
-    Pure HTTP requests — no browser/Playwright needed.
-    Talks directly to GST portal REST API.
-    Works on Render free tier.
+    Token-based download — user logs into GST portal in their own browser,
+    copies AuthToken from cookies, server uses it to download files.
+    No CAPTCHA, no password sent to server after initial auth.
     """
     import requests as _req, base64
 
@@ -1795,133 +1790,39 @@ def _auto_download(job_id, gstin, client_name,
     })
 
     try:
-        log("✅ Starting — connecting to GST portal...")
+        log("✅ Starting download using your GST portal session...")
         prog(5)
 
-        # ── Step 1: Load login page (gets session cookie) ─────────
-        log("Loading login page...")
-        S.get("https://services.gst.gov.in/services/login", timeout=30)
-        prog(8)
+        # ── Use the token provided by the user ────────────────────
+        if not token:
+            raise RuntimeError(
+                "No session token provided. "
+                "Please login to GST portal in your browser and copy the AuthToken from cookies.")
 
-        # ── Step 2: Fetch CAPTCHA image ───────────────────────────
-        log("Fetching CAPTCHA image from portal...")
-        cap_urls = [
-            "https://services.gst.gov.in/services/captcha",
-            "https://services.gst.gov.in/services/api/captchaImage",
-            "https://services.gst.gov.in/captcha",
-        ]
-        cap_ok = False
-        for cap_url in cap_urls:
-            try:
-                cr = S.get(cap_url, timeout=15)
-                ct = cr.headers.get("Content-Type","")
-                if cr.status_code == 200 and ("image" in ct or len(cr.content) > 200):
-                    set_captcha(base64.b64encode(cr.content).decode())
-                    log("🔐 CAPTCHA shown — type it in the box above and click Submit", "warn")
-                    cap_ok = True
-                    break
-            except Exception:
-                pass
+        # Set auth headers with the user's token
+        S.headers["Authorization"] = f"Bearer {token}"
+        S.cookies.set("AuthToken", token, domain=".gst.gov.in")
+        S.cookies.set("token", token, domain=".gst.gov.in")
 
-        if not cap_ok:
-            log("⚠ Could not auto-fetch CAPTCHA image", "warn")
-            log("Please open services.gst.gov.in and note the CAPTCHA, then type it below", "warn")
-            # Show a placeholder so the input box appears
-            set_captcha("")
+        log("✅ Session token received — verifying with GST portal...")
+        prog(10)
 
-        prog(12)
-
-        # ── Step 3: Wait for CAPTCHA from user (5 min max) ────────
-        log("Waiting for you to type the CAPTCHA...")
+        # Verify the token works by hitting the user profile endpoint
         try:
-            captcha_text = sess["captcha_q"].get(timeout=300)
-        except Exception:
-            raise RuntimeError("CAPTCHA not entered in 5 minutes — timed out")
+            vr = S.get("https://services.gst.gov.in/services/api/search/taxpayerDetails"
+                       f"?gstin={gstin}", timeout=20)
+            if vr.status_code == 401 or vr.status_code == 403:
+                raise RuntimeError(
+                    "Token rejected by GST portal (401/403). "
+                    "Please login again and copy a fresh AuthToken.")
+            log(f"✅ Token verified — portal responded OK ({vr.status_code})", "ok")
+        except RuntimeError:
+            raise
+        except Exception as ve:
+            log(f"  Token check: {ve} — continuing anyway...", "warn")
 
-        clear_captcha()
-        log("CAPTCHA received — submitting login...")
-        prog(16)
-
-        # ── Step 4: Submit login ──────────────────────────────────
-        # Try JSON API first
-        login_ok = False
-        token = ""
-
-        for attempt in range(5):
-            if attempt > 0:
-                log(f"Retrying login (attempt {attempt+1})...", "warn")
-                # Refresh captcha
-                for cap_url in cap_urls:
-                    try:
-                        cr = S.get(cap_url, timeout=15)
-                        ct = cr.headers.get("Content-Type","")
-                        if cr.status_code == 200 and ("image" in ct or len(cr.content) > 200):
-                            set_captcha(base64.b64encode(cr.content).decode())
-                            log("🔐 Wrong CAPTCHA — new one shown. Type it and click Submit", "warn")
-                            break
-                    except Exception:
-                        pass
-                try:
-                    captcha_text = sess["captcha_q"].get(timeout=300)
-                except Exception:
-                    raise RuntimeError("CAPTCHA not entered — timed out")
-                clear_captcha()
-
-            # POST login
-            try:
-                # Try both the JSON API and form-POST formats
-                r1 = S.post(
-                    "https://services.gst.gov.in/services/api/login",
-                    json={"username": username, "user_pass": password,
-                          "captcha": captcha_text, "captchaText": captcha_text},
-                    headers={"Content-Type": "application/json",
-                             "X-Requested-With": "XMLHttpRequest"},
-                    timeout=30)
-                # If JSON API fails with HTML, try form POST
-                if r1.status_code != 200 or b"<!DOCTYPE" in r1.content[:100]:
-                    r1 = S.post(
-                        "https://services.gst.gov.in/services/login",
-                        data={"username": username, "user_pass": password,
-                              "captchaText": captcha_text, "captcha": captcha_text,
-                              "submit": "Login"},
-                        headers={"Content-Type": "application/x-www-form-urlencoded"},
-                        timeout=30)
-                try:
-                    ld = r1.json()
-                    sc = str(ld.get("status_cd",""))
-                    msg = str(ld.get("message","")).lower()
-                    if sc == "1" or "success" in msg or "logged" in msg:
-                        login_ok = True
-                        token = ld.get("auth_token","")
-                        break
-                    elif "captcha" in msg or "invalid captcha" in msg:
-                        log(f"Wrong CAPTCHA — try again", "warn"); continue
-                    elif "invalid" in msg or "wrong" in msg or "incorrect" in msg:
-                        raise RuntimeError(f"Login failed: {ld.get('message','Wrong credentials')}")
-                except ValueError:
-                    # Not JSON — check URL redirect
-                    if "dashboard" in r1.url or "taxpayer" in r1.url:
-                        login_ok = True; break
-            except RuntimeError: raise
-            except Exception as ex:
-                log(f"Login attempt error: {ex}", "warn")
-
-        if not login_ok:
-            raise RuntimeError("Login failed — wrong username/password or CAPTCHA after 5 tries")
-
-        if token:
-            S.headers["Authorization"] = f"Bearer {token}"
-        log("✅ Login successful!", "ok")
         prog(25)
-
-        # ── Step 5: Get auth token from cookie if not in response ─
-        for ck_name in ["AuthToken","token","auth_token","sessionToken","access_token"]:
-            ck = S.cookies.get(ck_name)
-            if ck:
-                S.headers["Authorization"] = f"Bearer {ck}"
-                log(f"Session token obtained")
-                break
-
+        log("✅ Session active — starting downloads...", "ok")
         prog(30)
 
         # ── Step 6: Download returns ──────────────────────────────
@@ -1929,6 +1830,7 @@ def _auto_download(job_id, gstin, client_name,
             12 if returns in ["all","gstr1"]  else 0,
             12 if returns in ["all","gstr1a"] else 0,
             12 if returns in ["all","gstr2b"] else 0,
+            12 if returns in ["all","gstr2a"] else 0,
             12 if returns in ["all","gstr3b"] else 0,
         ])
         done_n = 0
@@ -1937,7 +1839,7 @@ def _auto_download(job_id, gstin, client_name,
         def dl_one(ret_type, mon_name, mon_num, mon_yr):
             nonlocal done_n
             period = f"{mon_num}{mon_yr}"
-            ext    = {"gstr1":".zip","gstr1a":".zip","gstr2b":".xlsx","gstr3b":".pdf"}.get(ret_type,".zip")
+            ext    = {"gstr1":".zip","gstr1a":".zip","gstr2b":".xlsx","gstr2a":".xlsx","gstr3b":".pdf"}.get(ret_type,".zip")
             fname  = f"{ret_type.upper()}_{mon_name}_{mon_yr}{ext}"
             fpath  = out_dir / fname
             urls_to_try = [
@@ -1968,7 +1870,7 @@ def _auto_download(job_id, gstin, client_name,
                 dl_one("gstr1",mn,mm,my)
 
         if returns in ["all","gstr1a"]:
-            log("── Downloading GSTR-1A ─────────────────────────────")
+            log("── Downloading GSTR-1A (Amendments) ───────────────")
             for mn,mm,my in MONTHS:
                 log(f"  GSTR-1A {mn} {my}...")
                 dl_one("gstr1a",mn,mm,my)
@@ -1978,6 +1880,12 @@ def _auto_download(job_id, gstin, client_name,
             for mn,mm,my in MONTHS:
                 log(f"  GSTR-2B {mn} {my}...")
                 dl_one("gstr2b",mn,mm,my)
+
+        if returns in ["all","gstr2a"]:
+            log("── Downloading GSTR-2A ─────────────────────────────")
+            for mn,mm,my in MONTHS:
+                log(f"  GSTR-2A {mn} {my}...")
+                dl_one("gstr2a",mn,mm,my)
 
         if returns in ["all","gstr3b"]:
             log("── Downloading GSTR-3B ─────────────────────────────")
