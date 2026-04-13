@@ -2516,6 +2516,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
         """
         t = {"inv":0,"b2b_tx":0.0,"b2cs_tx":0.0,"b2cl_tx":0.0,"igst":0.0,"cgst":0.0,"sgst":0.0,"val":0.0,
                  "cdn_cr":0.0,"cdn_dr":0.0,"cdn_ig":0.0,"cdn_cg":0.0,"cdn_sg":0.0,
+                 "cdn_amend_cr":0.0,"cdn_amend_dr":0.0,  # CDNRA amendments
                  "exp_tx":0.0,"exp_igst":0.0,
                  "rcm_tx":0.0,"rcm_igst":0.0,"rcm_cgst":0.0,"rcm_sgst":0.0,
                  "rate_0":0.0,"rate_3":0.0,"rate_5":0.0,"rate_12":0.0,
@@ -2686,6 +2687,35 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                 rows.append((label,"(Unregistered)","(B2CL unregistered)",
                              nt_num, nt_dt, round(val,2),"",0,
                              round(tv,2),round(ig,2),round(cg,2),round(sg,2)))
+
+            # -- CDNRA — Amended Credit/Debit Notes (GSTR-1A) ------
+            for entry in d.get("cdnra",[]):
+                ctin  = entry.get("ctin","")
+                rnm   = gstin_name_map.get(ctin,"") or entry.get("trdnm","")
+                for note in entry.get("nt",[]):
+                    ntype  = note.get("ntty","")
+                    nt_num = note.get("nt_num","")
+                    nt_dt  = note.get("nt_dt","")
+                    val    = float(note.get("val",0) or 0)
+                    ig=cg=sg=tv=0.0
+                    for it in note.get("itms",[]):
+                        x=it.get("itm_det",{})
+                        tv+=float(x.get("txval",0) or 0)
+                        ig+=float(x.get("iamt",0) or 0)
+                        cg+=float(x.get("camt",0) or 0)
+                        sg+=float(x.get("samt",0) or 0)
+                    label_a = "CDNRA-Credit" if ntype in ("C","") else "CDNRA-Debit"
+                    if ntype == "D":
+                        t["cdn_amend_dr"] += tv
+                    else:
+                        t["cdn_amend_cr"] += tv
+                    t["cdn_ig"]+=ig; t["cdn_cg"]+=cg; t["cdn_sg"]+=sg
+                    cdn_rows.append((label_a, ctin, rnm, nt_num, nt_dt,
+                                     round(val,2), "", 0,
+                                     round(tv,2), round(ig,2), round(cg,2), round(sg,2)))
+                    rows.append((label_a, ctin, rnm, nt_num, nt_dt,
+                                 round(val,2), "", 0,
+                                 round(tv,2), round(ig,2), round(cg,2), round(sg,2)))
 
             # -- SEZ Supplies (with/without tax payment) ------------------
             # JSON keys: sezwp = SEZ with payment, sezwop = SEZ without payment
@@ -3527,16 +3557,26 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
     # ====================================================
     ws2c = wb.create_sheet("GSTR1_CDNR_Debit_Note")
     ws2c.sheet_view.showGridLines = False
-    cols2c = [("Month",10),("Note Type",13),("Counterparty GSTIN",22),
+    cols2c = [("Month",10),("Note Type",14),("Counterparty GSTIN",22),
               ("Counterparty Name",26),("Note Number",16),("Note Date",13),
               ("Note Value ₹",15),("Rate %",7),
               ("Taxable Value ₹",16),("IGST ₹",12),("CGST ₹",12),("SGST ₹",12),
               ("Total Tax ₹",13)]
-    title(ws2c, f"GSTR-1 CDNR & Debit Notes — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols2c))
-    hdr(ws2c, cols2c)
-    ws2c.freeze_panes = "A3"
-    ri2c = 3
-    ann2c = {"cr_tv":0.,"dr_tv":0.,"ig":0.,"cg":0.,"sg":0.}
+    title(ws2c, f"GSTR-1 CDNR, Debit Notes & CDNRA Amendments — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols2c))
+    ws2c.merge_cells(f"A2:{get_column_letter(len(cols2c))}2")
+    sh2c_note=ws2c["A2"]
+    sh2c_note.value=("CDNR-Credit = Credit notes to registered buyers (reduces outward supply)  |  "
+                     "CDNR-Debit = Debit notes to registered buyers (increases outward supply)  |  "
+                     "CDNRA = Amended credit/debit notes via GSTR-1A  |  "
+                     "CDNUR = Notes to unregistered buyers  |  "
+                     "Overall values include credit, debit AND amendments for full picture")
+    sh2c_note.font=_font(False,"000000",8); sh2c_note.fill=_f("FFF2CC")
+    sh2c_note.alignment=_aln("left"); sh2c_note.border=_bdr()
+    ws2c.row_dimensions[2].height=14
+    hdr(ws2c, cols2c, row=3)
+    ws2c.freeze_panes = "A4"
+    ri2c = 4
+    ann2c = {"cr_tv":0.,"dr_tv":0.,"amend_cr":0.,"amend_dr":0.,"ig":0.,"cg":0.,"sg":0.}
 
     # -- Invoice-level rows ------------------------------
     for mn,_,yr in MONTHS:
@@ -3545,9 +3585,13 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
         if not cdn_data:
             continue
         # Month separator
+        cr_count  = sum(1 for r in cdn_data if "Credit" in str(r[0]) or (r[0] in ("CDN-C","CDNUR-Cr")))
+        dr_count  = sum(1 for r in cdn_data if "Debit"  in str(r[0]) or (r[0] in ("CDN-D","CDNUR-Dr")))
+        amd_count = sum(1 for r in cdn_data if "CDNRA"  in str(r[0]))
         ws2c.merge_cells(f"A{ri2c}:{get_column_letter(len(cols2c))}{ri2c}")
         sep = ws2c.cell(row=ri2c, column=1,
-                        value=f"-- {mn} {yr} --  ({len(cdn_data)} credit/debit notes)")
+                        value=(f"── {mn} {yr} ──  Credit:{cr_count}  Debit:{dr_count}  "
+                               f"Amendments(CDNRA):{amd_count}  Total:{len(cdn_data)} notes"))
         sep.font=_font(True,HDR_FG,9); sep.fill=_f(SEC_BG)
         sep.alignment=_aln("left"); sep.border=_bdr()
         ws2c.row_dimensions[ri2c].height=14; ri2c+=1
@@ -3555,7 +3599,13 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
         for row_data in cdn_data:
             inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg = row_data
             bg2c = ALT2 if ri2c%2==0 else ALT1
-            type_bg = "FFF2CC" if "Debit" in str(inv_type) or "Dr" in str(inv_type) else "E2EFDA"
+            # Colour coding: Debit=yellow, Credit=green, Amendment=blue
+            if "Debit" in str(inv_type) or "Dr" in str(inv_type):
+                type_bg = "FFF2CC"
+            elif "CDNRA" in str(inv_type):
+                type_bg = "DEEAF1"
+            else:
+                type_bg = "E2EFDA"
             for ci2c,v in enumerate([mn+" "+yr, inv_type,gstin_r,nm,inum,idt,
                                       iv,rate,tv,ig,cg,sg,round(float(ig or 0)+float(cg or 0)+float(sg or 0),2)],1):
                 cl2c = ws2c.cell(row=ri2c,column=ci2c,value=v)
@@ -3568,31 +3618,40 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             ws2c.row_dimensions[ri2c].height=14; ri2c+=1
             if "Debit" in str(inv_type) or "Dr" in str(inv_type):
                 ann2c["dr_tv"]+=float(tv or 0)
+            elif "CDNRA" in str(inv_type):
+                if "Debit" in str(inv_type):
+                    ann2c["amend_dr"]+=float(tv or 0)
+                else:
+                    ann2c["amend_cr"]+=float(tv or 0)
             else:
                 ann2c["cr_tv"]+=float(tv or 0)
             ann2c["ig"]+=float(ig or 0); ann2c["cg"]+=float(cg or 0); ann2c["sg"]+=float(sg or 0)
 
-    totrow(ws2c, ri2c, ["ANNUAL TOTAL","","","",
-                         f"Credit Notes TV: {ann2c['cr_tv']:,.2f}",
-                         f"Debit Notes TV: {ann2c['dr_tv']:,.2f}",
+    # Overall annual totals row
+    totrow(ws2c, ri2c, ["ANNUAL TOTAL (All Types)","","","",
+                         f"Credit TV: ₹{ann2c['cr_tv']:,.2f}",
+                         f"Debit TV: ₹{ann2c['dr_tv']:,.2f}",
                          "","",
-                         round(ann2c['cr_tv']+ann2c['dr_tv'],2),
+                         round(ann2c['cr_tv']+ann2c['dr_tv']+ann2c['amend_cr']+ann2c['amend_dr'],2),
                          round(ann2c['ig'],2),round(ann2c['cg'],2),round(ann2c['sg'],2),
                          round(ann2c['ig']+ann2c['cg']+ann2c['sg'],2)])
     ri2c += 2
 
-    # -- Monthly Summary table ---------------------------
+    # -- Monthly Summary table with Amendments column ----
     ws2c.merge_cells(f"A{ri2c}:{get_column_letter(len(cols2c))}{ri2c}")
-    sh2c = ws2c.cell(row=ri2c, column=1, value="MONTHLY SUMMARY — CDNR & Debit Notes")
+    sh2c = ws2c.cell(row=ri2c, column=1, value="MONTHLY SUMMARY — CDNR (Credit + Debit + Amendments) — Overall Values")
     sh2c.font=_font(True,HDR_FG,9); sh2c.fill=_f(SEC_BG)
     sh2c.alignment=_aln("left"); sh2c.border=_bdr()
     ws2c.row_dimensions[ri2c].height=16; ri2c+=1
 
-    # Summary header
-    sum_headers = [("Month",10),("Credit Notes Count",18),("Credit Note TV ₹",18),
-                   ("Debit Notes Count",18),("Debit Note TV ₹",18),
-                   ("Total IGST ₹",14),("Total CGST ₹",14),("Total SGST ₹",14),("Total Tax ₹",14)]
-    for ci2c,(h,w) in enumerate(sum_headers,1):
+    # Summary header — now includes amendments columns
+    sum_headers2 = [("Month",10),
+                    ("Credit Notes #",14),("Credit TV ₹",16),
+                    ("Debit Notes #",14),("Debit TV ₹",16),
+                    ("CDNRA Amend #",14),("Amend TV ₹",16),
+                    ("Overall IGST ₹",14),("Overall CGST ₹",14),("Overall SGST ₹",14),
+                    ("Overall Tax ₹",14),("Net CDN Impact ₹",16)]
+    for ci2c,(h,w) in enumerate(sum_headers2,1):
         c2cs = ws2c.cell(row=ri2c,column=ci2c,value=h)
         c2cs.font=_font(True,HDR_FG,9); c2cs.fill=_f(MED_BLUE)
         c2cs.alignment=_aln("center"); c2cs.border=_bdr()
@@ -3600,35 +3659,48 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
     ws2c.row_dimensions[ri2c].height=20; ri2c+=1
 
     # Summary rows
-    ann_sum = {"cr_cnt":0,"cr_tv":0.,"dr_cnt":0,"dr_tv":0.,"ig":0.,"cg":0.,"sg":0.}
+    ann_sum = {"cr_cnt":0,"cr_tv":0.,"dr_cnt":0,"dr_tv":0.,
+               "amd_cnt":0,"amd_tv":0.,"ig":0.,"cg":0.,"sg":0.}
     for mn,_,yr in MONTHS:
         mk = f"{mn}_{yr}"
         cdn_data = g1_cdn_rows.get(mk, [])
-        cr_cnt=dr_cnt=0; cr_tv=dr_tv=ig=cg=sg=0.0
+        cr_cnt=dr_cnt=amd_cnt=0
+        cr_tv=dr_tv=amd_tv=ig=cg=sg=0.0
         for row_data in cdn_data:
             inv_type,_2,_3,_4,_5,iv,_7,rate,tv,rig,rcg,rsg = row_data
-            if "Debit" in str(inv_type) or "Dr" in str(inv_type):
+            if "CDNRA" in str(inv_type):
+                amd_cnt+=1; amd_tv+=float(tv or 0)
+            elif "Debit" in str(inv_type) or "Dr" in str(inv_type):
                 dr_cnt+=1; dr_tv+=float(tv or 0)
             else:
                 cr_cnt+=1; cr_tv+=float(tv or 0)
             ig+=float(rig or 0); cg+=float(rcg or 0); sg+=float(rsg or 0)
+        # Net CDN impact = Debit TV - Credit TV + Amendment TV (net effect on turnover)
+        net_cdn = round(dr_tv - cr_tv + amd_tv, 2)
+        net_bg = GREEN_BG if net_cdn >= 0 else "FFC7CE"
         bg_sum = ALT2 if ri2c%2==0 else ALT1
-        for ci2c,v in enumerate([f"{mn} {yr}",cr_cnt,round(cr_tv,2),dr_cnt,round(dr_tv,2),
-                                  round(ig,2),round(cg,2),round(sg,2),round(ig+cg+sg,2)],1):
+        row_sum_vals=[f"{mn} {yr}",cr_cnt,round(cr_tv,2),dr_cnt,round(dr_tv,2),
+                      amd_cnt,round(amd_tv,2),
+                      round(ig,2),round(cg,2),round(sg,2),round(ig+cg+sg,2),net_cdn]
+        for ci2c,v in enumerate(row_sum_vals,1):
             c2cs=ws2c.cell(row=ri2c,column=ci2c,value=v)
-            c2cs.font=_font(False,"000000",9); c2cs.fill=_f(bg_sum)
+            c2cs.font=_font(False,"000000",9)
+            c2cs.fill=_f(net_bg if ci2c==12 else bg_sum)
             c2cs.alignment=_aln("right" if ci2c>1 else "left"); c2cs.border=_bdr()
-            if ci2c in (3,5,6,7,8,9) and isinstance(v,(int,float)): c2cs.number_format=NUM_FMT
+            if ci2c in (3,5,7,8,9,10,11,12) and isinstance(v,(int,float)): c2cs.number_format=NUM_FMT
         ws2c.row_dimensions[ri2c].height=15; ri2c+=1
         ann_sum["cr_cnt"]+=cr_cnt; ann_sum["cr_tv"]+=cr_tv
         ann_sum["dr_cnt"]+=dr_cnt; ann_sum["dr_tv"]+=dr_tv
+        ann_sum["amd_cnt"]+=amd_cnt; ann_sum["amd_tv"]+=amd_tv
         ann_sum["ig"]+=ig; ann_sum["cg"]+=cg; ann_sum["sg"]+=sg
 
+    ann_net_cdn=round(ann_sum["dr_tv"]-ann_sum["cr_tv"]+ann_sum["amd_tv"],2)
     totrow(ws2c, ri2c, ["ANNUAL TOTAL",
                          ann_sum["cr_cnt"],round(ann_sum["cr_tv"],2),
                          ann_sum["dr_cnt"],round(ann_sum["dr_tv"],2),
+                         ann_sum["amd_cnt"],round(ann_sum["amd_tv"],2),
                          round(ann_sum["ig"],2),round(ann_sum["cg"],2),round(ann_sum["sg"],2),
-                         round(ann_sum["ig"]+ann_sum["cg"]+ann_sum["sg"],2)])
+                         round(ann_sum["ig"]+ann_sum["cg"]+ann_sum["sg"],2),ann_net_cdn])
     ws2c.sheet_properties.tabColor = "FF0000"
 
     # ====================================================

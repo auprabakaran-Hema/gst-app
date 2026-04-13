@@ -304,6 +304,7 @@ select option{background:var(--surf)}
 .s-w{background:rgba(0,229,255,.15);color:var(--accent);border:1px solid rgba(0,229,255,.4)}
 .pulse{animation:pulse 1.2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 
 /* Status table */
 .dst{width:100%;border-collapse:collapse;font-size:.69rem;font-family:var(--mono);margin-top:.55rem}
@@ -385,6 +386,7 @@ footer a{color:var(--accent);text-decoration:none}
   <button class="tb" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
   <button class="tb" onclick="switchTab('autodl',event)">🌐 Auto Download</button>
   <button class="tb" onclick="switchTab('bulk',event)">📋 Bulk Download</button>
+  <button class="tb" onclick="switchTab('itrecon',event)">🏦 Income Tax</button>
 </div>
 
 <!-- ══ TAB 1: RECONCILIATION ══ -->
@@ -683,6 +685,19 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
   <div class="pb-w"><div class="pb" id="ad-pb"></div></div>
   <div class="lb" id="ad-lb"></div>
+
+  <!-- Live downloaded files tracker — shown inside progress card as files arrive -->
+  <div id="ad-live-files" style="display:none;margin-top:.85rem">
+    <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+                color:var(--grn);margin-bottom:.5rem;display:flex;align-items:center;gap:.45rem">
+      <span style="width:7px;height:7px;border-radius:50%;background:var(--grn);
+                   display:inline-block;box-shadow:0 0 6px var(--grn);animation:pulse 1.2s infinite"></span>
+      Downloaded So Far
+      <span id="ad-live-count" style="color:var(--muted);font-weight:400;font-family:var(--mono)"></span>
+    </div>
+    <div id="ad-live-grid"
+         style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:.5rem"></div>
+  </div>
 </div>
 
 <!-- CAPTCHA card (shown when server browser needs CAPTCHA input) -->
@@ -738,19 +753,30 @@ footer a{color:var(--accent);text-decoration:none}
 
 <!-- Download results -->
 <div class="card dw" id="ad-dw">
-  <div class="ct">✅ Downloaded Files</div>
-  <div class="dl-g" id="ad-dlg"></div>
-  <div style="margin-top:.9rem;display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
-    <button onclick="adTransferToRecon()"
-            style="padding:.55rem 1.2rem;background:linear-gradient(135deg,var(--accent),var(--accent2));
-                   border:none;border-radius:8px;color:#000;font-weight:800;font-size:.82rem;cursor:pointer">
-      📤 Use These Files in Reconciliation Tab →
-    </button>
-    <span style="font-size:.7rem;color:var(--muted);font-family:var(--mono)">
-      Auto-loads downloaded returns into the Reconciliation tab
-    </span>
+  <div class="ct">✅ Downloaded Files
+    <span id="ad-file-count" style="font-size:.7rem;color:var(--muted);font-family:var(--mono);margin-left:.4rem"></span>
   </div>
-  <p style="color:var(--muted);font-size:.68rem;margin-top:.55rem;font-family:var(--mono)">
+  <div class="dl-g" id="ad-dlg"></div>
+  <div style="margin-top:1rem;padding:.85rem;background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.15);border-radius:9px">
+    <div style="font-size:.75rem;font-weight:700;color:var(--accent);margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.05em">
+      📤 Send to Reconciliation Tab
+    </div>
+    <p style="font-size:.72rem;color:var(--muted);line-height:1.6;margin-bottom:.65rem">
+      Click below to automatically load all downloaded return files (GSTR-1, 2B, 2A, 3B) directly into the Reconciliation tab — no manual upload needed.
+    </p>
+    <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+      <button onclick="adTransferToRecon()" id="ad-transfer-btn"
+              style="padding:.65rem 1.4rem;background:linear-gradient(135deg,var(--grn),#00c853);
+                     border:none;border-radius:9px;color:#000;font-weight:800;font-size:.85rem;
+                     cursor:pointer;transition:transform .15s;letter-spacing:.03em"
+              onmouseover="this.style.transform='translateY(-2px)'"
+              onmouseout="this.style.transform=''">
+        📤 Load into Reconciliation Tab →
+      </button>
+      <span id="ad-transfer-status" style="font-size:.7rem;color:var(--muted);font-family:var(--mono)"></span>
+    </div>
+  </div>
+  <p style="color:var(--muted);font-size:.68rem;margin-top:.65rem;font-family:var(--mono)">
     ⏳ Files deleted after 2 hours. Download ZIP before closing.
   </p>
 </div>
@@ -891,6 +917,119 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 
 </div><!-- /tab-bulk -->
+
+<!-- ══ TAB 6: INCOME TAX RECONCILIATION ══ -->
+<div class="tp" id="tab-itrecon">
+
+<div class="info-box">
+  <strong>Income Tax Reconciliation — What this does:</strong>
+  Upload your <strong>26AS PDF</strong> (from IT Portal → e-File → Income Tax Returns → View Form 26AS)
+  and optionally your <strong>AIS PDF</strong> (IT Portal → Services → Annual Information Statement).
+  <br><br>
+  The portal generates an Excel with 9 sheets:
+  <strong>IT_Summary</strong> (key figures with TIS vs GSTR-1 comparison) |
+  <strong>TDS_26AS_Detail</strong> (all deductors with every transaction line) |
+  <strong>TIS_vs_GSTR_Annual</strong> (TIS vs GSTR-1, GSTR-1A & GSTR-3B — includes CDNR/Debit/Amendments) |
+  <strong>TIS_vs_GSTR_Monthly</strong> (12 months × 2 GSTINs, APR→MAR, with GSTR-1A & 3B) |
+  <strong>Purchase_Detail</strong> (all supplier transactions grouped by supplier with totals) |
+  <strong>AIS_vs_Turnover</strong> (full reconciliation with blank rows for manual differences) |
+  <strong>Advance_Tax_Challan</strong> (Part B3 tax paid details) |
+  <strong>AIS_vs_GSTR_Monthly</strong> (12 months × 2 GSTINs — GSTR-1, GSTR-1A, GSTR-3B Sales & Purchases) |
+  <strong>IT_Filing_Checklist</strong> (40-item ITR verification checklist with auto-detected data).
+  <br><br>
+  <strong>Files are auto-deleted after 2 hours. Nothing stored permanently.</strong>
+</div>
+
+<form id="it-form">
+<div class="card">
+  <div class="ct">Company Details</div>
+  <div class="fg2">
+    <div class="fg"><label>Company Name *</label>
+      <input type="text" id="it-name" placeholder="ABC Traders Pvt Ltd" required></div>
+    <div class="fg"><label>PAN *</label>
+      <input type="text" id="it-pan" placeholder="ABCDE1234F" maxlength="10"
+             style="text-transform:uppercase" required></div>
+    <div class="fg"><label>GSTIN (linked to PAN)</label>
+      <input type="text" id="it-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15"
+             style="text-transform:uppercase"></div>
+    <div class="fg"><label>Financial Year</label>
+      <select id="it-fy">
+        <option value="2024-25">2024-25</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="ct">Upload Files</div>
+  <div class="dg">
+    <div class="dz" id="zone-it26as">
+      <div class="dz-ic">📄</div>
+      <div class="dz-lb">Form 26AS</div>
+      <div class="dz-ht">PDF from IT Portal</div>
+      <div class="dz-cn" id="cnt-it26as">No file</div>
+      <input type="file" accept=".pdf" data-zone="it26as" onchange="updateZone('it26as',this)">
+    </div>
+    <div class="dz" id="zone-itais">
+      <div class="dz-ic">📊</div>
+      <div class="dz-lb">AIS PDF</div>
+      <div class="dz-ht">Annual Info Statement</div>
+      <div class="dz-cn" id="cnt-itais">No file (optional)</div>
+      <input type="file" accept=".pdf" data-zone="itais" onchange="updateZone('itais',this)">
+    </div>
+    <div class="dz" id="zone-itgst">
+      <div class="dz-ic">📋</div>
+      <div class="dz-lb">GST Recon Excel</div>
+      <div class="dz-ht">Output from Tab 1 (optional)</div>
+      <div class="dz-cn" id="cnt-itgst">No file (optional)</div>
+      <input type="file" accept=".xlsx,.xls" data-zone="itgst" onchange="updateZone('itgst',this)">
+    </div>
+  </div>
+  <div class="info-box" style="margin-top:.75rem;font-size:.74rem">
+    <strong>How to download 26AS:</strong>
+    IT Portal (incometax.gov.in) → Login → e-File → Income Tax Returns → View Form 26AS →
+    Select Assessment Year → Export to PDF<br>
+    <strong>How to download AIS:</strong>
+    IT Portal → Services → Annual Information Statement (AIS) → Download PDF
+  </div>
+</div>
+
+<div class="card" style="display:flex;gap:.65rem;align-items:stretch;flex-wrap:wrap">
+  <button type="submit" class="btn" id="it-submit" style="flex:1;margin-top:0">
+    Generate IT Reconciliation Excel →
+  </button>
+  <button type="button" onclick="resetIT()" id="it-reset"
+          style="flex:0 0 auto;padding:.8rem 1.4rem;background:var(--surf2);
+                 border:1px solid var(--red);border-radius:10px;color:var(--red);
+                 font-family:var(--sans);font-size:.82rem;font-weight:700;
+                 cursor:pointer;transition:all .15s;white-space:nowrap;margin-top:0"
+          title="Clear all files and reset">
+    🔄 Reset
+  </button>
+</div>
+</form>
+
+<!-- Progress -->
+<div class="card pw" id="it-pw">
+  <div class="ct">Processing <span class="sbg s-p pulse" id="it-badge">Running</span></div>
+  <div class="pb-w"><div class="pb" id="it-pb"></div></div>
+  <div class="lb" id="it-lb"></div>
+</div>
+
+<!-- Downloads -->
+<div class="card dw" id="it-dw">
+  <div class="ct">✅ IT Reconciliation Ready</div>
+  <div class="dl-g" id="it-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted automatically after 2 hours. Download before closing.
+  </p>
+</div>
+
+</div><!-- /tab-itrecon -->
+
 
 <!-- ══ FEEDBACK SECTION ══ -->
 <div class="fb-card" id="feedback-section">
@@ -1177,6 +1316,13 @@ document.getElementById('ad-form').addEventListener('submit',async e=>{
   document.getElementById('ad-fail-shots').style.display='none';
   document.getElementById('ad-fail-grid').innerHTML='';
   document.getElementById('ad-fail-count').textContent='';
+  // Reset live file tracker
+  const livePanel = document.getElementById('ad-live-files');
+  if(livePanel){ livePanel.style.display='none'; }
+  const liveGrid = document.getElementById('ad-live-grid');
+  if(liveGrid){ liveGrid.innerHTML=''; }
+  const liveCount = document.getElementById('ad-live-count');
+  if(liveCount){ liveCount.textContent=''; }
   const btn=document.getElementById('ad-submit');
   btn.disabled=true;btn.textContent='Starting…';
   addLog('ad','info','Starting browser on server — GST portal login in progress...');
@@ -1238,6 +1384,47 @@ async function _adPoll(jid){
 
     // Show files as they arrive during download (live update)
     if(d.files && d.files.length){
+      // Always keep _adLastJobId/_adLastFiles up to date so transfer works mid-run
+      _adLastJobId = jid;
+      _adLastFiles = d.files;
+
+      // ── Live tracker inside the progress card ───────────────────
+      const livePanel = document.getElementById('ad-live-files');
+      const liveGrid  = document.getElementById('ad-live-grid');
+      const liveCount = document.getElementById('ad-live-count');
+      if(livePanel && liveGrid){
+        livePanel.style.display = 'block';
+        // Only render newly added files (append, don't rebuild)
+        const rendered = liveGrid.children.length;
+        const incoming = d.files.filter(f => !f.name.startsWith('GST_Downloads')); // skip master zip
+        if(incoming.length > rendered){
+          const newFiles = incoming.slice(rendered);
+          newFiles.forEach(f => {
+            const icon = f.name.endsWith('.pdf') ? '📄' : f.name.includes('GSTR3B') ? '📄'
+                       : f.name.endsWith('.zip') || f.name.endsWith('.json') ? '🗜' : '📊';
+            const retType = f.name.split('_')[0] || '';
+            const month   = f.name.split('_')[1] || '';
+            const label   = retType + (month ? ' · ' + month : '');
+            const chip = document.createElement('div');
+            chip.style.cssText = `background:rgba(0,230,118,.07);border:1px solid rgba(0,230,118,.25);
+              border-radius:8px;padding:.45rem .65rem;display:flex;align-items:center;gap:.45rem;
+              animation:fadeIn .4s ease`;
+            chip.innerHTML = `<span style="font-size:1.1rem;line-height:1">${icon}</span>
+              <div style="min-width:0">
+                <div style="font-size:.68rem;font-weight:700;color:var(--grn);font-family:var(--mono);
+                            white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${f.name}">${label}</div>
+                <div style="font-size:.6rem;color:var(--muted);font-family:var(--mono)">${f.size||''}</div>
+              </div>
+              <a href="/api/dl-file/${jid}/${encodeURIComponent(f.name)}" download
+                 style="margin-left:auto;font-size:.65rem;color:var(--accent);text-decoration:none;
+                        white-space:nowrap;font-family:var(--mono)" title="Download ${f.name}">⬇</a>`;
+            liveGrid.appendChild(chip);
+          });
+          if(liveCount) liveCount.textContent = `(${incoming.length} file${incoming.length>1?'s':''})`;
+        }
+      }
+
+      // ── Full downloads card below (shown when done) ─────────────
       const grid = document.getElementById('ad-dlg');
       const sec  = document.getElementById('ad-dw');
       if(sec) sec.style.display = 'block';
@@ -1252,6 +1439,9 @@ async function _adPoll(jid){
             <a href="/api/dl-file/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
           grid.appendChild(c);
         });
+        // Show transfer button as soon as first files arrive
+        const transferBtn = document.querySelector('[onclick="adTransferToRecon()"]');
+        if(transferBtn) transferBtn.style.display='inline-block';
       }
     }
 
@@ -1267,6 +1457,16 @@ async function _adPoll(jid){
       document.getElementById('ad-submit').textContent='🚀 Start Auto Download';
       if(captchaCard) captchaCard.style.display='none';
       if(reloginCard) reloginCard.style.display='none';
+      // Stop pulsing dot on live tracker and update label
+      const livePanel = document.getElementById('ad-live-files');
+      if(livePanel){
+        const dot = livePanel.querySelector('span[style*="border-radius:50%"]');
+        if(dot){ dot.style.animation='none'; dot.style.background='var(--grn)'; }
+        const lbl = livePanel.querySelector('div[style*="color:var(--grn)"]');
+        if(lbl){ const t=lbl.firstChild; if(t&&t.nodeType===3) t.textContent=''; }
+        const hdr = livePanel.querySelector('div[style*="color:var(--grn)"]');
+        if(hdr) hdr.innerHTML = hdr.innerHTML.replace('Downloaded So Far','✅ Download Complete');
+      }
       // Auto-fill Download Status job ID
       const dsJid = document.getElementById('ds-jid');
       if(dsJid) dsJid.value = jid;
@@ -1352,6 +1552,10 @@ function _adShowFiles(jid, files){
   _adLastFiles = files || [];
   const sec = document.getElementById('ad-dw'), grid = document.getElementById('ad-dlg');
   sec.style.display = 'block'; grid.innerHTML = '';
+  // Update file count badge
+  const countEl = document.getElementById('ad-file-count');
+  const individual = (files||[]).filter(f=>!f.name.startsWith('GST_Downloads'));
+  if(countEl) countEl.textContent = individual.length ? `(${individual.length} return file${individual.length>1?'s':''} + ZIP)` : '';
   if(!files || !files.length){
     grid.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No files downloaded. Check logs above.</p>';
     return;
@@ -1382,33 +1586,73 @@ async function adTransferToRecon(){
   if(!_adLastJobId || !_adLastFiles.length){
     alert('No downloaded files to transfer. Run Auto Download first.'); return;
   }
-  // Switch to reconciliation tab
-  switchTab('recon', null);
-  // Show notification
-  addLog('r','ok','📥 Files from Auto Download are being fetched...');
-  document.getElementById('r-pw').style.display='block';
 
-  // Fetch each file and add to drop zones
+  // Zone mapping: return type prefix → drop zone id
   const zoneMap = {
-    'GSTR1': 'r1', 'GSTR1A': 'r1a',
-    'GSTR2B': 'r2b', 'GSTR2A': 'r2a', 'GSTR3B': 'r3b'
+    'GSTR1':  'r1',
+    'GSTR1A': 'r1a',
+    'GSTR2B': 'r2b',
+    'GSTR2A': 'r2a',
+    'GSTR3B': 'r3b',
   };
-  const fetched = {r1:[], r1a:[], r2b:[], r2a:[], r3b:[]};
 
-  for(const f of _adLastFiles){
-    if(f.name.endsWith('.zip') && f.name.startsWith('GST_Downloads')) continue; // skip master zip
-    const m = f.name.match(/^(GSTR[^_]+)_/);
-    if(!m) continue;
-    const rt = m[1].replace('-','').replace('GSTR','GSTR');
-    const zone = zoneMap[rt];
-    if(!zone) continue;
+  // Filter only individual return files (skip master ZIP)
+  const toTransfer = _adLastFiles.filter(f => {
+    if(!f.name) return false;
+    const n = f.name.toUpperCase();
+    // Skip the master ZIP bundle
+    if(n.startsWith('GST_DOWNLOADS') && n.endsWith('.ZIP')) return false;
+    // Must match a known return type prefix
+    return Object.keys(zoneMap).some(rt => n.startsWith(rt + '_'));
+  });
+
+  if(!toTransfer.length){
+    alert('No individual return files found to transfer. Only the ZIP bundle was downloaded — please download files individually first.');
+    return;
+  }
+
+  // Switch to reconciliation tab first
+  switchTab('recon', null);
+
+  // Show progress in recon log
+  document.getElementById('r-pw').style.display='block';
+  addLog('r','info',`📥 Transferring ${toTransfer.length} file(s) from Auto Download...`);
+
+  const fetched = {r1:[], r1a:[], r2b:[], r2a:[], r3b:[]};
+  let fetchOk = 0, fetchFail = 0;
+
+  for(const f of toTransfer){
+    // Determine zone from filename prefix (case-insensitive)
+    const upper = f.name.toUpperCase();
+    let zone = null;
+    for(const [rt, zn] of Object.entries(zoneMap)){
+      if(upper.startsWith(rt + '_')){ zone = zn; break; }
+    }
+    if(!zone){ addLog('r','warn',`⚠ Skipped (unknown type): ${f.name}`); continue; }
+
     try{
+      addLog('r','info',`  Fetching ${f.name}...`);
       const resp = await fetch(`/api/dl-file/${_adLastJobId}/${encodeURIComponent(f.name)}`);
-      if(!resp.ok) continue;
+      if(!resp.ok){
+        addLog('r','err',`  ✗ HTTP ${resp.status} for ${f.name}`);
+        fetchFail++;
+        continue;
+      }
       const blob = await resp.blob();
-      const file = new File([blob], f.name, {type: blob.type});
-      fetched[zone].push(file);
-    }catch(e){ console.warn('Fetch failed:', f.name, e); }
+      if(blob.size < 100){
+        addLog('r','warn',`  ⚠ ${f.name} looks empty (${blob.size} bytes) — skipping`);
+        fetchFail++;
+        continue;
+      }
+      const mimeMap = {'.pdf':'application/pdf','.zip':'application/zip','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.json':'application/json'};
+      const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase();
+      const mime = mimeMap[ext] || blob.type || 'application/octet-stream';
+      fetched[zone].push(new File([blob], f.name, {type: mime}));
+      fetchOk++;
+    }catch(err){
+      addLog('r','err',`  ✗ Fetch error for ${f.name}: ${err.message}`);
+      fetchFail++;
+    }
   }
 
   // Load into zone files and update UI
@@ -1417,25 +1661,36 @@ async function adTransferToRecon(){
     if(!files.length) continue;
     zoneFiles[zone] = (zoneFiles[zone] || []).concat(files);
     const cnt = document.getElementById('cnt-'+zone);
-    const el = document.getElementById('zone-'+zone);
-    if(cnt) cnt.textContent = zoneFiles[zone].length + ' file' + (zoneFiles[zone].length>1?'s':'') + ' selected';
+    const el  = document.getElementById('zone-'+zone);
+    if(cnt){
+      const n = zoneFiles[zone].length;
+      cnt.textContent = n + ' file' + (n>1?'s':'') + ' selected';
+    }
     if(el) el.classList.add('has-files');
     total += files.length;
   }
 
-  addLog('r','ok',`✅ ${total} file(s) transferred to Reconciliation tab — fill in GSTIN and click Generate!`);
   document.getElementById('r-pw').style.display='none';
 
-  // Auto-fill company name and GSTIN if available
-  const adName = document.getElementById('ad-name');
+  // Auto-fill company name and GSTIN from auto-download tab
+  const adName  = document.getElementById('ad-name');
   const adGstin = document.getElementById('ad-gstin');
-  if(adName && adName.value){
-    const rName = document.getElementById('r-name');
-    if(rName && !rName.value) rName.value = adName.value;
-  }
-  if(adGstin && adGstin.value){
-    const rGstin = document.getElementById('r-gstin');
-    if(rGstin && !rGstin.value) rGstin.value = adGstin.value;
+  const adFy    = document.getElementById('ad-fy');
+  if(adName  && adName.value)  { const el=document.getElementById('r-name');  if(el && !el.value) el.value=adName.value;  }
+  if(adGstin && adGstin.value) { const el=document.getElementById('r-gstin'); if(el && !el.value) el.value=adGstin.value.trim().toUpperCase(); }
+  if(adFy    && adFy.value)    { const el=document.getElementById('r-fy');    if(el) el.value=adFy.value; }
+
+  if(total > 0){
+    addLog('r','ok',`✅ ${total} file(s) loaded! ${fetchFail?fetchFail+' skipped — ':''} GSTIN & Company auto-filled. Click Generate when ready.`);
+    // Update transfer button status
+    const ts = document.getElementById('ad-transfer-status');
+    if(ts){ ts.textContent = `✅ ${total} file(s) loaded into Reconciliation tab`; ts.style.color='var(--grn)'; }
+    // Scroll to top of reconciliation tab so user sees the filled fields
+    window.scrollTo({top:0, behavior:'smooth'});
+  } else {
+    addLog('r','err','❌ No files transferred. Server may still be copying files — wait 10 seconds and try again, or download the ZIP and upload manually.');
+    const ts = document.getElementById('ad-transfer-status');
+    if(ts){ ts.textContent='❌ Transfer failed — try again in 10s'; ts.style.color='var(--red)'; }
   }
 }
 
@@ -1838,6 +2093,135 @@ function _renderFailShots(shots){
   
   console.log('[KeepAlive] Self-ping started - app will stay awake while this tab is open');
 })();
+
+// ── Income Tax Reconciliation ─────────────────────────────────────
+let _itJobId = null;
+let _itPollTimer = null;
+
+document.getElementById('it-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const name  = document.getElementById('it-name').value.trim();
+  const pan   = document.getElementById('it-pan').value.trim().toUpperCase();
+  const gstin = document.getElementById('it-gstin').value.trim().toUpperCase();
+  const fy    = document.getElementById('it-fy').value;
+
+  if(!name){ alert('Please enter company name'); return; }
+  if(!pan || pan.length !== 10){ alert('PAN must be 10 characters (e.g. ABCDE1234F)'); return; }
+
+  const zones = ['it26as','itais','itgst'];
+  const hasFile = zones.some(z => {
+    const inp = document.querySelector(`input[data-zone="${z}"]`);
+    return inp && inp.files && inp.files.length > 0;
+  });
+  if(!hasFile){ alert('Please upload at least the 26AS PDF'); return; }
+
+  const btn = document.getElementById('it-submit');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+
+  const fd = new FormData();
+  fd.append('company_name', name);
+  fd.append('pan',  pan);
+  fd.append('gstin', gstin);
+  fd.append('fy',   fy);
+
+  zones.forEach(z => {
+    const inp = document.querySelector(`input[data-zone="${z}"]`);
+    if(inp && inp.files){
+      Array.from(inp.files).forEach(f => fd.append(`files_${z}`, f));
+    }
+  });
+
+  try{
+    const res = await fetch('/api/it-upload', {method:'POST', body:fd});
+    const d   = await res.json();
+    if(d.error){ alert('Error: '+d.error); btn.disabled=false; btn.textContent='Generate IT Reconciliation Excel →'; return; }
+    _itJobId = d.job_id;
+    document.getElementById('it-pw').style.display = 'block';
+    document.getElementById('it-dw').style.display = 'none';
+    setBadge('it','p','Running');
+    btn.textContent = 'Processing…';
+    _itPoll(_itJobId);
+  }catch(err){
+    alert('Network error: '+err.message);
+    btn.disabled=false; btn.textContent='Generate IT Reconciliation Excel →';
+  }
+});
+
+async function _itPoll(jid){
+  try{
+    const res = await fetch(`/api/it-job/${jid}`);
+    const d   = await res.json();
+    if(d.error){ return; }
+
+    // Update progress bar
+    document.getElementById('it-pb').style.width = (d.progress||0)+'%';
+
+    // Stream logs
+    if(d.logs && d.logs.length){
+      const lb = document.getElementById('it-lb');
+      d.logs.forEach(l => {
+        const sp = document.createElement('span');
+        sp.className = l.type || 'info';
+        sp.textContent = l.msg + '\n';
+        lb.appendChild(sp);
+      });
+      lb.scrollTop = lb.scrollHeight;
+    }
+
+    if(d.status === 'done'){
+      setBadge('it','d','Complete');
+      document.getElementById('it-pb').style.width = '100%';
+      document.getElementById('it-submit').disabled = false;
+      document.getElementById('it-submit').textContent = 'Generate IT Reconciliation Excel →';
+      _itShowFiles(jid, d.files);
+      return;
+    }
+    if(d.status === 'error'){
+      setBadge('it','e','Failed');
+      document.getElementById('it-submit').disabled = false;
+      document.getElementById('it-submit').textContent = 'Generate IT Reconciliation Excel →';
+      return;
+    }
+    _itPollTimer = setTimeout(() => _itPoll(jid), 1500);
+  }catch(e){ _itPollTimer = setTimeout(() => _itPoll(jid), 3000); }
+}
+
+function _itShowFiles(jid, files){
+  const sec  = document.getElementById('it-dw');
+  const grid = document.getElementById('it-dlg');
+  sec.style.display = 'block';
+  grid.innerHTML = '';
+  if(!files || !files.length){
+    grid.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No files generated.</p>';
+    return;
+  }
+  files.forEach(f => {
+    const c = document.createElement('div'); c.className = 'dlc';
+    c.innerHTML = `<div style="font-size:1.4rem">🏦</div>
+      <div class="dl-n">${f.name}</div>
+      <div class="dl-s">${f.size||''}</div>
+      <a href="/api/it-dl/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
+    grid.appendChild(c);
+  });
+}
+
+function resetIT(){
+  if(_itPollTimer) clearTimeout(_itPollTimer);
+  _itJobId = null;
+  document.getElementById('it-form').reset();
+  ['it26as','itais','itgst'].forEach(z => {
+    const inp = document.querySelector(`input[data-zone="${z}"]`);
+    if(inp) inp.value = '';
+    updateZone(z, {files:[]});
+  });
+  document.getElementById('it-pw').style.display = 'none';
+  document.getElementById('it-dw').style.display = 'none';
+  document.getElementById('it-lb').innerHTML = '';
+  document.getElementById('it-pb').style.width = '0%';
+  const btn = document.getElementById('it-submit');
+  btn.disabled = false; btn.textContent = 'Generate IT Reconciliation Excel →';
+}
+
 </script>
 </body>
 </html>"""
@@ -3191,26 +3575,45 @@ def _auto_download(job_id, gstin, client_name,
             current_month[0] = month_name
             prog(15 + int(idx / total_months * 40))
 
-            # GSTR-3B: PDF direct download
+            # GSTR-3B: PDF direct download — single click, check if already exists
             if "GSTR3B" in returns_set:
                 try:
-                    log(f"\n── {month_name} {year}: GSTR-3B ──")
-                    _go_to_dashboard()
-                    _select_and_search(month_name)
                     save_name = f"GSTR3B_{month_name}_{year}.pdf"
-                    current_tile[0] = "GSTR3B"
-                    if _click_tile_download("GSTR3B"):
-                        time.sleep(11)
-                        if _rename_latest(save_name, [".pdf"]):
-                            triggered[f"{key}_GSTR3B"] = "OK"
-                            sz = (dl_dir / save_name).stat().st_size // 1024
+                    # ── SINGLE-TRIGGER GUARD: skip if already downloaded ──
+                    if (dl_dir / save_name).exists() or (out_dir / save_name).exists():
+                        log(f"── {month_name} {year}: GSTR-3B already downloaded — skipping ✓", "ok")
+                        triggered[f"{key}_GSTR3B"] = "OK"
+                        existing = out_dir / save_name
+                        if not existing.exists():
+                            import shutil as _shutil2
+                            _shutil2.copy2(str(dl_dir / save_name), str(existing))
+                        if not any(f["name"] == save_name for f in downloaded):
+                            sz = existing.stat().st_size // 1024
                             downloaded.append({"name": save_name, "size": f"{sz} KB"})
-                        else:
-                            triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
-                            save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
+                            with jobs_lock:
+                                if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
                     else:
-                        triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
-                        save_failure_screenshot(f"GSTR3B {month_name} {year} — Tile Not Found on Dashboard")
+                        log(f"\n── {month_name} {year}: GSTR-3B ──")
+                        _go_to_dashboard()
+                        _select_and_search(month_name)
+                        current_tile[0] = "GSTR3B"
+                        if _click_tile_download("GSTR3B"):
+                            time.sleep(11)
+                            if _rename_latest(save_name, [".pdf"]):
+                                triggered[f"{key}_GSTR3B"] = "OK"
+                                src_f = dl_dir / save_name
+                                sz = src_f.stat().st_size // 1024
+                                try: _shutil.copy2(str(src_f), str(out_dir / save_name))
+                                except: pass
+                                downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                                with jobs_lock:
+                                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+                            else:
+                                triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                                save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
+                        else:
+                            triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
+                            save_failure_screenshot(f"GSTR3B {month_name} {year} — Tile Not Found on Dashboard")
                 except Exception as e:
                     log(f"  GSTR3B error [{month_name}]: {e}", "warn")
                     triggered[f"{key}_GSTR3B"] = f"ERR:{e}"
@@ -3276,8 +3679,14 @@ def _auto_download(job_id, gstin, client_name,
                         time.sleep(8)
                         if _generate_and_download(save_name, GENERATE_EXCEL_XP, [".xlsx",".zip"], max_wait=90):
                             triggered[f"{key}_GSTR2B"] = "OK"
-                            sz = (dl_dir / save_name).stat().st_size // 1024
+                            src_f = dl_dir / save_name
+                            sz = src_f.stat().st_size // 1024
+                            # Copy immediately to out_dir so /api/dl-file works during live polling
+                            try: _shutil.copy2(str(src_f), str(out_dir / save_name))
+                            except: pass
                             downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                            with jobs_lock:
+                                if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
                         else:
                             triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
                             save_failure_screenshot(f"GSTR2B {month_name} {year} — Download Link Not Found")
@@ -3359,8 +3768,14 @@ def _auto_download(job_id, gstin, client_name,
                             time.sleep(8)
                             if _generate_and_download(save_name, gen_xp, dl_exts, max_wait=120):
                                 triggered[tkey] = "OK"
-                                sz = (dl_dir / save_name).stat().st_size // 1024
+                                src_f = dl_dir / save_name
+                                sz = src_f.stat().st_size // 1024
+                                # Copy immediately to out_dir so /api/dl-file works during live polling
+                                try: _shutil.copy2(str(src_f), str(out_dir / save_name))
+                                except: pass
                                 downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                                with jobs_lock:
+                                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
                             else:
                                 triggered[tkey] = "NOT_FOUND"
                                 save_failure_screenshot(f"{ret_type} {month_name} {year} — Download Link Not Found (Phase 2)")
@@ -3755,6 +4170,177 @@ def _bulk_worker(job_id, companies, fy, returns, sess, out_dir):
 
 
 # ── Startup ───────────────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════════
+# INCOME TAX RECONCILIATION — Upload + Worker + Job + Download
+# Same pattern as GST reconciliation routes above
+# ═══════════════════════════════════════════════════════════════════
+
+def run_it_reconciliation(job_id):
+    def log(msg, t="info"):
+        with jobs_lock:
+            jobs[job_id]["logs"].append({"type": t, "msg": msg})
+    def prog(p):
+        with jobs_lock:
+            jobs[job_id]["progress"] = p
+
+    try:
+        job          = jobs[job_id]
+        company_name = job["company_name"]
+        pan          = job["pan"]
+        gstin        = job["gstin"]
+        fy           = job["fy"]
+        job_dir      = Path(job["job_dir"])
+        out_dir      = Path(job["out_dir"])
+        saved        = job["saved"]
+
+        log(f"Starting IT Reconciliation: {company_name} ({pan}) FY {fy}")
+        prog(5)
+
+        # -- Move uploaded files into job_dir --------------------------
+        for zone, dest_prefix in [("it26as","26AS"), ("itais","AIS"), ("itgst","GST_RECON")]:
+            for fpath in saved.get(zone, []):
+                ext  = Path(fpath).suffix.lower()
+                dest = job_dir / f"{dest_prefix}{ext}"
+                if not dest.exists():
+                    try:    Path(fpath).rename(dest)
+                    except: shutil.copy2(fpath, str(dest))
+                log(f"  {dest_prefix}: {dest.name}")
+
+        prog(20)
+
+        # -- Load it_recon_engine.py (same as gst_suite_final.py loading) --
+        engine_path = _find_engine("it_recon_engine.py")
+        if not engine_path:
+            raise FileNotFoundError(
+                "it_recon_engine.py not found. "
+                "Place it in the same folder as app.py.")
+
+        log("Loading IT reconciliation engine...")
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("it_recon", str(engine_path))
+        it   = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(it)
+        prog(30)
+
+        log("Parsing 26AS PDF and AIS PDF...")
+        out_xl = it.write_it_reconciliation(
+            str(job_dir), company_name, pan, gstin, fy, log=None
+        )
+        prog(85)
+
+        # -- Collect outputs -------------------------------------------
+        output_files = []
+        for fp in sorted(job_dir.glob("IT_RECONCILIATION_*.xlsx")):
+            dest_fp = out_dir / fp.name
+            shutil.copy2(str(fp), str(dest_fp))
+            sz = dest_fp.stat().st_size // 1024
+            output_files.append({"name": fp.name, "size": f"{sz} KB"})
+            log(f"  ✓ {fp.name} ({sz} KB)", "ok")
+
+        if not output_files:
+            raise RuntimeError("No IT Reconciliation Excel generated. "
+                               "Check that 26AS PDF was uploaded correctly.")
+
+        prog(100)
+        log(f"Done! {len(output_files)} file(s) ready to download.", "ok")
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = output_files
+        _cleanup_uploads(job_id)
+
+    except Exception as exc:
+        import traceback
+        log(f"Error: {exc}", "err")
+        for line in traceback.format_exc().split("\n"):
+            if line.strip(): log(f"  {line}", "err")
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"]  = str(exc)
+        _cleanup_uploads(job_id)
+
+
+@app.route("/api/it-upload", methods=["POST"])
+@rate_limit(limit=20, window=60)
+def api_it_upload():
+    _cleanup_old_jobs()
+    company_name = request.form.get("company_name","").strip()
+    pan          = request.form.get("pan","").strip().upper()
+    gstin        = request.form.get("gstin","").strip().upper()
+    fy           = request.form.get("fy","2024-25").strip() or "2024-25"
+
+    if not company_name:
+        return jsonify(error="Company name is required"), 400
+    if not pan or len(pan) != 10:
+        return jsonify(error="PAN must be 10 characters (e.g. ABCDE1234F)"), 400
+
+    job_id  = str(uuid.uuid4())[:8]
+    job_dir = UPLOAD_DIR / job_id
+    out_dir = OUTPUT_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = {k: [] for k in ("it26as", "itais", "itgst")}
+    for zone in saved:
+        for fobj in request.files.getlist(f"files_{zone}"):
+            if not fobj.filename: continue
+            from werkzeug.utils import secure_filename
+            safe = secure_filename(fobj.filename) or f"upload_{zone}_{uuid.uuid4().hex[:6]}"
+            if Path(safe).suffix.lower() not in ALLOWED_EXT: continue
+            dest = job_dir / safe
+            fobj.save(str(dest))
+            saved[zone].append(str(dest))
+
+    with jobs_lock:
+        jobs[job_id] = {
+            "status":       "queued",
+            "progress":     0,
+            "logs":         [],
+            "files":        [],
+            "error":        None,
+            "company_name": company_name,
+            "pan":          pan,
+            "gstin":        gstin,
+            "fy":           fy,
+            "job_dir":      str(job_dir),
+            "out_dir":      str(out_dir),
+            "saved":        saved,
+        }
+
+    threading.Thread(target=run_it_reconciliation, args=(job_id,), daemon=True).start()
+    return jsonify(job_id=job_id)
+
+
+@app.route("/api/it-job/<job_id>")
+@rate_limit(limit=120, window=60)
+def api_it_job(job_id):
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return jsonify(error="Job not found"), 404
+        new_logs = job["logs"][:]
+        job["logs"] = []
+        return jsonify(
+            status   = job["status"],
+            progress = job["progress"],
+            logs     = new_logs,
+            files    = job["files"],
+            error    = job["error"],
+        )
+
+
+@app.route("/api/it-dl/<job_id>/<filename>")
+@rate_limit(limit=30, window=60)
+def api_it_dl(job_id, filename):
+    filename = Path(filename).name
+    if not re.match(r'^[\w\-. ()]+\.(xlsx|pdf|zip)$', filename):
+        abort(400)
+    fp = OUTPUT_DIR / job_id / filename
+    if not fp.exists() or not fp.is_file():
+        abort(404)
+    return send_file(str(fp), as_attachment=True, download_name=filename)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n  ============================================================")
