@@ -377,6 +377,20 @@ footer a{color:var(--accent);text-decoration:none}
     <span class="badge badge-purple">🔒 Your files stay private</span>
     <span class="badge badge-orange">🌐 Auto Download NEW</span>
   </div>
+  <div id="global-dl-bar" style="display:none;margin-top:.8rem;padding:.55rem 1rem;
+       background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.35);border-radius:9px;
+       align-items:center;gap:.75rem;flex-wrap:wrap;justify-content:center">
+    <span style="font-size:.74rem;font-weight:700;color:var(--grn);font-family:var(--mono)">
+      ✅ Files ready across tabs
+    </span>
+    <button onclick="globalDownloadAll()"
+            style="padding:.42rem 1.1rem;background:linear-gradient(135deg,var(--grn),#00c853);
+                   border:none;border-radius:7px;color:#000;font-family:var(--sans);font-size:.78rem;
+                   font-weight:800;cursor:pointer;letter-spacing:.04em;white-space:nowrap">
+      ⬇ Download All Files (All Tabs)
+    </button>
+    <span id="global-dl-count" style="font-size:.68rem;color:var(--muted);font-family:var(--mono)"></span>
+  </div>
 </header>
 
 <!-- TABS -->
@@ -483,7 +497,14 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="lb" id="r-lb"></div>
 </div>
 <div class="card dw" id="r-dw">
-  <div class="ct">Downloads Ready</div>
+  <div class="ct">Downloads Ready
+    <button id="r-dl-all-btn" onclick="showDownloads._dlAll && showDownloads._dlAll()"
+            style="display:none;margin-left:auto;padding:.3rem .9rem;background:linear-gradient(135deg,var(--grn),#00c853);
+                   border:none;border-radius:7px;color:#000;font-family:var(--mono);font-size:.7rem;
+                   font-weight:800;cursor:pointer;letter-spacing:.04em">
+      ⬇ Download All
+    </button>
+  </div>
   <div class="dl-g" id="r-dlg"></div>
   <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
     ⏳ Files deleted automatically after 2 hours. Download before closing.
@@ -1248,6 +1269,7 @@ async function pollJob(jid,pfx,btnLbl){
       const btn=document.getElementById(pfx+'-submit');
       btn.disabled=false;btn.textContent=btnLbl;
       showDownloads(pfx,jid,d.files);
+      _registerFilesForGlobalDl('recon_'+pfx, jid, d.files, '/api/download');
       return;
     }
     if(d.status==='error'){
@@ -1272,6 +1294,23 @@ function setBadge(pfx,type,label){
   b.className='sbg s-'+type;b.textContent=label;
   if(type!=='p') b.classList.remove('pulse');
 }
+function _autoTriggerDownload(url, filename){
+  // Silently trigger browser download without any user click
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.style.display = 'none';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => document.body.removeChild(a), 1000);
+}
+
+function _downloadAllFiles(files, jid, apiBase){
+  // Download all files one by one with small delay to avoid browser blocking
+  files.forEach((f, i) => {
+    setTimeout(() => {
+      _autoTriggerDownload(`${apiBase}/${jid}/${encodeURIComponent(f.name)}`, f.name);
+    }, i * 600);
+  });
+}
+
 function showDownloads(pfx,jid,files){
   const sec=document.getElementById(pfx+'-dw');
   const grid=document.getElementById(pfx+'-dlg');
@@ -1279,6 +1318,17 @@ function showDownloads(pfx,jid,files){
   sec.style.display='block';grid.innerHTML='';
   const ICONS={'ANNUAL':'📊','GSTR3BR1':'📋','GSTR3BR2A':'📈','GSTR1_FULL':'📑',
                'RECONCIL':'📊','SUMMARY':'📊','R1_VS':'📋','TAX_LI':'📑'};
+
+  // ── "Download All" button for this tab ──
+  if(files && files.length > 1){
+    const allBtn = document.createElement('button');
+    allBtn.className = 'btn-sec';
+    allBtn.style.cssText = 'margin-bottom:.75rem;width:auto;padding:.5rem 1.2rem;';
+    allBtn.innerHTML = `⬇ Download All (${files.length} files)`;
+    allBtn.onclick = () => _downloadAllFiles(files, jid, '/api/download');
+    grid.appendChild(allBtn);
+  }
+
   files.forEach(f=>{
     const icon=Object.entries(ICONS).find(([k])=>f.name.toUpperCase().includes(k))?.[1]||'📁';
     const c=document.createElement('div');c.className='dlc';
@@ -1286,6 +1336,14 @@ function showDownloads(pfx,jid,files){
       <div class="dl-n">${f.name}</div><div class="dl-s">${f.size}</div>
       <a href="/api/download/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>Download ↓</a>`;
     grid.appendChild(c);
+  });
+
+  // ── GSTR-2B: auto-trigger download immediately (Level 1 — one click) ──
+  const gstr2bFiles = files.filter(f => f.name.toUpperCase().includes('GSTR2B') || f.name.toUpperCase().includes('GSTR-2B'));
+  gstr2bFiles.forEach((f, i) => {
+    setTimeout(() => {
+      _autoTriggerDownload(`/api/download/${jid}/${encodeURIComponent(f.name)}`, f.name);
+    }, i * 700);
   });
 }
 
@@ -1430,6 +1488,15 @@ async function _adPoll(jid){
       if(sec) sec.style.display = 'block';
       if(grid && grid.children.length !== d.files.length){
         grid.innerHTML = '';
+        // Download All button
+        if(d.files.length > 1){
+          const allBtn = document.createElement('button');
+          allBtn.className = 'btn-sec';
+          allBtn.style.cssText = 'margin-bottom:.75rem;width:auto;padding:.5rem 1.2rem;';
+          allBtn.innerHTML = `⬇ Download All (${d.files.length} files)`;
+          allBtn.onclick = () => _downloadAllFiles(d.files, jid, '/api/dl-file');
+          grid.appendChild(allBtn);
+        }
         d.files.forEach(f => {
           const icon = f.name.endsWith('.pdf') ? '📄' : f.name.endsWith('.zip') ? '🗜' : '📊';
           const c = document.createElement('div'); c.className = 'dlc';
@@ -1471,6 +1538,7 @@ async function _adPoll(jid){
       const dsJid = document.getElementById('ds-jid');
       if(dsJid) dsJid.value = jid;
       _adShowFiles(jid, d.files);
+      _registerFilesForGlobalDl('autodl', jid, d.files, '/api/dl-file');
       // Final refresh of failure screenshots
       refreshFailShots();
       return;
@@ -1559,6 +1627,15 @@ function _adShowFiles(jid, files){
   if(!files || !files.length){
     grid.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No files downloaded. Check logs above.</p>';
     return;
+  }
+  // ── "Download All" button ──
+  if(files.length > 0){
+    const allBtn = document.createElement('button');
+    allBtn.className = 'btn-sec';
+    allBtn.style.cssText = 'margin-bottom:.75rem;width:auto;padding:.5rem 1.2rem;';
+    allBtn.innerHTML = `⬇ Download All (${files.length} file${files.length>1?'s':''})`;
+    allBtn.onclick = () => _downloadAllFiles(files, jid, '/api/dl-file');
+    grid.appendChild(allBtn);
   }
   files.forEach(f => {
     const icon = f.name.endsWith('.pdf') ? '📄' : f.name.endsWith('.zip') ? '🗜' : '📊';
@@ -1918,6 +1995,7 @@ async function _bulkPoll(jid){
       document.getElementById('bulk-submit').disabled=false;
       document.getElementById('bulk-submit').textContent='🚀 Start Bulk Download';
       _bulkShowFiles(jid, d.files);
+      _registerFilesForGlobalDl('bulk', jid, d.files, '/api/dl-file');
       return;
     }
     if(d.status==='error'){
@@ -1973,6 +2051,15 @@ function _bulkShowFiles(jid, files){
   const sec=document.getElementById('bulk-dw'), grid=document.getElementById('bulk-dlg');
   sec.style.display='block'; grid.innerHTML='';
   if(!files||!files.length){ grid.innerHTML='<p style="color:var(--muted);font-size:.8rem">No files downloaded.</p>'; return; }
+  // ── "Download All" button ──
+  if(files.length > 0){
+    const allBtn = document.createElement('button');
+    allBtn.className = 'btn-sec';
+    allBtn.style.cssText = 'margin-bottom:.75rem;width:auto;padding:.5rem 1.2rem;';
+    allBtn.innerHTML = `⬇ Download All (${files.length} file${files.length>1?'s':''})`;
+    allBtn.onclick = () => _downloadAllFiles(files, jid, '/api/dl-file');
+    grid.appendChild(allBtn);
+  }
   files.forEach(f=>{
     const c=document.createElement('div'); c.className='dlc';
     c.innerHTML=`<div style="font-size:1.4rem">📥</div>
@@ -2109,10 +2196,7 @@ document.getElementById('it-form').addEventListener('submit', async function(e){
   if(!pan || pan.length !== 10){ alert('PAN must be 10 characters (e.g. ABCDE1234F)'); return; }
 
   const zones = ['it26as','itais','itgst'];
-  const hasFile = zones.some(z => {
-    const inp = document.querySelector(`input[data-zone="${z}"]`);
-    return inp && inp.files && inp.files.length > 0;
-  });
+  const hasFile = zones.some(z => (zoneFiles[z]||[]).length > 0);
   if(!hasFile){ alert('Please upload at least the 26AS PDF'); return; }
 
   const btn = document.getElementById('it-submit');
@@ -2125,10 +2209,7 @@ document.getElementById('it-form').addEventListener('submit', async function(e){
   fd.append('fy',   fy);
 
   zones.forEach(z => {
-    const inp = document.querySelector(`input[data-zone="${z}"]`);
-    if(inp && inp.files){
-      Array.from(inp.files).forEach(f => fd.append(`files_${z}`, f));
-    }
+    (zoneFiles[z]||[]).forEach(f => fd.append(`files_${z}`, f));
   });
 
   try{
@@ -2174,6 +2255,7 @@ async function _itPoll(jid){
       document.getElementById('it-submit').disabled = false;
       document.getElementById('it-submit').textContent = 'Generate IT Reconciliation Excel →';
       _itShowFiles(jid, d.files);
+      _registerFilesForGlobalDl('itrecon', jid, d.files, '/api/it-dl');
       return;
     }
     if(d.status === 'error'){
@@ -2195,6 +2277,15 @@ function _itShowFiles(jid, files){
     grid.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No files generated.</p>';
     return;
   }
+  // ── "Download All" button ──
+  if(files.length > 0){
+    const allBtn = document.createElement('button');
+    allBtn.className = 'btn-sec';
+    allBtn.style.cssText = 'margin-bottom:.75rem;width:auto;padding:.5rem 1.2rem;';
+    allBtn.innerHTML = `⬇ Download All (${files.length} file${files.length>1?'s':''})`;
+    allBtn.onclick = () => _downloadAllFiles(files, jid, '/api/it-dl');
+    grid.appendChild(allBtn);
+  }
   files.forEach(f => {
     const c = document.createElement('div'); c.className = 'dlc';
     c.innerHTML = `<div style="font-size:1.4rem">🏦</div>
@@ -2203,6 +2294,12 @@ function _itShowFiles(jid, files){
       <a href="/api/it-dl/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
     grid.appendChild(c);
   });
+  // Auto-trigger all IT reconciliation downloads immediately
+  files.forEach((f, i) => {
+    setTimeout(() => {
+      _autoTriggerDownload(`/api/it-dl/${jid}/${encodeURIComponent(f.name)}`, f.name);
+    }, i * 700);
+  });
 }
 
 function resetIT(){
@@ -2210,9 +2307,11 @@ function resetIT(){
   _itJobId = null;
   document.getElementById('it-form').reset();
   ['it26as','itais','itgst'].forEach(z => {
-    const inp = document.querySelector(`input[data-zone="${z}"]`);
-    if(inp) inp.value = '';
-    updateZone(z, {files:[]});
+    zoneFiles[z] = [];
+    const el = document.getElementById('zone-'+z);
+    if(el){ el.classList.remove('has-files'); const inp=el.querySelector('input[type=file]'); if(inp) inp.value=''; }
+    const cnt = document.getElementById('cnt-'+z);
+    if(cnt) cnt.textContent = z==='it26as'?'No file':'No file (optional)';
   });
   document.getElementById('it-pw').style.display = 'none';
   document.getElementById('it-dw').style.display = 'none';
@@ -2221,6 +2320,43 @@ function resetIT(){
   const btn = document.getElementById('it-submit');
   btn.disabled = false; btn.textContent = 'Generate IT Reconciliation Excel →';
 }
+
+// ── Global Download Registry ──────────────────────────────────────
+// Each tab registers its ready files here so global "Download All" works
+const _globalDlRegistry = {};
+
+function _registerFilesForGlobalDl(tabKey, jid, files, apiBase){
+  if(!files || !files.length) return;
+  _globalDlRegistry[tabKey] = {jid, files, apiBase};
+  // Show global download bar
+  const bar = document.getElementById('global-dl-bar');
+  if(bar){ bar.style.display='flex'; }
+  _updateGlobalDlCount();
+}
+
+function _updateGlobalDlCount(){
+  let total = 0;
+  Object.values(_globalDlRegistry).forEach(r => total += (r.files||[]).length);
+  const el = document.getElementById('global-dl-count');
+  if(el) el.textContent = `${total} file${total!==1?'s':''} across ${Object.keys(_globalDlRegistry).length} tab${Object.keys(_globalDlRegistry).length!==1?'s':''}`;
+}
+
+function globalDownloadAll(){
+  let delay = 0;
+  Object.values(_globalDlRegistry).forEach(r => {
+    (r.files||[]).forEach(f => {
+      const url = `${r.apiBase}/${r.jid}/${encodeURIComponent(f.name)}`;
+      setTimeout(() => _autoTriggerDownload(url, f.name), delay);
+      delay += 650;
+    });
+  });
+}
+
+// Patch showDownloads, _itShowFiles, _adShowFiles, _bulkShowFiles
+// to also register in global registry
+const _origShowDownloads = showDownloads;
+// We'll wrap registration inside each show function call via pollJob / _itPoll / _adPoll
+
 
 </script>
 </body>
@@ -2352,7 +2488,11 @@ def run_reconciliation(job_id):
 
         prog(30)
         log("Running annual reconciliation (1-2 minutes)...")
-        gst.write_annual_reconciliation(str(job_dir), client_name, gstin, _log)
+        # Try with_formulas=True first; fall back gracefully
+        try:
+            gst.write_annual_reconciliation(str(job_dir), client_name, gstin, _log, with_formulas=True)
+        except TypeError:
+            gst.write_annual_reconciliation(str(job_dir), client_name, gstin, _log)
         prog(65)
         log("  ✓ Annual reconciliation complete", "ok")
 
@@ -2366,7 +2506,10 @@ def run_reconciliation(job_id):
                 gstr1 = _ilu.module_from_spec(spec2)
                 spec2.loader.exec_module(gstr1)
                 out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
-                gstr1.extract_gstr1_to_excel(str(job_dir), str(out_xl))
+                try:
+                    gstr1.extract_gstr1_to_excel(str(job_dir), str(out_xl), with_formulas=True)
+                except TypeError:
+                    gstr1.extract_gstr1_to_excel(str(job_dir), str(out_xl))
                 log(f"  ✓ GSTR-1 detail: {out_xl.name}", "ok")
             except Exception as ex:
                 log(f"  ⚠ GSTR-1 extraction error: {ex}", "warn")
@@ -4224,19 +4367,31 @@ def run_it_reconciliation(job_id):
         prog(30)
 
         log("Parsing 26AS PDF and AIS PDF...")
-        out_xl = it.write_it_reconciliation(
-            str(job_dir), company_name, pan, gstin, fy, log=None
-        )
+        # Try with with_formulas flag first; fall back if engine doesn't support it
+        try:
+            out_xl = it.write_it_reconciliation(
+                str(job_dir), company_name, pan, gstin, fy, log=None, with_formulas=True
+            )
+        except TypeError:
+            out_xl = it.write_it_reconciliation(
+                str(job_dir), company_name, pan, gstin, fy, log=None
+            )
         prog(85)
 
-        # -- Collect outputs -------------------------------------------
+        # -- Collect outputs (search both job_dir and out_dir) --------
         output_files = []
-        for fp in sorted(job_dir.glob("IT_RECONCILIATION_*.xlsx")):
-            dest_fp = out_dir / fp.name
-            shutil.copy2(str(fp), str(dest_fp))
-            sz = dest_fp.stat().st_size // 1024
-            output_files.append({"name": fp.name, "size": f"{sz} KB"})
-            log(f"  ✓ {fp.name} ({sz} KB)", "ok")
+        seen = set()
+        for search_dir in [job_dir, out_dir]:
+            for fp in sorted(search_dir.glob("IT_RECONCILIATION_*.xlsx")):
+                if fp.name in seen:
+                    continue
+                seen.add(fp.name)
+                dest_fp = out_dir / fp.name
+                if fp.parent != out_dir:
+                    shutil.copy2(str(fp), str(dest_fp))
+                sz = dest_fp.stat().st_size // 1024
+                output_files.append({"name": fp.name, "size": f"{sz} KB"})
+                log(f"  ✓ {fp.name} ({sz} KB)", "ok")
 
         if not output_files:
             raise RuntimeError("No IT Reconciliation Excel generated. "
