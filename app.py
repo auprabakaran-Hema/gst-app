@@ -425,7 +425,15 @@ footer a{color:var(--accent);text-decoration:none}
     <div class="fg"><label>Company Name *</label>
       <input type="text" id="r-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
-      <input type="text" id="r-fy" value="2025-26"></div>
+      <select id="r-fy">
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+        <option value="2020-21">2020-21</option>
+      </select></div>
     <div class="fg"><label>State (optional)</label>
       <input type="text" id="r-state" placeholder="Tamil Nadu"></div>
   </div>
@@ -538,7 +546,15 @@ footer a{color:var(--accent);text-decoration:none}
     <div class="fg"><label>Company Name *</label>
       <input type="text" id="g1-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
-      <input type="text" id="g1-fy" value="2025-26"></div>
+      <select id="g1-fy">
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+        <option value="2020-21">2020-21</option>
+      </select></div>
   </div>
 </div>
 <div class="card">
@@ -574,8 +590,18 @@ footer a{color:var(--accent);text-decoration:none}
   <div class="lb" id="g1-lb"></div>
 </div>
 <div class="card dw" id="g1-dw">
-  <div class="ct">GSTR-1 Detail Ready</div>
+  <div class="ct">GSTR-1 Detail Ready
+    <button id="g1-dl-all-btn" onclick="if(window._g1DlAll)window._g1DlAll()"
+            style="display:none;margin-left:auto;padding:.3rem .9rem;background:linear-gradient(135deg,var(--grn),#00c853);
+                   border:none;border-radius:7px;color:#000;font-family:var(--mono);font-size:.7rem;
+                   font-weight:800;cursor:pointer;letter-spacing:.04em">
+      ⬇ Download All
+    </button>
+  </div>
   <div class="dl-g" id="g1-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted automatically after 2 hours. Download before closing.
+  </p>
 </div>
 </div><!-- /tab-gstr1 -->
 
@@ -673,10 +699,13 @@ footer a{color:var(--accent);text-decoration:none}
       <input type="password" id="ad-password" placeholder="Your GST portal password" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="ad-fy">
-        <option value="2025-26">2025-26</option>
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+        <option value="2020-21">2020-21</option>
       </select></div>
     <div class="fg"><label>Returns to Download</label>
       <select id="ad-returns">
@@ -865,10 +894,13 @@ footer a{color:var(--accent);text-decoration:none}
     <div class="fg">
       <label>Financial Year</label>
       <select id="bulk-fy">
-        <option value="2025-26">2025-26</option>
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+        <option value="2020-21">2020-21</option>
       </select>
     </div>
     <div class="fg">
@@ -944,20 +976,22 @@ footer a{color:var(--accent);text-decoration:none}
 
 <div class="info-box">
   <strong>Income Tax Reconciliation — What this does:</strong>
-  Upload your <strong>26AS PDF</strong> (from IT Portal → e-File → Income Tax Returns → View Form 26AS)
-  and optionally your <strong>AIS PDF</strong> (IT Portal → Services → Annual Information Statement).
+  Upload your <strong>26AS PDF</strong>, optionally the <strong>AIS PDF</strong> and <strong>TIS PDF</strong>
+  (all from IT Portal), and optionally the <strong>GST Recon Excel</strong> from Tab 1 for auto-matched turnover.
   <br><br>
   The portal generates an Excel with 9 sheets:
-  <strong>IT_Summary</strong> (key figures with TIS vs GSTR-1 comparison) |
-  <strong>TDS_26AS_Detail</strong> (all deductors with every transaction line) |
-  <strong>TIS_vs_GSTR_Annual</strong> (TIS vs GSTR-1, GSTR-1A & GSTR-3B — includes CDNR/Debit/Amendments) |
-  <strong>TIS_vs_GSTR_Monthly</strong> (12 months × 2 GSTINs, APR→MAR, with GSTR-1A & 3B) |
-  <strong>Purchase_Detail</strong> (all supplier transactions grouped by supplier with totals) |
-  <strong>AIS_vs_Turnover</strong> (full reconciliation with blank rows for manual differences) |
-  <strong>Advance_Tax_Challan</strong> (Part B3 tax paid details) |
-  <strong>AIS_vs_GSTR_Monthly</strong> (12 months × 2 GSTINs — GSTR-1, GSTR-1A, GSTR-3B Sales & Purchases) |
+  <strong>IT_Summary</strong> (key figures — TIS vs GSTR-1 turnover, TDS summary, advance tax) |
+  <strong>TDS_26AS_Detail</strong> (all deductors Part A/A1/A2/B/C with every transaction line) |
+  <strong>TIS_vs_GSTR_Annual</strong> (TIS categories vs GSTR-1, GSTR-1A & GSTR-3B annual totals) |
+  <strong>TIS_vs_GSTR_Monthly</strong> (12 months × GSTIN, APR→MAR, with GSTR-1A & 3B) |
+  <strong>Purchase_Detail</strong> (supplier-wise purchase from AIS/TIS with totals) |
+  <strong>AIS_vs_Turnover</strong> (full reconciliation with blank rows for manual adjustments) |
+  <strong>Advance_Tax_Challan</strong> (Part C challans + quarter-wise summary) |
+  <strong>AIS_vs_GSTR_Monthly</strong> (12 months — GSTR-1, GSTR-1A, GSTR-3B Sales & Purchases) |
   <strong>IT_Filing_Checklist</strong> (40-item ITR verification checklist with auto-detected data).
   <br><br>
+  💡 <strong>For best results upload all three PDFs</strong> — 26AS (TDS details) + AIS (purchase/income breakdown) + TIS (confirmed turnover figures used by IT dept). TIS data is the most important for ITR reconciliation.
+  <br>
   <strong>Files are auto-deleted after 2 hours. Nothing stored permanently.</strong>
 </div>
 
@@ -975,10 +1009,34 @@ footer a{color:var(--accent);text-decoration:none}
              style="text-transform:uppercase"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="it-fy">
-        <option value="2024-25">2024-25</option>
+        <option value="2026-27">2026-27</option>
         <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+        <option value="2020-21">2020-21</option>
+      </select>
+    </div>
+    <div class="fg"><label>ITR Form Type</label>
+      <select id="it-itr-form">
+        <option value="ITR-3">ITR-3 (Business/Profession with GST)</option>
+        <option value="ITR-6">ITR-6 (Companies other than Sec 11)</option>
+        <option value="ITR-5">ITR-5 (Firms / LLP / AOP / BOI)</option>
+        <option value="ITR-4">ITR-4 (Sugam — Presumptive Income)</option>
+        <option value="ITR-1">ITR-1 (Sahaj — Salary + Small Business)</option>
+        <option value="ITR-2">ITR-2 (Capital Gains, no business)</option>
+        <option value="ITR-7">ITR-7 (Trusts / Section 11)</option>
+      </select>
+    </div>
+    <div class="fg"><label>Entity Type</label>
+      <select id="it-entity">
+        <option value="company">Private Limited Company</option>
+        <option value="llp">LLP / Partnership Firm</option>
+        <option value="proprietorship">Proprietorship</option>
+        <option value="huf">HUF</option>
+        <option value="trust">Trust / Society</option>
+        <option value="individual">Individual</option>
       </select>
     </div>
   </div>
@@ -1001,6 +1059,13 @@ footer a{color:var(--accent);text-decoration:none}
       <div class="dz-cn" id="cnt-itais">No file (optional)</div>
       <input type="file" accept=".pdf" data-zone="itais" onchange="updateZone('itais',this)">
     </div>
+    <div class="dz" id="zone-ittis">
+      <div class="dz-ic">📑</div>
+      <div class="dz-lb">TIS PDF</div>
+      <div class="dz-ht">Taxpayer Info Summary</div>
+      <div class="dz-cn" id="cnt-ittis">No file (optional)</div>
+      <input type="file" accept=".pdf" data-zone="ittis" onchange="updateZone('ittis',this)">
+    </div>
     <div class="dz" id="zone-itgst">
       <div class="dz-ic">📋</div>
       <div class="dz-lb">GST Recon Excel</div>
@@ -1014,7 +1079,9 @@ footer a{color:var(--accent);text-decoration:none}
     IT Portal (incometax.gov.in) → Login → e-File → Income Tax Returns → View Form 26AS →
     Select Assessment Year → Export to PDF<br>
     <strong>How to download AIS:</strong>
-    IT Portal → Services → Annual Information Statement (AIS) → Download PDF
+    IT Portal → Services → Annual Information Statement (AIS) → Download PDF<br>
+    <strong>How to download TIS:</strong>
+    IT Portal → Services → Annual Information Statement (AIS) → Switch to TIS tab → Download PDF
   </div>
 </div>
 
@@ -1269,7 +1336,6 @@ async function pollJob(jid,pfx,btnLbl){
       const btn=document.getElementById(pfx+'-submit');
       btn.disabled=false;btn.textContent=btnLbl;
       showDownloads(pfx,jid,d.files);
-      _registerFilesForGlobalDl('recon_'+pfx, jid, d.files, '/api/download');
       return;
     }
     if(d.status==='error'){
@@ -1327,6 +1393,18 @@ function showDownloads(pfx,jid,files){
     allBtn.innerHTML = `⬇ Download All (${files.length} files)`;
     allBtn.onclick = () => _downloadAllFiles(files, jid, '/api/download');
     grid.appendChild(allBtn);
+    // Wire the header Download All button for recon tab
+    const hdrBtn = document.getElementById('r-dl-all-btn');
+    if(hdrBtn && pfx==='r'){
+      hdrBtn.style.display='inline-block';
+      showDownloads._dlAll = () => _downloadAllFiles(files, jid, '/api/download');
+    }
+    // Wire g1 Download All button
+    const g1HdrBtn = document.getElementById('g1-dl-all-btn');
+    if(g1HdrBtn && pfx==='g1'){
+      g1HdrBtn.style.display='inline-block';
+      window._g1DlAll = () => _downloadAllFiles(files, jid, '/api/download');
+    }
   }
 
   files.forEach(f=>{
@@ -1338,13 +1416,16 @@ function showDownloads(pfx,jid,files){
     grid.appendChild(c);
   });
 
-  // ── GSTR-2B: auto-trigger download immediately (Level 1 — one click) ──
+  // ── GSTR-2B: auto-trigger download immediately (Level 1 — no Phase 2 needed) ──
   const gstr2bFiles = files.filter(f => f.name.toUpperCase().includes('GSTR2B') || f.name.toUpperCase().includes('GSTR-2B'));
   gstr2bFiles.forEach((f, i) => {
     setTimeout(() => {
       _autoTriggerDownload(`/api/download/${jid}/${encodeURIComponent(f.name)}`, f.name);
     }, i * 700);
   });
+
+  // Register in global download registry
+  _registerFilesForGlobalDl(pfx, jid, files, '/api/download');
 }
 
 // ── Auto Download ────────────────────────────────────────────────
@@ -2187,15 +2268,17 @@ let _itPollTimer = null;
 
 document.getElementById('it-form').addEventListener('submit', async function(e){
   e.preventDefault();
-  const name  = document.getElementById('it-name').value.trim();
-  const pan   = document.getElementById('it-pan').value.trim().toUpperCase();
-  const gstin = document.getElementById('it-gstin').value.trim().toUpperCase();
-  const fy    = document.getElementById('it-fy').value;
+  const name      = document.getElementById('it-name').value.trim();
+  const pan       = document.getElementById('it-pan').value.trim().toUpperCase();
+  const gstin     = document.getElementById('it-gstin').value.trim().toUpperCase();
+  const fy        = document.getElementById('it-fy').value;
+  const itrForm   = document.getElementById('it-itr-form').value;
+  const entityType= document.getElementById('it-entity').value;
 
   if(!name){ alert('Please enter company name'); return; }
   if(!pan || pan.length !== 10){ alert('PAN must be 10 characters (e.g. ABCDE1234F)'); return; }
 
-  const zones = ['it26as','itais','itgst'];
+  const zones = ['it26as','itais','ittis','itgst'];
   const hasFile = zones.some(z => (zoneFiles[z]||[]).length > 0);
   if(!hasFile){ alert('Please upload at least the 26AS PDF'); return; }
 
@@ -2207,6 +2290,8 @@ document.getElementById('it-form').addEventListener('submit', async function(e){
   fd.append('pan',  pan);
   fd.append('gstin', gstin);
   fd.append('fy',   fy);
+  fd.append('itr_form', itrForm);
+  fd.append('entity_type', entityType);
 
   zones.forEach(z => {
     (zoneFiles[z]||[]).forEach(f => fd.append(`files_${z}`, f));
@@ -2255,7 +2340,6 @@ async function _itPoll(jid){
       document.getElementById('it-submit').disabled = false;
       document.getElementById('it-submit').textContent = 'Generate IT Reconciliation Excel →';
       _itShowFiles(jid, d.files);
-      _registerFilesForGlobalDl('itrecon', jid, d.files, '/api/it-dl');
       return;
     }
     if(d.status === 'error'){
@@ -2300,13 +2384,15 @@ function _itShowFiles(jid, files){
       _autoTriggerDownload(`/api/it-dl/${jid}/${encodeURIComponent(f.name)}`, f.name);
     }, i * 700);
   });
+  // Register in global download registry so global "Download All" picks it up
+  _registerFilesForGlobalDl('itrecon', jid, files, '/api/it-dl');
 }
 
 function resetIT(){
   if(_itPollTimer) clearTimeout(_itPollTimer);
   _itJobId = null;
   document.getElementById('it-form').reset();
-  ['it26as','itais','itgst'].forEach(z => {
+  ['it26as','itais','ittis','itgst'].forEach(z => {
     zoneFiles[z] = [];
     const el = document.getElementById('zone-'+z);
     if(el){ el.classList.remove('has-files'); const inp=el.querySelector('input[type=file]'); if(inp) inp.value=''; }
@@ -4333,26 +4419,37 @@ def run_it_reconciliation(job_id):
         pan          = job["pan"]
         gstin        = job["gstin"]
         fy           = job["fy"]
+        itr_form     = job.get("itr_form", "ITR-3")
+        entity_type  = job.get("entity_type", "company")
         job_dir      = Path(job["job_dir"])
         out_dir      = Path(job["out_dir"])
         saved        = job["saved"]
 
-        log(f"Starting IT Reconciliation: {company_name} ({pan}) FY {fy}")
+        log(f"Starting IT Reconciliation: {company_name} ({pan}) FY {fy} | {itr_form} | {entity_type}")
         prog(5)
 
-        # -- Move uploaded files into job_dir --------------------------
-        for zone, dest_prefix in [("it26as","26AS"), ("itais","AIS"), ("itgst","GST_RECON")]:
+        # -- Move uploaded files into job_dir with engine-recognisable names --
+        pdf_found = {}
+        for zone, dest_prefix in [("it26as","26AS"), ("itais","AIS"), ("ittis","TIS"), ("itgst","GST_RECON")]:
             for fpath in saved.get(zone, []):
                 ext  = Path(fpath).suffix.lower()
                 dest = job_dir / f"{dest_prefix}{ext}"
                 if not dest.exists():
                     try:    Path(fpath).rename(dest)
                     except: shutil.copy2(fpath, str(dest))
-                log(f"  {dest_prefix}: {dest.name}")
+                log(f"  ✓ {dest_prefix}: {dest.name}")
+                pdf_found[zone] = dest.name
+
+        if "it26as" not in pdf_found:
+            log("  ⚠ 26AS PDF not uploaded — results will be limited", "warn")
+        if "ittis" not in pdf_found:
+            log("  ℹ TIS PDF not uploaded — AIS data will be used for turnover figures", "info")
+        if "itais" not in pdf_found:
+            log("  ℹ AIS PDF not uploaded — purchase/income breakdown will be limited", "info")
 
         prog(20)
 
-        # -- Load it_recon_engine.py (same as gst_suite_final.py loading) --
+        # -- Load it_recon_engine.py --
         engine_path = _find_engine("it_recon_engine.py")
         if not engine_path:
             raise FileNotFoundError(
@@ -4366,16 +4463,17 @@ def run_it_reconciliation(job_id):
         spec.loader.exec_module(it)
         prog(30)
 
-        log("Parsing 26AS PDF and AIS PDF...")
-        # Try with with_formulas flag first; fall back if engine doesn't support it
+        log(f"Parsing PDFs and generating IT Reconciliation for {itr_form}...")
+        # Try with all kwargs; fall back gracefully if engine doesn't support them
+        call_kwargs = {"log": log, "itr_form": itr_form, "entity_type": entity_type}
         try:
-            out_xl = it.write_it_reconciliation(
-                str(job_dir), company_name, pan, gstin, fy, log=None, with_formulas=True
-            )
+            out_xl = it.write_it_reconciliation(str(job_dir), company_name, pan, gstin, fy, **call_kwargs)
         except TypeError:
-            out_xl = it.write_it_reconciliation(
-                str(job_dir), company_name, pan, gstin, fy, log=None
-            )
+            # Engine may not support itr_form/entity_type yet — try without them
+            try:
+                out_xl = it.write_it_reconciliation(str(job_dir), company_name, pan, gstin, fy, log=log)
+            except TypeError:
+                out_xl = it.write_it_reconciliation(str(job_dir), company_name, pan, gstin, fy)
         prog(85)
 
         # -- Collect outputs (search both job_dir and out_dir) --------
@@ -4422,7 +4520,9 @@ def api_it_upload():
     company_name = request.form.get("company_name","").strip()
     pan          = request.form.get("pan","").strip().upper()
     gstin        = request.form.get("gstin","").strip().upper()
-    fy           = request.form.get("fy","2024-25").strip() or "2024-25"
+    fy           = request.form.get("fy","2025-26").strip() or "2025-26"
+    itr_form     = request.form.get("itr_form","ITR-3").strip()
+    entity_type  = request.form.get("entity_type","company").strip()
 
     if not company_name:
         return jsonify(error="Company name is required"), 400
@@ -4435,7 +4535,7 @@ def api_it_upload():
     job_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    saved = {k: [] for k in ("it26as", "itais", "itgst")}
+    saved = {k: [] for k in ("it26as", "itais", "ittis", "itgst")}
     for zone in saved:
         for fobj in request.files.getlist(f"files_{zone}"):
             if not fobj.filename: continue
@@ -4457,6 +4557,8 @@ def api_it_upload():
             "pan":          pan,
             "gstin":        gstin,
             "fy":           fy,
+            "itr_form":     itr_form,
+            "entity_type":  entity_type,
             "job_dir":      str(job_dir),
             "out_dir":      str(out_dir),
             "saved":        saved,
