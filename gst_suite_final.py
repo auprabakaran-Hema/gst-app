@@ -2341,6 +2341,17 @@ def extract_3b_pdf(pdf_path):
     return result
 
 
+# ── Excel formula helpers ──────────────────────────────────────────
+def _is_formula(v): return isinstance(v, str) and v.startswith("=")
+
+def _fsum(col_letter, row_start, row_end):
+    """=SUM(B3:B14)"""
+    return f"=SUM({col_letter}{row_start}:{col_letter}{row_end})"
+
+def _fdiff(col_a, col_b, row):
+    """=D14-C14"""
+    return f"={col_a}{row}-{col_b}{row}"
+
 def write_annual_reconciliation(client_dir, client_name, gstin, log):
     """
     Builds ANNUAL_RECONCILIATION Excel with 7 sheets modelled on
@@ -2368,17 +2379,6 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
     ALT1     = "FFFFFF"; ALT2 = "F2F2F2"
     NUM_FMT  = "#,##0.00"
     NUM_FMT0 = "#,##0"
-
-# ── Excel formula helpers ──────────────────────────────────────────
-def _is_formula(v): return isinstance(v, str) and v.startswith("=")
-
-def _fsum(col_letter, row_start, row_end):
-    """=SUM(B3:B14)"""
-    return f"=SUM({col_letter}{row_start}:{col_letter}{row_end})"
-
-def _fdiff(col_a, col_b, row):
-    """=D14-C14"""
-    return f"={col_a}{row}-{col_b}{row}"
 
     def _f(h): return PatternFill("solid", fgColor=h)
     def _font(bold=False, color="000000", size=9):
@@ -5911,6 +5911,86 @@ def _fdiff(col_a, col_b, row):
 
     return str(rp)
 
+def zip_all_outputs(base_dir, log=None):
+    """
+    After all processing is done, collect every generated output file
+    (ANNUAL_RECONCILIATION, GSTR3BR1_RECONCILED, GSTR3BR2A_RECONCILED,
+     MASTER_REPORT, GSTR1_*.xlsx, TaxLiability_*, GSTR2B_*.xlsx,
+     GSTR2A_*.xlsx, GSTR3B_*.pdf, GSTR1_*.zip, GSTR2A_*.zip)
+    from the entire base_dir tree, bundle them into a single ZIP, and
+    open the containing folder in Windows Explorer so the user can
+    download / copy everything in one click.
+    """
+    import zipfile as _zf, shutil as _sh
+
+    _log = log.info if log else print
+
+    # ── Patterns to collect ──────────────────────────────────────────
+    INCLUDE_PATTERNS = [
+        "ANNUAL_RECONCILIATION_*.xlsx",
+        "*_GSTR3BR1_RECONCILED_*.xlsx",
+        "*_GSTR3BR2A_RECONCILED_*.xlsx",
+        "MASTER_REPORT_*.xlsx",
+        "GSTR1_*.xlsx",          # per-client monthly invoice Excel
+        "TaxLiability_*.xlsx",
+        "TaxLiability_*.xls",
+        "TaxLiability_*.csv",
+        "GSTR2B_*.xlsx",
+        "GSTR2A_*.xlsx",
+        "*_R2A*.xlsx",
+        "*_R2B*.xlsx",
+        "GSTR3B_*.pdf",
+        "GSTR1_*.zip",
+        "GSTR1A_*.zip",
+        "GSTR2A_*.zip",
+        "GSTR2B_*.zip",
+    ]
+    EXCLUDE_DIRS = {"_MERGED_"}   # temp merge dirs we created
+
+    base_path = Path(base_dir)
+    collected = []
+
+    for pattern in INCLUDE_PATTERNS:
+        for f in base_path.rglob(pattern):
+            # Skip files inside temp _MERGED_ dirs
+            if any(part.startswith("_MERGED_") for part in f.parts):
+                continue
+            # Skip extraction sub-dirs (e.g. GSTR1_April_2025_ex/)
+            if any(part.endswith("_ex") for part in f.parts):
+                continue
+            if f.is_file() and f not in collected:
+                collected.append(f)
+
+    if not collected:
+        _log("  zip_all_outputs: no output files found to zip")
+        return None
+
+    zip_name = f"GST_ALL_OUTPUTS_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+    zip_path = base_path / zip_name
+
+    _log(f"\n  Bundling {len(collected)} file(s) into {zip_name} ...")
+    with _zf.ZipFile(zip_path, "w", _zf.ZIP_DEFLATED) as zout:
+        for f in sorted(collected):
+            # Keep relative path from base_dir so folder structure is preserved
+            arcname = str(f.relative_to(base_path))
+            zout.write(str(f), arcname)
+            _log(f"    + {arcname}")
+
+    size_mb = zip_path.stat().st_size / (1024*1024)
+    _log(f"  ✓ ZIP created: {zip_path.name}  ({size_mb:.1f} MB)")
+
+    # ── Open folder in Windows Explorer ─────────────────────────────
+    try:
+        import subprocess
+        # /select, highlights the zip file itself in Explorer
+        subprocess.Popen(["explorer", "/select,", str(zip_path)])
+        _log(f"  ✓ Opened folder in Explorer: {base_dir}")
+    except Exception as ex:
+        _log(f"  (Could not open Explorer: {ex})")
+
+    return str(zip_path)
+
+
 def write_master_report(all_results, base_dir):
     wb = Workbook()
     ws = wb.active; ws.title = "Master Dashboard"
@@ -6301,55 +6381,117 @@ def run_offline_reconciliation(log=None):
                 any(d.glob("*_R2A*.xlsx")) or any(d.glob("*_R2B*.xlsx")) or
                 any(d.glob("GSTR*.xlsx")))
 
-    client_dirs = [d for d in Path(selected_run).iterdir()
-                   if d.is_dir() and _has_gst_files(d)]
+    raw_dirs = [d for d in Path(selected_run).iterdir()
+                if d.is_dir() and _has_gst_files(d)]
 
-    if not client_dirs:
+    if not raw_dirs:
         if _has_gst_files(Path(selected_run)):
-            client_dirs = [Path(selected_run)]
+            raw_dirs = [Path(selected_run)]
 
-    if not client_dirs:
+    if not raw_dirs:
         print(f"\n  \u2717 No client folders with GST files found in: {selected_run}")
         print("  Expected files: GSTR1_*.zip  GSTR2B_*.xlsx  *_R2A*.xlsx  GSTR3B_*.pdf")
         input("  Press Enter to exit..."); return
 
-    print(f"\n  Found {len(client_dirs)} client folder(s):")
-    for d in client_dirs:
-        zips  = list(d.glob("*.zip"))
-        pdfs  = list(d.glob("*.pdf"))
-        xls2a = list(d.glob("*_R2A*.xlsx"))
-        xls2b = list(d.glob("*_R2B*.xlsx")) + list(d.glob("GSTR2B_*.xlsx"))
-        print(f"    \u2022 {d.name}")
-        print(f"      ZIPs={len(zips)}  PDFs={len(pdfs)}  2A_xlsx={len(xls2a)}  2B_xlsx={len(xls2b)}")
+    # ── GSTIN-grouping: detect per-month folders for the same GSTIN ──────────
+    # When the portal downloads one month per folder (e.g. GSTR2A_April_2025_nm/
+    # contains only 33AYNPV2214Q1ZU_042025_R2A.xlsx), we group all such folders
+    # by GSTIN and merge their files into a single temp folder so that
+    # write_annual_reconciliation can see all 12 months at once.
+
+    def _extract_gstin_from_dir(d):
+        """Try to find the 15-char GSTIN from any GST file in folder d."""
+        import zipfile as _zf
+        for zp in d.glob("GSTR1_*.zip"):
+            try:
+                with _zf.ZipFile(zp) as z:
+                    for n in z.namelist():
+                        if n.endswith(".json"):
+                            with z.open(n) as jf:
+                                data = json.load(jf)
+                                g = (data.get("gstin","") or
+                                     data.get("data",{}).get("gstin","") or "")
+                                if g: return g
+            except: pass
+        for xl in list(d.glob("*_R2A*.xlsx")) + list(d.glob("*_R2B*.xlsx")) + \
+                  list(d.glob("GSTR2B_*.xlsx")) + list(d.glob("GSTR1_*.zip")):
+            parts = xl.stem.split("_")
+            if parts and len(parts[0]) == 15:
+                return parts[0]
+        return ""
+
+    # Group raw_dirs by GSTIN
+    gstin_to_dirs   = {}   # gstin -> [list of source dirs]
+    gstin_to_name   = {}   # gstin -> friendly client name
+    no_gstin_dirs   = []   # dirs where GSTIN could not be determined
+
+    for d in raw_dirs:
+        g = _extract_gstin_from_dir(d)
+        if g:
+            gstin_to_dirs.setdefault(g, []).append(d)
+            # Build a clean client name: strip month/year suffix from folder name
+            # e.g. "GSTR2A_April_2025_nm" -> try to strip month words to get base name
+            import re as _re
+            month_words = r"(January|February|March|April|May|June|July|August|" \
+                          r"September|October|November|December|" \
+                          r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+            base = _re.sub(r"(?i)[_\s]*" + month_words + r"[_\s]*\d{4}[_\s]*", "_", d.name)
+            base = _re.sub(r"[_\s]+", " ", base).strip(" _")
+            # Only update name if we haven't stored one, or if this one is shorter/cleaner
+            if g not in gstin_to_name:
+                gstin_to_name[g] = base.title()
+        else:
+            no_gstin_dirs.append(d)
+
+    # Build the effective client list:
+    # For each GSTIN group with >1 folder, create a merged temp dir inside selected_run
+    import shutil as _shutil, tempfile as _tempfile
+
+    client_jobs = []  # list of (cdir_path, client_name, gstin)
+
+    for gstin, dirs in gstin_to_dirs.items():
+        if len(dirs) == 1:
+            # Single folder — use as-is (original behaviour)
+            client_jobs.append((dirs[0], dirs[0].name.replace("_"," ").title(), gstin))
+        else:
+            # Multiple per-month folders → merge into one temp folder
+            merge_dir = Path(selected_run) / f"_MERGED_{gstin}"
+            merge_dir.mkdir(exist_ok=True)
+            copied = 0
+            for src_dir in dirs:
+                for f in src_dir.iterdir():
+                    if f.is_file():
+                        dst = merge_dir / f.name
+                        if not dst.exists():
+                            _shutil.copy2(str(f), str(dst))
+                            copied += 1
+            name = gstin_to_name.get(gstin, gstin)
+            log.info(f"  Merged {len(dirs)} month-folders for GSTIN {gstin} "
+                     f"into {merge_dir.name}  ({copied} files copied)")
+            client_jobs.append((merge_dir, name, gstin))
+
+    # Dirs with unknown GSTIN — fall back to old behaviour (process individually)
+    for d in no_gstin_dirs:
+        client_jobs.append((d, d.name.replace("_"," ").title(), ""))
+
+    # ── Display summary ───────────────────────────────────────────────────────
+    print(f"\n  Found {len(client_jobs)} client(s) to process "
+          f"(from {len(raw_dirs)} folder(s)):")
+    for cdir, cname, cgstin in client_jobs:
+        xls2a = list(cdir.glob("*_R2A*.xlsx"))
+        xls2b = list(cdir.glob("*_R2B*.xlsx")) + list(cdir.glob("GSTR2B_*.xlsx"))
+        zips  = list(cdir.glob("*.zip"))
+        pdfs  = list(cdir.glob("*.pdf"))
+        print(f"    \u2022 {cname}  ({cgstin or 'GSTIN?'})")
+        print(f"      ZIPs={len(zips)}  PDFs={len(pdfs)}  "
+              f"2A_xlsx={len(xls2a)}  2B_xlsx={len(xls2b)}")
 
     if input("\n  Generate reconciliation for ALL? (YES/no): ").strip().upper() not in ("YES","Y",""):
         print("  Cancelled."); return
 
     # -- Process each client -------------------------------
     generated = 0
-    for cdir in client_dirs:
-        client_name = cdir.name.replace("_", " ").title()
-
-        # Extract GSTIN from GSTR1 ZIP or from xlsx filename
-        gstin = ""
-        for zp in cdir.glob("GSTR1_*.zip"):
-            try:
-                import zipfile as _zf
-                with _zf.ZipFile(zp) as z:
-                    for n in z.namelist():
-                        if n.endswith(".json"):
-                            with z.open(n) as jf:
-                                d = json.load(jf)
-                                gstin = (d.get("gstin","") or
-                                         d.get("data",{}).get("gstin","") or "")
-                            break
-                if gstin: break
-            except: pass
-        if not gstin:
-            for xl in list(cdir.glob("*_R2A*.xlsx")) + list(cdir.glob("*_R2B*.xlsx")):
-                parts = xl.stem.split("_")
-                if parts and len(parts[0]) == 15:
-                    gstin = parts[0]; break
+    for cdir, client_name, gstin in client_jobs:
 
         print(f"\n  Processing: {client_name}  ({gstin or 'GSTIN unknown'})")
         log.info(f"\n{'='*55}")
@@ -6373,9 +6515,18 @@ def run_offline_reconciliation(log=None):
             log.error(traceback.format_exc())
 
     print(f"\n{'='*60}")
-    print(f"  DONE \u2014 {generated}/{len(client_dirs)} reconciliation reports generated")
+    print(f"  DONE \u2014 {generated}/{len(client_jobs)} reconciliation reports generated")
     print(f"  Folder: {selected_run}")
     print("="*60)
+
+    # ── Auto-bundle ALL output files and open folder ───────────────
+    if generated > 0:
+        print("\n  Bundling all output files into a single ZIP for easy download...")
+        zip_path = zip_all_outputs(str(selected_run), log)
+        if zip_path:
+            print(f"  ZIP: {os.path.basename(zip_path)}  ← all files bundled here")
+            print(f"  Windows Explorer has been opened at: {selected_run}")
+
     input("\n  Press Enter to close...")
 
 
@@ -6715,6 +6866,10 @@ def main():
     print("\n  Generating master report...")
     report = write_master_report(all_results, base_dir)
 
+    # ── Auto-bundle ALL output files and open folder ───────────────
+    print("\n  Bundling all output files into a single ZIP for easy download...")
+    zip_path = zip_all_outputs(base_dir, log)
+
     # ── Count login failures ───────────────────────────────────────
     failed_logins = [r["name"] for r in all_results if r.get("login_failed")]
 
@@ -6728,6 +6883,8 @@ def main():
     else:
         print(f"  ✓ All {len(all_results)} client(s) logged in successfully")
     print(f"  Report   : {os.path.basename(report)}")
+    if zip_path:
+        print(f"  ZIP      : {os.path.basename(zip_path)}  ← all files bundled here")
     print(f"  Folder   : {base_dir}")
     print("="*60)
     input("\n  Press Enter to close...")
