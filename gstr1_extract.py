@@ -69,6 +69,11 @@ def _font(b=False, c="000000", s=9): return Font(name="Arial",bold=b,color=c,siz
 def _bdr(): s=Side(style="thin"); return Border(left=s,right=s,top=s,bottom=s)
 def _aln(h="left",wrap=False): return Alignment(horizontal=h,vertical="center",wrap_text=wrap)
 
+# ── Excel formula helpers ─────────────────────────────────────────
+def _is_fml(v): return isinstance(v, str) and v.startswith("=")
+def _fsum(col, r1, r2): return f"=SUM({col}{r1}:{col}{r2})"
+def _fdiff(ca, cb, r):  return f"={ca}{r}-{cb}{r}"
+
 def make_sheet(wb, title, headers, widths, tc=DARK_BLUE):
     ws = wb.create_sheet(title)
     ws.sheet_view.showGridLines = False
@@ -95,9 +100,11 @@ def wr(ws, vals, bold=False, bg=None):
     for ci,v in enumerate(vals,1):
         c = ws.cell(row=ri,column=ci,value=v)
         c.font=_font(bold,"000000",9); c.fill=_fill(bg_use)
-        c.alignment=_aln("right" if isinstance(v,(int,float)) else "left")
+        is_num = isinstance(v,(int,float))
+        is_fml = _is_fml(v)
+        c.alignment=_aln("right" if (is_num or is_fml) else "left")
         c.border=_bdr()
-        if isinstance(v,(int,float)): c.number_format=NUM_FMT
+        if is_num or is_fml: c.number_format=NUM_FMT
     ws.row_dimensions[ri].height=15
     ri_map[ws.title]=ri+1
 
@@ -106,9 +113,11 @@ def tot_row(ws, vals, bg="D6DCE4"):
     for ci,v in enumerate(vals,1):
         c = ws.cell(row=ri,column=ci,value=v)
         c.font=_font(True,"000000",9); c.fill=_fill(bg)
-        c.alignment=_aln("right" if isinstance(v,(int,float)) else "left")
+        is_num = isinstance(v,(int,float))
+        is_fml = _is_fml(v)
+        c.alignment=_aln("right" if (is_num or is_fml) else "left")
         c.border=_bdr()
-        if isinstance(v,(int,float)): c.number_format=NUM_FMT
+        if is_num or is_fml: c.number_format=NUM_FMT
     ws.row_dimensions[ri].height=18; ri_map[ws.title]=ri+1
 
 def month_sep(ws, label, ncols, color=MED_BLUE):
@@ -568,12 +577,24 @@ def extract_gstr1_to_excel(folder, output_path=None):
                   round(m["ig"]+m["cg"]+m["sg"],2),round(m["iv"],2)])
         for k in ann: ann[k]+=m.get(k,0)
 
-    # Annual total
-    tot_row(wsMS,["ANNUAL TOTAL",int(ann["inv"]),
-                   round(ann["b2b_tx"],2),round(ann["b2cs_tx"],2),round(ann["b2cl_tx"],2),
-                   round(ann["exp_tx"],2),round(ann["nil_tx"],2),round(ann["cdn_cr"],2),round(ann["cdn_dr"],2),
-                   round(ann["ig"],2),round(ann["cg"],2),round(ann["sg"],2),
-                   round(ann["ig"]+ann["cg"]+ann["sg"],2),round(ann["iv"],2)])
+    # Annual total — use SUM formulas so Excel recalculates if data changes
+    _ms_ri = ri_map.get(wsMS.title, 3)  # current row = first empty row after data
+    _ms_data_start = 3                   # data starts at row 3
+    _ms_data_end   = _ms_ri - 1         # last data row
+    tot_row(wsMS,["ANNUAL TOTAL",
+                   _fsum("B",_ms_data_start,_ms_data_end),
+                   _fsum("C",_ms_data_start,_ms_data_end),
+                   _fsum("D",_ms_data_start,_ms_data_end),
+                   _fsum("E",_ms_data_start,_ms_data_end),
+                   _fsum("F",_ms_data_start,_ms_data_end),
+                   _fsum("G",_ms_data_start,_ms_data_end),
+                   _fsum("H",_ms_data_start,_ms_data_end),
+                   _fsum("I",_ms_data_start,_ms_data_end),
+                   _fsum("J",_ms_data_start,_ms_data_end),
+                   _fsum("K",_ms_data_start,_ms_data_end),
+                   _fsum("L",_ms_data_start,_ms_data_end),
+                   f"=SUM(J{_ms_ri}:L{_ms_ri})",
+                   _fsum("N",_ms_data_start,_ms_data_end)])
 
     if output_path is None:
         output_path = folder/f"GSTR1_FULL_DETAIL_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"

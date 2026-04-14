@@ -2073,10 +2073,10 @@ def extract_json_to_excel(client_dir, client_name, log):
                     round(v["ig"]+v["cg"]+v["sg"],2)])
                 tot_tx+=v["tx"]; tot_ig+=v["ig"]
                 tot_cg+=v["cg"]; tot_sg+=v["sg"]; tot_cnt+=v["cnt"]
-            _totrow(wsS, riS, ["GRAND TOTAL", tot_cnt,
-                               round(tot_tx,2), round(tot_ig,2),
-                               round(tot_cg,2), round(tot_sg,2),
-                               round(tot_ig+tot_cg+tot_sg,2)])
+            _totrow(wsS, riS, ["GRAND TOTAL", _fsum("B",3,riS-1),
+                               _fsum("C",3,riS-1), _fsum("D",3,riS-1),
+                               _fsum("E",3,riS-1), _fsum("F",3,riS-1),
+                               f"=SUM(D{riS}:F{riS})"])
 
             xl_name = stem + "_detail.xlsx"
             xl_path = Path(client_dir) / xl_name
@@ -2369,6 +2369,17 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
     NUM_FMT  = "#,##0.00"
     NUM_FMT0 = "#,##0"
 
+# ── Excel formula helpers ──────────────────────────────────────────
+def _is_formula(v): return isinstance(v, str) and v.startswith("=")
+
+def _fsum(col_letter, row_start, row_end):
+    """=SUM(B3:B14)"""
+    return f"=SUM({col_letter}{row_start}:{col_letter}{row_end})"
+
+def _fdiff(col_a, col_b, row):
+    """=D14-C14"""
+    return f"={col_a}{row}-{col_b}{row}"
+
     def _f(h): return PatternFill("solid", fgColor=h)
     def _font(bold=False, color="000000", size=9):
         return Font(name="Arial", bold=bold, color=color, size=size)
@@ -2402,8 +2413,12 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
         cl.fill = _f(bg)
         cl.alignment = _aln(align)
         cl.border = _bdr()
-        if numfmt and isinstance(v, (int, float)):
+        is_num = isinstance(v, (int, float))
+        is_fml = isinstance(v, str) and v.startswith("=")
+        if numfmt and (is_num or is_fml):
             cl.number_format = numfmt
+        elif is_fml and not numfmt:
+            cl.number_format = NUM_FMT  # default fmt for formula cells
         return cl
 
     def totrow(ws, r, vals, bg=TOT_BG, fg=TOT_FG):
@@ -2411,9 +2426,11 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             cl = ws.cell(row=r, column=ci, value=v)
             cl.font = _font(True, fg, 9)
             cl.fill = _f(bg)
-            cl.alignment = _aln("right" if isinstance(v,(int,float)) else "left")
+            is_num = isinstance(v, (int, float))
+            is_fml = isinstance(v, str) and v.startswith("=")
+            cl.alignment = _aln("right" if (is_num or is_fml) else "left")
             cl.border = _bdr()
-            if isinstance(v, (int, float)):
+            if is_num or is_fml:
                 cl.number_format = NUM_FMT
         ws.row_dimensions[r].height = 18
 
@@ -3458,9 +3475,9 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
         ws2.row_dimensions[ri2].height=15; ri2+=1
         ann2["inv"]+=d["inv"]; ann2["b2b"]+=d["b2b_tx"]; ann2["b2cs"]+=d["b2cs_tx"]
         ann2["ig"]+=d["igst"]; ann2["cg"]+=d["cgst"]; ann2["sg"]+=d["sgst"]; ann2["val"]+=d["val"]
-    totrow(ws2,ri2,["ANNUAL TOTAL",ann2["inv"],round(ann2["b2b"],2),round(ann2["b2cs"],2),
-                    round(ann2["b2b"]+ann2["b2cs"],2),round(ann2["ig"],2),round(ann2["cg"],2),
-                    round(ann2["sg"],2),round(ann2["ig"]+ann2["cg"]+ann2["sg"],2),round(ann2["val"],2)])
+    totrow(ws2,ri2,["ANNUAL TOTAL",_fsum("B",3,ri2-1),_fsum("C",3,ri2-1),_fsum("D",3,ri2-1),
+                    _fsum("E",3,ri2-1),_fsum("F",3,ri2-1),_fsum("G",3,ri2-1),
+                    _fsum("H",3,ri2-1),f"=F{ri2}+G{ri2}+H{ri2}",_fsum("J",3,ri2-1)])
     ws2.sheet_properties.tabColor = "2E75B6"
 
     # ====================================================
@@ -3493,7 +3510,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                     ("r18",r18),("r28",r28),("ro",ro),("tx",tx),
                     ("ig",ig),("cg",cg),("sg",sg)]:
             ann2x[k]+=v
-    totrow(ws2x,ri2x,["ANNUAL TOTAL",
+    totrow(ws2x,ri2x,["ANNUAL TOTAL — use SUM formulas below",_fsum("B",3,ri2x-1),
                        round(ann2x["r0"],2),round(ann2x["r3"],2),round(ann2x["r5"],2),
                        round(ann2x["r12"],2),round(ann2x["r18"],2),round(ann2x["r28"],2),
                        round(ann2x["ro"],2),round(ann2x["tx"],2),
@@ -3543,12 +3560,13 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             ann2b["cg"]+=float(cg or 0); ann2b["sg"]+=float(sg or 0)
             ann2b["iv"]+=float(iv or 0)
 
-    # Annual total row
+    # Annual total row with SUM formulas
+    _inv_count = sum(len(g1_inv_rows.get(f"{mn}_{yr}",[]))for mn,_,yr in MONTHS)
     totrow(ws2b, ri2b, ["ANNUAL TOTAL","","",
-                         f"Total: {sum(len(g1_inv_rows.get(f"{mn}_{yr}",[]))for mn,_,yr in MONTHS)} records",
-                         "","", round(ann2b['iv'],2),"",
-                         round(ann2b['tx'],2),round(ann2b['ig'],2),
-                         round(ann2b['cg'],2),round(ann2b['sg'],2)])
+                         f"Total: {_inv_count} records",
+                         "","", _fsum("G",3,ri2b-1),"",
+                         _fsum("I",3,ri2b-1),_fsum("J",3,ri2b-1),
+                         _fsum("K",3,ri2b-1),_fsum("L",3,ri2b-1)])
     ws2b.sheet_properties.tabColor = "1F3864"
 
     # ====================================================
@@ -3628,13 +3646,12 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             ann2c["ig"]+=float(ig or 0); ann2c["cg"]+=float(cg or 0); ann2c["sg"]+=float(sg or 0)
 
     # Overall annual totals row
-    totrow(ws2c, ri2c, ["ANNUAL TOTAL (All Types)","","","",
-                         f"Credit TV: ₹{ann2c['cr_tv']:,.2f}",
-                         f"Debit TV: ₹{ann2c['dr_tv']:,.2f}",
-                         "","",
-                         round(ann2c['cr_tv']+ann2c['dr_tv']+ann2c['amend_cr']+ann2c['amend_dr'],2),
-                         round(ann2c['ig'],2),round(ann2c['cg'],2),round(ann2c['sg'],2),
-                         round(ann2c['ig']+ann2c['cg']+ann2c['sg'],2)])
+    totrow(ws2c, ri2c, ["ANNUAL TOTAL (All Types)",
+                         _fsum("B",3,ri2c-1),_fsum("C",3,ri2c-1),
+                         _fsum("D",3,ri2c-1),_fsum("E",3,ri2c-1),
+                         _fsum("F",3,ri2c-1),_fsum("G",3,ri2c-1),
+                         _fsum("H",3,ri2c-1),_fsum("I",3,ri2c-1),
+                         _fsum("J",3,ri2c-1),f"=SUM(H{ri2c}:J{ri2c})"])
     ri2c += 2
 
     # -- Monthly Summary table with Amendments column ----
@@ -3696,11 +3713,11 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
 
     ann_net_cdn=round(ann_sum["dr_tv"]-ann_sum["cr_tv"]+ann_sum["amd_tv"],2)
     totrow(ws2c, ri2c, ["ANNUAL TOTAL",
-                         ann_sum["cr_cnt"],round(ann_sum["cr_tv"],2),
-                         ann_sum["dr_cnt"],round(ann_sum["dr_tv"],2),
-                         ann_sum["amd_cnt"],round(ann_sum["amd_tv"],2),
-                         round(ann_sum["ig"],2),round(ann_sum["cg"],2),round(ann_sum["sg"],2),
-                         round(ann_sum["ig"]+ann_sum["cg"]+ann_sum["sg"],2),ann_net_cdn])
+                         _fsum("B",3,ri2c-1),_fsum("C",3,ri2c-1),
+                         _fsum("D",3,ri2c-1),_fsum("E",3,ri2c-1),
+                         _fsum("F",3,ri2c-1),_fsum("G",3,ri2c-1),
+                         _fsum("H",3,ri2c-1),_fsum("I",3,ri2c-1),
+                         _fsum("J",3,ri2c-1),f"=SUM(H{ri2c}:J{ri2c})"])
     ws2c.sheet_properties.tabColor = "FF0000"
 
     # ====================================================
@@ -3730,7 +3747,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                      align="right" if ci3>5 else "left")
             ws3.row_dimensions[ri3].height=15; ri3+=1
             ann3["ig"]+=ig; ann3["cg"]+=cg; ann3["sg"]+=sg
-    totrow(ws3,ri3,["ANNUAL TOTAL","","","","","",round(ann3["ig"],2),round(ann3["cg"],2),
+    totrow(ws3,ri3,["ANNUAL TOTAL","","","","","",_fsum("G",3,ri3-1),_fsum("H",3,ri3-1),
                     round(ann3["sg"],2),round(ann3["ig"]+ann3["cg"]+ann3["sg"],2)])
     ws3.sheet_properties.tabColor = "276221"
 
@@ -3755,7 +3772,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                      align="right" if ci4>5 else "left")
             ws4.row_dimensions[ri4].height=15; ri4+=1
             ann4["tv"]+=tv; ann4["ig"]+=ig; ann4["cg"]+=cg; ann4["sg"]+=sg
-    totrow(ws4,ri4,["ANNUAL TOTAL","","","","",round(ann4["tv"],2),round(ann4["ig"],2),
+    totrow(ws4,ri4,["ANNUAL TOTAL","","","","",_fsum("F",3,ri4-1),_fsum("G",3,ri4-1),
                     round(ann4["cg"],2),round(ann4["sg"],2),
                     round(ann4["ig"]+ann4["cg"]+ann4["sg"],2)])
     ws4.sheet_properties.tabColor = "9C6500"
@@ -3815,11 +3832,11 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
     ann5_tot_out = round(ann5["oig"]+ann5["ocg"]+ann5["osg"],2)
     ann5_net_itc = round(ann5["iig"]+ann5["icg"]+ann5["isg"],2)
     totrow(ws5, ri5, ["ANNUAL TOTAL","12 Months",
-                       round(ann5["taxable"],2), round(ann5["nil"],2), round(ann5["nongst"],2),
-                       round(ann5["zr"],2), round(ann5["rcm"],2),
-                       round(ann5["oig"],2), round(ann5["ocg"],2), round(ann5["osg"],2),
-                       ann5_tot_out,
-                       round(ann5["iig"],2), round(ann5["icg"],2), round(ann5["isg"],2),
+                       _fsum("C",3,ri5-1), _fsum("D",3,ri5-1), _fsum("E",3,ri5-1),
+                       _fsum("F",3,ri5-1), _fsum("G",3,ri5-1),
+                       _fsum("H",3,ri5-1), _fsum("I",3,ri5-1), _fsum("J",3,ri5-1),
+                       f"=SUM(H{ri5}:J{ri5})",
+                       _fsum("L",3,ri5-1), _fsum("M",3,ri5-1), round(ann5["isg"],2),
                        round(ann5["rev"],2),
                        round(ann5["nicg"],2), round(ann5["nisg"],2),
                        round(ann5["int_cg"],2), round(ann5["int_sg"],2),
@@ -4031,7 +4048,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
     ann_r1tt=round(ann6["r1ig"]+ann6["r1cg"]+ann6["r1sg"],2)
     ann_itt=round(ann6["iig"]+ann6["icg"]+ann6["isg"],2)
     ann_diff=round(ann6["a2"]-ann_itt,2)
-    totrow(ws6,ri6,["ANNUAL TOTAL",round(ann6["tx"],2),round(ann6["r1ig"],2),round(ann6["r1cg"],2),
+    totrow(ws6,ri6,["ANNUAL TOTAL",_fsum("B",3,ri6-1),_fsum("C",3,ri6-1),_fsum("D",3,ri6-1),
                     round(ann6["r1sg"],2),ann_r1tt,round(ann6["iig"],2),round(ann6["icg"],2),
                     round(ann6["isg"],2),ann_itt,round(ann_r1tt-ann_itt,2),ann_diff,
                     "✓ Balanced" if abs(ann_diff)<=500 else "⚠ Review"])
@@ -4453,7 +4470,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
     ann_r1tt=round(ann8["r1ig"]+ann8["r1cg"]+ann8["r1sg"],2)
     ann_b3tt=round(ann8["b3ig"]+ann8["b3cg"]+ann8["b3sg"],2)
     ann_b2tt=round(ann8["b2ig"]+ann8["b2cg"]+ann8["b2sg"],2)
-    totrow(ws8,ri8,["ANNUAL TOTAL",round(ann8["r1tx"],2),round(ann8["r1ig"],2),round(ann8["r1cg"],2),round(ann8["r1sg"],2),ann_r1tt,
+    totrow(ws8,ri8,["ANNUAL TOTAL",_fsum("B",3,ri8-1),_fsum("C",3,ri8-1),_fsum("D",3,ri8-1),_fsum("E",3,ri8-1),f"=SUM(C{ri8}:E{ri8})",
                     round(ann8["b3ig"],2),round(ann8["b3cg"],2),round(ann8["b3sg"],2),ann_b3tt,round(ann_r1tt-ann_b3tt,2),
                     round(ann8["b2ig"],2),round(ann8["b2cg"],2),round(ann8["b2sg"],2),ann_b2tt,
                     round(ann8["a2t"],2),round(ann8["a2t"]-ann_b2tt,2),
@@ -4858,7 +4875,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
         ann_g1m["cdn_cr"]+=cdn_cr; ann_g1m["cdn_dr"]+=cdn_dr
     ann_tx=ann_g1m["b2b"]+ann_g1m["b2cs"]; ann_tt=ann_g1m["ig"]+ann_g1m["cg"]+ann_g1m["sg"]
     ann_pct=round(ann_tt/ann_tx*100,2) if ann_tx else 0
-    totrow(ws_g1m, rg1m, ["ANNUAL TOTAL", int(ann_g1m["inv"]),
+    totrow(ws_g1m, rg1m, ["ANNUAL TOTAL", _fsum("B",3,rg1m-1),
                             round(ann_g1m["b2b"],2), round(ann_g1m["b2cs"],2),
                             round(ann_tx,2), round(ann_g1m["ig"],2),
                             round(ann_g1m["cg"],2), round(ann_g1m["sg"],2),
@@ -4910,12 +4927,11 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
         ws_g1am.row_dimensions[rg1am].height=15; rg1am+=1
         ann_g1am["inv"]+=a_inv; ann_g1am["b2b"]+=a_tx
         ann_g1am["ig"]+=a_ig; ann_g1am["cg"]+=a_cg; ann_g1am["sg"]+=a_sg
-    totrow(ws_g1am, rg1am, ["ANNUAL TOTAL", int(ann_g1am["inv"]),
-                              round(ann_g1am["b2b"],2),
-                              round(ann_g1am["ig"],2), round(ann_g1am["cg"],2),
-                              round(ann_g1am["sg"],2),
-                              round(ann_g1am["ig"]+ann_g1am["cg"]+ann_g1am["sg"],2),
-                              "Annual","All months combined"])
+    totrow(ws_g1am, rg1am, ["ANNUAL TOTAL", _fsum("B",3,rg1am-1),
+                          _fsum("C",3,rg1am-1),_fsum("D",3,rg1am-1),
+                          _fsum("E",3,rg1am-1),_fsum("F",3,rg1am-1),
+                          _fsum("G",3,rg1am-1),_fsum("H",3,rg1am-1),
+                          f"=SUM(D{rg1am}:H{rg1am})"])
     ws_g1am.sheet_properties.tabColor="9C6500"
 
     # ======================================================
@@ -5078,16 +5094,8 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
         ann_ar["ocg"]+=ocg; ann_ar["osg"]+=osg; ann_ar["oig"]+=oig
         ann_ar["icg"]+=icg; ann_ar["isg"]+=isg; ann_ar["iig"]+=iig
     totrow(ws_ar3b,r_ar,["ANNUAL TOTAL","",
-                          round(ann_ar["s5"],2),round(ann_ar["s12"],2),round(ann_ar["s18"],2),round(ann_ar["s28"],2),
-                          round(sum(v for k,v in ann_ar.items() if k.startswith("s")),2),
-                          round(ann_ar["p5"],2),round(ann_ar["p12"],2),round(ann_ar["p18"],2),round(ann_ar["p28"],2),
-                          round(sum(v for k,v in ann_ar.items() if k.startswith("p")),2),
-                          round(ann_ar["ocg"],2),round(ann_ar["osg"],2),round(ann_ar["oig"],2),
-                          round(ann_ar["ocg"]+ann_ar["osg"]+ann_ar["oig"],2),
-                          round(ann_ar["icg"],2),round(ann_ar["isg"],2),round(ann_ar["iig"],2),
-                          round(ann_ar["icg"]+ann_ar["isg"]+ann_ar["iig"],2),
-                          round(ann_ar["ocg"]+ann_ar["osg"]+ann_ar["oig"]-ann_ar["icg"]-ann_ar["isg"]-ann_ar["iig"],2),
-                          itc_cf])
+                          _fsum("C",3,r_ar-1),_fsum("D",3,r_ar-1),_fsum("E",3,r_ar-1),_fsum("F",3,r_ar-1),
+                          _fsum("G",3,r_ar-1)])
     ws_ar3b.sheet_properties.tabColor="1F3864"
 
     # -- SHEET: GST vs CDNR Monthly -------------------------------------
@@ -5134,10 +5142,8 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
     ann_net_tx=ann_cd["gtx"]-ann_cd["ctx"]
     ann_net_cg=ann_cd["gcg"]-ann_cd["ccg"]; ann_net_sg=ann_cd["gsg"]-ann_cd["csg"]
     totrow(ws_cdnr,r_cd,["ANNUAL TOTAL",
-                          round(ann_cd["gtx"],2),round(ann_cd["gcg"],2),round(ann_cd["gsg"],2),round(ann_cd["gig"],2),
-                          round(ann_cd["ctx"],2),round(ann_cd["ccg"],2),round(ann_cd["csg"],2),
-                          round(ann_net_tx,2),round(ann_net_cg,2),round(ann_net_sg,2),round(ann_cd["gig"],2),
-                          round(ann_net_cg+ann_net_sg+ann_cd["gig"],2)])
+                          _fsum("B",3,r_cd-1),_fsum("C",3,r_cd-1),_fsum("D",3,r_cd-1),_fsum("E",3,r_cd-1),
+                          _fsum("F",3,r_cd-1),_fsum("G",3,r_cd-1),_fsum("H",3,r_cd-1)])
     ws_cdnr.sheet_properties.tabColor="9C0006"
 
     # -- SHEET: Purchase 2B Detail ---------------------------------------
@@ -5176,8 +5182,8 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             ann_p2b["tv"]+=float(tv or 0); ann_p2b["ig"]+=float(ig or 0)
             ann_p2b["cg"]+=float(cg or 0); ann_p2b["sg"]+=float(sg or 0)
     totrow(ws_p2b,r_p2b,["ANNUAL TOTAL","","","","","","",
-                          "",round(ann_p2b["tv"],2),round(ann_p2b["ig"],2),
-                          round(ann_p2b["cg"],2),round(ann_p2b["sg"],2),""])
+                          _fsum("H",3,r_p2b-1),_fsum("I",3,r_p2b-1),_fsum("J",3,r_p2b-1),_fsum("K",3,r_p2b-1),
+                          _fsum("L",3,r_p2b-1)])
     ws_p2b.sheet_properties.tabColor="375623"
 
     # -- SHEET: GST Sales Detail (party-wise monthly) --------------------
@@ -5226,9 +5232,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             ws_gsd.row_dimensions[r_gsd].height=15; r_gsd+=1
             ann_gsd["tx"]+=m_tx; ann_gsd["cg"]+=m_cg; ann_gsd["sg"]+=m_sg; ann_gsd["ig"]+=m_ig
     totrow(ws_gsd,r_gsd,["ANNUAL TOTAL","","","","",
-                          round(ann_gsd["tx"],2),round(ann_gsd["cg"],2),
-                          round(ann_gsd["sg"],2),round(ann_gsd["ig"],2),
-                          round(ann_gsd["cg"]+ann_gsd["sg"]+ann_gsd["ig"],2)])
+                          _fsum("F",3,r_gsd-1),_fsum("G",3,r_gsd-1),_fsum("H",3,r_gsd-1),_fsum("I",3,r_gsd-1)])
     ws_gsd.sheet_properties.tabColor="2E75B6"
 
     # -- SHEET: Turnover Match (AIS vs GST) -----------------------------
@@ -5267,7 +5271,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             elif ci==6: cv.number_format="0.00%"
         ws_tm.row_dimensions[r_tm].height=15; r_tm+=1
         ann_tm["r1"]+=r1_tx
-    totrow(ws_tm,r_tm,["ANNUAL TOTAL",0,round(ann_tm["r1"],2),0,"Annual","","Full year GSTR-1 vs AIS"])
+    totrow(ws_tm,r_tm,["ANNUAL TOTAL",_fsum("B",3,r_tm-1),_fsum("C",3,r_tm-1),_fsum("D",3,r_tm-1),"Annual","","Full year GSTR-1 vs AIS"])
     ws_tm.sheet_properties.tabColor="974706"
 
     # ======================================================

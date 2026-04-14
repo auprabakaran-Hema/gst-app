@@ -55,11 +55,34 @@ def _bd():
     x=Side(style="thin"); return Border(left=x,right=x,top=x,bottom=x)
 def _al(h="left",w=False): return Alignment(horizontal=h,vertical="center",wrap_text=w)
 
+def _is_formula(v): return isinstance(v,str) and v.startswith("=")
+
 def _c(ws,r,col,v,bg=ALT1,bold=False,fg="000000",align="left",numfmt=None,size=9):
     c=ws.cell(row=r,column=col,value=v)
     c.font=_fn(bold,fg,size); c.fill=_f(bg); c.alignment=_al(align); c.border=_bd()
-    if numfmt and isinstance(v,(int,float)): c.number_format=numfmt
+    # Apply number_format to numeric values AND formula cells (formulas evaluate to numbers)
+    if numfmt and (isinstance(v,(int,float)) or _is_formula(v)):
+        c.number_format=numfmt
+    elif _is_formula(v) and not numfmt:
+        c.number_format=NUM_FMT
     return c
+
+def _fc(ws,r,col,formula,bg=ALT1,bold=False,fg="000000",numfmt=None,size=9):
+    """Write an Excel formula cell with right-aligned numeric formatting."""
+    return _c(ws,r,col,formula,bg,bold,fg,"right",numfmt or NUM_FMT,size)
+
+def _fsum(col_letter,row_start,row_end):
+    """=SUM(B3:B14)"""
+    return f"=SUM({col_letter}{row_start}:{col_letter}{row_end})"
+
+def _fdiff(col_a,col_b,row):
+    """=B3-C3"""
+    return f"={col_a}{row}-{col_b}{row}"
+
+def _fsum_multi(cols,row_start,row_end):
+    """=SUM(B3:B14)+SUM(C3:C14) etc."""
+    return "+".join(f"SUM({c}{row_start}:{c}{row_end})" for c in cols)
+if False: _fsum_multi=_fsum_multi  # keep linter happy
 
 def _title(ws,txt,nc):
     ws.merge_cells(f"A1:{get_column_letter(nc)}1")
@@ -80,9 +103,10 @@ def _tot(ws,ri,vals,bg=TOT_BG,fgc="000000"):
     for ci,v in enumerate(vals,1):
         c=ws.cell(row=ri,column=ci,value=v)
         c.font=_fn(True,fgc,9); c.fill=_f(bg)
-        c.alignment=_al("right" if isinstance(v,(int,float)) else "left")
+        is_num = isinstance(v,(int,float)) or _is_formula(v)
+        c.alignment=_al("right" if is_num else "left")
         c.border=_bd()
-        if isinstance(v,(int,float)): c.number_format=NUM_FMT
+        if is_num: c.number_format=NUM_FMT
     ws.row_dimensions[ri].height=18
 
 def _sep(ws,ri,txt,nc,bg=SEC_BG):
@@ -948,6 +972,7 @@ def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
         # Deductor header
         _sep(ws2,ri2,f"{d['name']}  |  TAN: {d['tan']}  |  Total Deposited ₹{d['total_deposited']:,.2f}",
              len(C2),bg=MED_BLUE); ri2+=1
+        blk_start=ri2
         for tx in d["transactions"]:
             bg2=ALT2 if ri2%2==0 else ALT1
             sbg=(GREEN_BG if tx["status"]=="F" else
@@ -963,13 +988,17 @@ def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
             _c(ws2,ri2,8,_n(tx["tds_deposited"]),bg2,align="right",numfmt=NUM_FMT)
             _c(ws2,ri2,9,"",bg2)
             ws2.row_dimensions[ri2].height=14; ri2+=1
+        blk_end=ri2-1
+        # Use SUM formulas instead of hard-coded Python totals
         _tot(ws2,ri2,[f"Subtotal — {d['name'][:25]}","","","","",
-                      _n(d["total_paid"]),_n(d["total_deducted"]),
-                      _n(d["total_deposited"]),""]);ri2+=2
+                      _fsum("F",blk_start,blk_end),
+                      _fsum("G",blk_start,blk_end),
+                      _fsum("H",blk_start,blk_end),""]);ri2+=2
 
     # TCS
     if data_26as["tcs"]:
         _sep(ws2,ri2,"PART VI — Tax Collected at Source (TCS)",len(C2),bg="375623"); ri2+=1
+        tcs_start=ri2
         for t in data_26as["tcs"]:
             bg2=ALT2 if ri2%2==0 else ALT1
             _c(ws2,ri2,1,t["name"][:34],bg2); _c(ws2,ri2,2,t["tan"],bg2)
@@ -980,8 +1009,9 @@ def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
             _c(ws2,ri2,9,"TCS",bg2)
             ws2.row_dimensions[ri2].height=14; ri2+=1
 
+    # Grand Total: SUM entire H column from row 3
     _tot(ws2,ri2,["GRAND TOTAL","","","","","",
-                  "",_n(total_tds),""],bg=DARK_BLUE,fgc="FFFFFF")
+                  "",_fsum("H",3,ri2-1),""],bg=DARK_BLUE,fgc="FFFFFF")
     ws2.sheet_properties.tabColor="2E75B6"
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1020,9 +1050,11 @@ def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
            "EBF3FB" if gstr1a_v else bgu,align="right",numfmt=NUM_FMT if gstr1a_v is not None else None)
         _c(ws3,ri3,6,_n(gstr3b_v) if gstr3b_v is not None else "",
            "FFF2CC" if gstr3b_v else bgu,align="right",numfmt=NUM_FMT if gstr3b_v is not None else None)
-        _c(ws3,ri3,7,_n(diff) if bold and diff is not None else "",
-           dbg if bold else bgu,bold=bold,align="right",
-           numfmt=NUM_FMT if bold and diff is not None else None)
+        # Excel formula: Diff = GSTR-1 (col D) minus TIS Accepted (col C)
+        if bold and gstr1_v is not None:
+            _c(ws3,ri3,7,f"=D{ri3}-C{ri3}",dbg,bold=bold,align="right",numfmt=NUM_FMT)
+        else:
+            _c(ws3,ri3,7,"",dbg if bold else bgu)
         _c(ws3,ri3,8,st,dbg if bold else bgu,bold=bold)
         _c(ws3,ri3,9,rmk,bgu)
         ws3.row_dimensions[ri3].height=15; ri3+=1
@@ -1160,12 +1192,14 @@ def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
             if m and status=="Active":
                 gstin_total_tv+=ttv; gstin_total_taxable+=tatv
                 gstin_r1_total+=r1_v; gstin_r1a_total+=r1a_v; gstin_3b_total+=r3b_v
+        blk4_start=ri4-12; blk4_end=ri4-1  # 12 months of data
         _tot(ws4,ri4,[f"Total — {gstin_v}","",
-                      _n(gstin_total_tv),_n(gstin_total_taxable),
-                      _n(gstin_r1_total) if gstin_r1_total else "",
-                      _n(gstin_r1a_total) if gstin_r1a_total else "",
-                      _n(gstin_3b_total)  if gstin_3b_total  else "",
-                      "","",""]); ri4+=2
+                      _fsum("C",blk4_start,blk4_end),
+                      _fsum("D",blk4_start,blk4_end),
+                      _fsum("E",blk4_start,blk4_end),
+                      _fsum("F",blk4_start,blk4_end),
+                      _fsum("G",blk4_start,blk4_end),
+                      f"=E{ri4}-D{ri4}","",""]); ri4+=2
 
     # Combined all GSTINs total
     all_months_total_tv=sum(
@@ -1177,8 +1211,9 @@ def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
         for months in data_ais["gst_turnover_monthly"].values()
     )
     _tot(ws4,ri4,["GRAND TOTAL — ALL GSTINs (Same PAN)","",
-                  _n(all_months_total_tv),_n(all_months_total_taxable),
-                  _n(gst_turnover),"","","","",""],
+                  _fsum("C",4,ri4-1),_fsum("D",4,ri4-1),
+                  _fsum("E",4,ri4-1),_fsum("F",4,ri4-1),
+                  _fsum("G",4,ri4-1),f"=E{ri4}-D{ri4}","",""],
          bg=DARK_BLUE,fgc="FFFFFF")
     ws4.sheet_properties.tabColor="1F3864"
 
