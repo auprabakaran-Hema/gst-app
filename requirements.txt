@@ -1,9 +1,21 @@
-flask>=3.0
-gunicorn>=21.0
-openpyxl>=3.1
-pandas>=2.0
-pdfplumber>=0.10
-PyPDF2>=3.0
-werkzeug>=3.0
-selenium
-webdriver-manager
+# ── Web Framework ─────────────────────────────────────────────────
+flask>=3.0.0,<4.0.0
+werkzeug>=3.0.0,<4.0.0
+gunicorn>=22.0.0,<23.0.0
+
+# ── Data / Excel ───────────────────────────────────────────────────
+pandas>=2.2.0,<3.0.0
+openpyxl>=3.1.2,<4.0.0
+xlrd>=2.0.1,<3.0.0          # legacy .xls support
+
+# ── PDF handling ───────────────────────────────────────────────────
+pdfplumber>=0.11.0,<1.0.0
+PyPDF2>=3.0.1,<4.0.0
+pikepdf>=8.11.0,<9.0.0      # PDF password unlock (needs libqpdf — see render.yaml)
+
+# ── Browser automation (GST + IT portal auto-download) ────────────
+selenium>=4.21.0,<5.0.0
+webdriver-manager>=4.0.1,<5.0.0
+
+# ── HTTP ───────────────────────────────────────────────────────────
+requests>=2.31.0,<3.0.0

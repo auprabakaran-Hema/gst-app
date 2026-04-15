@@ -1,14 +1,25 @@
 services:
   - type: web
-    name: gst-recon-portal
-    env: python
-    region: singapore
+    name: gst-it-portal
+    runtime: python
     buildCommand: |
-      apt-get update -qq && apt-get install -y -qq chromium-browser chromium-driver
+      apt-get update && apt-get install -y \
+        chromium-browser \
+        chromium-chromedriver \
+        libqpdf-dev \
+        libqpdf29 \
+        --no-install-recommends && \
+      pip install --upgrade pip && \
       pip install -r requirements.txt
-    startCommand: gunicorn app:app --workers 2 --timeout 300 --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 300 --worker-class gthread
     envVars:
-      - key: GST_HEADLESS
+      - key: RENDER
         value: "true"
-      - key: PYTHON_VERSION
-        value: 3.11.0
+      - key: PYTHONUNBUFFERED
+        value: "true"
+      - key: CHROME_BIN
+        value: /usr/bin/chromium-browser
+      - key: CHROMEDRIVER_PATH
+        value: /usr/bin/chromedriver
+    plan: standard          # needs at least 512 MB RAM; upgrade to pro for bulk jobs
+    healthCheckPath: /

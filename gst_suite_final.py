@@ -1215,17 +1215,16 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                 log.warning(f"    GSTR1A trigger failed [{month_name}]: {e}")
                 triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
 
-        # -- GSTR-2B: GENERATE + DOWNLOAD IMMEDIATELY -------
-        # (gstr2b.gst.gov.in generates the file within seconds)
+        # -- GSTR-2B: direct download like GSTR-3B ----------
+        # Click DOWNLOAD on tile → file downloads directly → rename
         if "GSTR2B" in returns_todo:
             try:
                 safe_go_to_dashboard(driver, log)
                 select_and_search(driver, month_name, log)
                 save_name = f"GSTR2B_{month_name}_{year}.xlsx"
                 if click_tile_download(driver, "GSTR2B", log):
-                    time.sleep(PAGE_WAIT)
-                    if generate_then_download_immediate(
-                            driver, client_dir, save_name, log, max_wait=90):
+                    time.sleep(PAGE_WAIT + 3)
+                    if rename_latest(client_dir, save_name, [".xlsx", ".zip", ".json"], log):
                         triggered[f"{key}_GSTR2B"] = "OK"
                     else:
                         triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
@@ -6760,6 +6759,10 @@ def ask_returns_menu():
                 {"GSTR1", "GSTR2B", "GSTR2A"}),
         ("10", "Tax Liability & ITC Comparison only  (downloads 2024-25 + 2023-24)",
                 {"TAX_LIABILITY"}),
+        ("13", "GSTR-1 + GSTR-2B + GSTR-3B  (NO GSTR-2A)",
+                {"GSTR1", "GSTR2B", "GSTR3B"}),
+        ("14", "GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B  (NO GSTR-2A, 1A if available)",
+                {"GSTR1", "GSTR1A", "GSTR2B", "GSTR3B"}),
         ("11", "OFFLINE — Make Reconciliation Excel from already-downloaded files (no browser)",
                 "OFFLINE_RECON"),
         ("12", "RETRY FAILED — Read Master Report Excel and re-download failed months",
@@ -6811,6 +6814,8 @@ def main():
     print("             GSTR-2B (Excel) + GSTR-2A (Excel)")
     print("             GSTR-3B (PDF) + Tax Liability & ITC")
     print("  Option 11: Make Excel from already-downloaded files")
+    print("  Option 13: GSTR-1 + GSTR-2B + GSTR-3B  (No GSTR-2A)")
+    print("  Option 14: GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B  (No GSTR-2A)")
     print("="*60)
 
     if MISSING:

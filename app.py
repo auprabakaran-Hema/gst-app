@@ -400,6 +400,7 @@ footer a{color:var(--accent);text-decoration:none}
   <button class="tb" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
   <button class="tb" onclick="switchTab('autodl',event)">🌐 Auto Download</button>
   <button class="tb" onclick="switchTab('bulk',event)">📋 Bulk Download</button>
+  <button class="tb" onclick="switchTab('itbulk',event)">📋 IT Bulk Download</button>
   <button class="tb" onclick="switchTab('itrecon',event)">🏦 Income Tax</button>
 </div>
 
@@ -715,6 +716,8 @@ footer a{color:var(--accent);text-decoration:none}
         <option value="gstr2b">GSTR-2B Only</option>
         <option value="gstr2a">GSTR-2A Only</option>
         <option value="gstr3b">GSTR-3B Only</option>
+        <option value="gstr1_2b_3b">GSTR-1 + GSTR-2B + GSTR-3B (No 2A)</option>
+        <option value="gstr1_1a_2b_3b">GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B (No 2A)</option>
       </select></div>
   </div>
 </div>
@@ -911,6 +914,8 @@ footer a{color:var(--accent);text-decoration:none}
         <option value="gstr2b">GSTR-2B Only</option>
         <option value="gstr2a">GSTR-2A Only</option>
         <option value="gstr3b">GSTR-3B Only</option>
+        <option value="gstr1_2b_3b">GSTR-1 + GSTR-2B + GSTR-3B (No 2A)</option>
+        <option value="gstr1_1a_2b_3b">GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B (No 2A)</option>
       </select>
     </div>
   </div>
@@ -970,6 +975,124 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 
 </div><!-- /tab-bulk -->
+
+<!-- ══ TAB: IT BULK DOWNLOAD ══ -->
+<div class="tp" id="tab-itbulk">
+
+<div class="card">
+  <div class="ct">📋 IT Bulk Download — Multiple Clients</div>
+  <div class="pills">
+    <span class="pill">Form 26AS</span><span class="pill">AIS PDF</span>
+    <span class="pill">TIS PDF</span><span class="pill">IT Recon Excel</span>
+    <span class="pill">One-time OTP per client</span>
+  </div>
+  <div class="info-box" style="margin-top:.75rem">
+    <strong>How it works:</strong><br>
+    1. Download the Excel template → fill in client PAN, IT password, and (optional) GSTIN<br>
+    2. Upload it here → click Start IT Bulk Download<br>
+    3. For each client, server shows OTP/CAPTCHA screenshot → you enter it → download proceeds automatically<br>
+    4. After first OTP per client, "Remember Device" is auto-clicked — future runs are fully automatic<br>
+    5. All 26AS, AIS, TIS PDFs + IT Recon Excels are zipped for download<br><br>
+    <strong style="color:var(--grn)">✅ No limit on clients. Each client uses its own login session.</strong>
+  </div>
+  <a href="/api/it-bulk-template" class="btn-dl"
+     style="display:inline-block;padding:.55rem 1.1rem;margin-top:.5rem">
+    ⬇ Download Client Template (Excel)
+  </a>
+</div>
+
+<div class="card">
+  <div class="ct">Upload Client List</div>
+  <div class="fg2">
+    <div class="fg">
+      <label>Client List Excel *</label>
+      <div class="dz" id="zone-itbulk" style="min-height:70px;flex-direction:row;padding:.6rem .75rem;gap:.65rem">
+        <div class="dz-ic" style="font-size:1.2rem">📊</div>
+        <div style="text-align:left">
+          <div class="dz-lb">it_clients.xlsx</div>
+          <div class="dz-cn" id="cnt-itbulk">No file</div>
+        </div>
+        <input type="file" accept=".xlsx,.xls" data-zone="itbulk" onchange="updateZone('itbulk',this)">
+      </div>
+    </div>
+    <div class="fg">
+      <label>Financial Year</label>
+      <select id="itbulk-fy">
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+      </select>
+    </div>
+    <div class="fg">
+      <label>Download Options</label>
+      <select id="itbulk-mode">
+        <option value="all">All — 26AS + AIS + TIS + IT Recon Excel</option>
+        <option value="pdfs">PDFs Only — 26AS + AIS + TIS</option>
+        <option value="26as">26AS Only</option>
+        <option value="ais_tis">AIS + TIS Only</option>
+        <option value="recon">IT Recon Excel Only (from uploaded PDFs)</option>
+      </select>
+    </div>
+  </div>
+  <button class="btn-orange" onclick="startITBulk()" id="itbulk-submit" style="margin-top:.5rem">
+    🚀 Start IT Bulk Download
+  </button>
+</div>
+
+<!-- Per-client OTP card -->
+<div class="card" id="itbulk-otp-card" style="display:none">
+  <div class="ct">📱 OTP / Login Required — <span id="itbulk-client-name" style="color:var(--accent)"></span></div>
+  <div class="info-box" style="margin-bottom:.8rem;font-size:.75rem">
+    The IT Portal screenshot is shown below for this client.<br>
+    <strong>If OTP was sent to mobile/email:</strong> Enter it below and click Submit.<br>
+    <strong>If no OTP is needed:</strong> Type <strong style="color:var(--accent)">SKIP</strong> and click Submit.<br>
+    <strong>After first OTP:</strong> "Remember Device" is auto-clicked — future runs skip OTP ✓
+  </div>
+  <div class="fg2" style="margin-bottom:.65rem;opacity:.6">
+    <div class="fg">
+      <label>PAN</label>
+      <input type="text" id="itbulk-cap-pan" readonly>
+    </div>
+  </div>
+  <div style="text-align:center;margin-bottom:.8rem">
+    <img id="itbulk-otp-img" src="" alt="IT Portal Screenshot"
+         style="max-width:100%;border-radius:8px;border:2px solid #a78bfa;background:#fff;padding:4px;cursor:pointer"
+         onclick="itBulkRefreshShot()">
+    <div style="font-size:.68rem;color:var(--muted);margin-top:.35rem;font-family:var(--mono)">Click to refresh screenshot</div>
+  </div>
+  <div style="display:flex;gap:.5rem;align-items:center">
+    <input type="text" id="itbulk-otp-input" placeholder="Enter OTP, CAPTCHA, or type SKIP"
+           style="flex:1;font-size:.85rem;letter-spacing:.1em"
+           onkeydown="if(event.key==='Enter')submitITBulkOTP()">
+    <button onclick="submitITBulkOTP()"
+            style="padding:.55rem 1.2rem;background:linear-gradient(135deg,#a78bfa,var(--accent2));
+                   border:none;border-radius:8px;color:#fff;font-weight:800;font-size:.82rem;cursor:pointer">
+      Submit →
+    </button>
+  </div>
+  <div id="itbulk-otp-err" style="color:var(--red);font-size:.72rem;margin-top:.4rem;font-family:var(--mono)"></div>
+</div>
+
+<!-- Progress -->
+<div class="card" id="itbulk-pw" style="display:none">
+  <div class="ct">IT Bulk Progress <span class="sbg s-p pulse" id="itbulk-badge">Running</span>
+    <span id="itbulk-counter" style="font-size:.7rem;color:var(--muted);font-family:var(--mono);margin-left:.5rem"></span>
+  </div>
+  <div class="pb-w"><div class="pb" id="itbulk-pb"></div></div>
+  <div class="lb" id="itbulk-lb"></div>
+</div>
+
+<!-- Results -->
+<div class="card" id="itbulk-dw" style="display:none">
+  <div class="ct">✅ IT Bulk Download Complete</div>
+  <div class="dl-g" id="itbulk-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted after 2 hours. Download the ZIP to save all client files.
+  </p>
+</div>
+
+</div><!-- /tab-itbulk -->
 
 <!-- ══ TAB 6: INCOME TAX RECONCILIATION ══ -->
 <div class="tp" id="tab-itrecon">
@@ -1100,8 +1223,88 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 </form>
 
-<!-- Progress -->
-<div class="card pw" id="it-pw">
+<!-- IT Auto Download Section -->
+<div class="card" style="border-color:rgba(124,58,237,.35)">
+  <div class="ct" style="color:#a78bfa">🌐 Auto Download from IT Portal</div>
+  <div class="info-box" style="margin-top:.6rem;font-size:.76rem">
+    <strong>How it works:</strong> Enter your IT portal credentials below → click <strong style="color:var(--org)">Start IT Auto Download</strong> →
+    OTP/CAPTCHA screenshot appears → enter it → server downloads <strong>26AS, AIS & TIS</strong> PDFs automatically.
+    Files are auto-loaded into the upload zones above.
+    <br><br>
+    <strong>Your password is used only for this session and never stored.</strong>
+  </div>
+  <div class="fg2" style="margin-top:.75rem">
+    <div class="fg"><label>IT Portal Username (PAN) *</label>
+      <input type="text" id="it-ad-user" placeholder="ABCDE1234F" maxlength="10" style="text-transform:uppercase"></div>
+    <div class="fg"><label>IT Portal Password *</label>
+      <input type="password" id="it-ad-pass" placeholder="Your IT portal password"></div>
+  </div>
+  <button class="btn-orange" id="it-ad-btn" style="margin-top:.7rem" onclick="startITAutoDownload()">
+    🌐 Start IT Auto Download (26AS + AIS + TIS)
+  </button>
+</div>
+
+<!-- IT Auto Download Progress -->
+<div class="card pw" id="it-ad-pw" style="display:none">
+  <div class="ct">IT Portal Download <span class="sbg s-p pulse" id="it-ad-badge">Running</span>
+    <a id="it-ad-ss-link" href="#" target="_blank" style="display:none;margin-left:.8rem;font-size:.7rem;padding:.2rem .6rem;
+       background:rgba(0,229,255,.12);border:1px solid var(--accent);border-radius:5px;
+       color:var(--accent);text-decoration:none;font-family:var(--mono)">🖥 View Screenshot</a>
+  </div>
+  <div class="pb-w"><div class="pb" id="it-ad-pb"></div></div>
+  <div class="lb" id="it-ad-lb"></div>
+</div>
+
+<!-- IT Auto Download OTP/CAPTCHA card -->
+<div class="card" id="it-ad-captcha-card" style="display:none">
+  <div class="ct">🔐 OTP / CAPTCHA Required</div>
+  <div class="info-box" style="margin-bottom:.8rem;font-size:.75rem">
+    The IT Portal screenshot is shown below.<br>
+    <strong>If OTP was sent to your phone/email:</strong> Enter it below and click Submit.<br>
+    <strong>If no OTP needed:</strong> Type <strong style="color:var(--accent)">SKIP</strong> and click Submit.<br>
+    <strong>If CAPTCHA shown:</strong> Type the CAPTCHA characters and click Submit.
+  </div>
+  <div style="text-align:center;margin-bottom:.8rem">
+    <img id="it-ad-captcha-img" src="" alt="IT Portal Screenshot"
+         style="max-width:100%;border-radius:8px;border:2px solid #a78bfa;background:#fff;padding:4px;cursor:pointer"
+         onclick="itAdRefreshShot()">
+    <div style="font-size:.68rem;color:var(--muted);margin-top:.35rem;font-family:var(--mono)">Click image to refresh</div>
+  </div>
+  <div style="display:flex;gap:.5rem;align-items:center">
+    <input type="text" id="it-ad-captcha-input" placeholder="Enter OTP, CAPTCHA, or type SKIP"
+           style="flex:1;font-size:.85rem;letter-spacing:.1em"
+           onkeydown="if(event.key==='Enter')itAdSubmit()">
+    <button onclick="itAdSubmit()"
+            style="padding:.55rem 1.2rem;background:linear-gradient(135deg,#a78bfa,var(--accent2));
+                   border:none;border-radius:8px;color:#fff;font-weight:800;font-size:.82rem;cursor:pointer">
+      Submit →
+    </button>
+  </div>
+  <div id="it-ad-captcha-err" style="color:var(--red);font-size:.72rem;margin-top:.4rem;font-family:var(--mono)"></div>
+</div>
+
+<!-- IT Auto Download results -->
+<div class="card dw" id="it-ad-dw" style="display:none">
+  <div class="ct">✅ IT Portal Downloads Ready</div>
+  <div class="dl-g" id="it-ad-dlg"></div>
+  <div style="margin-top:1rem;padding:.85rem;background:rgba(124,58,237,.05);border:1px solid rgba(124,58,237,.2);border-radius:9px">
+    <div style="font-size:.75rem;font-weight:700;color:#a78bfa;margin-bottom:.5rem">📤 Load into Upload Zones Above</div>
+    <p style="font-size:.72rem;color:var(--muted);margin-bottom:.65rem;line-height:1.6">
+      Click to automatically load downloaded PDFs into the upload zones (26AS → 26AS zone, AIS → AIS zone, TIS → TIS zone).
+    </p>
+    <button onclick="itAdTransfer()"
+            style="padding:.65rem 1.4rem;background:linear-gradient(135deg,#a78bfa,var(--accent2));
+                   border:none;border-radius:9px;color:#fff;font-weight:800;font-size:.85rem;cursor:pointer">
+      📤 Load PDFs into Upload Zones →
+    </button>
+    <span id="it-ad-transfer-status" style="font-size:.7rem;color:var(--muted);font-family:var(--mono);margin-left:.75rem"></span>
+  </div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted automatically after 2 hours. Download before closing.
+  </p>
+</div>
+
+
   <div class="ct">Processing <span class="sbg s-p pulse" id="it-badge">Running</span></div>
   <div class="pb-w"><div class="pb" id="it-pb"></div></div>
   <div class="lb" id="it-lb"></div>
@@ -2444,7 +2647,310 @@ const _origShowDownloads = showDownloads;
 // We'll wrap registration inside each show function call via pollJob / _itPoll / _adPoll
 
 
-</script>
+// ── IT Portal Auto Download ──────────────────────────────────────
+let _itAdJobId = null;
+let _itAdFiles = [];
+
+async function startITAutoDownload(){
+  const pan   = (document.getElementById('it-pan').value.trim() || document.getElementById('it-ad-user').value.trim()).toUpperCase();
+  const name  = document.getElementById('it-name').value.trim();
+  const user  = document.getElementById('it-ad-user').value.trim().toUpperCase() || pan;
+  const pass  = document.getElementById('it-ad-pass').value;
+  const fy    = document.getElementById('it-fy').value;
+
+  if(!pan || pan.length !== 10){ alert('Enter PAN (10 chars) in Company Details or IT Portal Username field'); return; }
+  if(!name){ alert('Enter Company Name above'); return; }
+  if(!pass){ alert('Enter IT Portal Password'); return; }
+
+  const btn = document.getElementById('it-ad-btn');
+  btn.disabled = true; btn.textContent = 'Starting…';
+
+  document.getElementById('it-ad-pw').style.display = 'block';
+  document.getElementById('it-ad-dw').style.display = 'none';
+  document.getElementById('it-ad-captcha-card').style.display = 'none';
+  document.getElementById('it-ad-lb').innerHTML = '';
+  document.getElementById('it-ad-pb').style.width = '0%';
+
+  try{
+    const res = await fetch('/api/it-auto-download', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({pan, company_name:name, username:user, password:pass, fy})
+    });
+    const d = await res.json();
+    if(d.error){ alert('Error: '+d.error); btn.disabled=false; btn.textContent='🌐 Start IT Auto Download (26AS + AIS + TIS)'; return; }
+    _itAdJobId = d.job_id;
+    const ssLink = document.getElementById('it-ad-ss-link');
+    if(ssLink){ ssLink.href='/api/debug-screenshot/'+d.job_id; ssLink.style.display='inline'; }
+    btn.textContent = 'Running…';
+    _itAdPoll(_itAdJobId);
+  }catch(err){
+    alert('Network error: '+err.message);
+    btn.disabled=false; btn.textContent='🌐 Start IT Auto Download (26AS + AIS + TIS)';
+  }
+}
+
+function _itAdAddLog(type, msg){
+  const b = document.getElementById('it-ad-lb'); if(!b) return;
+  const l = document.createElement('div'); l.className = type;
+  l.textContent = '['+new Date().toLocaleTimeString()+'] '+msg;
+  b.appendChild(l); b.scrollTop = b.scrollHeight;
+}
+
+async function _itAdPoll(jid){
+  try{
+    const r = await fetch('/api/job/'+jid);
+    const d = await r.json();
+    if(d.logs) d.logs.forEach(l => _itAdAddLog(l.type, l.msg));
+    if(d.progress != null) document.getElementById('it-ad-pb').style.width = d.progress+'%';
+
+    // Handle CAPTCHA/OTP card
+    const cc = document.getElementById('it-ad-captcha-card');
+    if(d.captcha_needed && d.captcha_img){
+      document.getElementById('it-ad-captcha-img').src = 'data:image/png;base64,'+d.captcha_img;
+      if(cc.style.display === 'none') {
+        cc.style.display = 'block';
+        cc.scrollIntoView({behavior:'smooth', block:'nearest'});
+        document.getElementById('it-ad-captcha-input').focus();
+      }
+    } else {
+      if(cc) cc.style.display = 'none';
+    }
+
+    if(d.status === 'done'){
+      document.getElementById('it-ad-pb').style.width = '100%';
+      document.getElementById('it-ad-badge').className = 'sbg s-d';
+      document.getElementById('it-ad-badge').textContent = 'Complete';
+      document.getElementById('it-ad-btn').disabled = false;
+      document.getElementById('it-ad-btn').textContent = '🌐 Start IT Auto Download (26AS + AIS + TIS)';
+      if(cc) cc.style.display = 'none';
+      _itAdFiles = d.files || [];
+      _itAdShowFiles(jid, d.files);
+      return;
+    }
+    if(d.status === 'error'){
+      document.getElementById('it-ad-badge').className = 'sbg s-e';
+      document.getElementById('it-ad-badge').textContent = 'Failed';
+      document.getElementById('it-ad-btn').disabled = false;
+      document.getElementById('it-ad-btn').textContent = '🌐 Start IT Auto Download (26AS + AIS + TIS)';
+      if(cc) cc.style.display = 'none';
+      return;
+    }
+    // Show live files during progress
+    if(d.files && d.files.length){
+      _itAdFiles = d.files;
+      _itAdShowFiles(jid, d.files);
+    }
+    setTimeout(() => _itAdPoll(jid), 1500);
+  }catch(e){ setTimeout(() => _itAdPoll(jid), 3000); }
+}
+
+async function itAdSubmit(){
+  const text = document.getElementById('it-ad-captcha-input').value.trim();
+  if(!text){ document.getElementById('it-ad-captcha-err').textContent = 'Please type a value first'; return; }
+  document.getElementById('it-ad-captcha-err').textContent = '';
+  try{
+    const res = await fetch(`/api/captcha-submit/${_itAdJobId}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({captcha: text})
+    });
+    const d = await res.json();
+    if(d.ok){
+      document.getElementById('it-ad-captcha-input').value = '';
+      _itAdAddLog('ok', 'Input submitted — continuing...');
+    } else {
+      document.getElementById('it-ad-captcha-err').textContent = 'Error: '+(d.error||'Failed');
+    }
+  }catch(err){ document.getElementById('it-ad-captcha-err').textContent = 'Network error: '+err.message; }
+}
+
+async function itAdRefreshShot(){
+  if(!_itAdJobId) return;
+  try{
+    const res = await fetch(`/api/captcha-refresh/${_itAdJobId}`, {method:'POST'});
+    const d = await res.json();
+    if(d.img) document.getElementById('it-ad-captcha-img').src = 'data:image/png;base64,'+d.img;
+  }catch(e){}
+}
+
+function _itAdShowFiles(jid, files){
+  const sec  = document.getElementById('it-ad-dw');
+  const grid = document.getElementById('it-ad-dlg');
+  if(!sec || !grid || !files || !files.length) return;
+  sec.style.display = 'block';
+  grid.innerHTML = '';
+  files.forEach(f => {
+    const icon = f.name.endsWith('.pdf') ? '📄' : f.name.endsWith('.zip') ? '🗜' : '📊';
+    const c = document.createElement('div'); c.className = 'dlc';
+    c.innerHTML = `<div style="font-size:1.4rem">${icon}</div>
+      <div class="dl-n">${f.name}</div>
+      <div class="dl-s">${f.size||''}</div>
+      <a href="/api/it-dl/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
+    grid.appendChild(c);
+  });
+  _registerFilesForGlobalDl('it-autodl', jid, files, '/api/it-dl');
+}
+
+async function itAdTransfer(){
+  if(!_itAdJobId || !_itAdFiles.length){ alert('No downloaded files to transfer'); return; }
+  const zoneMap = {'26AS': 'it26as', 'AIS': 'itais', 'TIS': 'ittis'};
+  const toTransfer = _itAdFiles.filter(f => !f.name.endsWith('.zip'));
+  let ok = 0;
+  for(const f of toTransfer){
+    let zone = null;
+    const upper = f.name.toUpperCase();
+    for(const [key, zn] of Object.entries(zoneMap)){
+      if(upper.includes(key)){ zone = zn; break; }
+    }
+    if(!zone) continue;
+    try{
+      const resp = await fetch(`/api/it-dl/${_itAdJobId}/${encodeURIComponent(f.name)}`);
+      if(!resp.ok) continue;
+      const blob = await resp.blob();
+      const file = new File([blob], f.name, {type:'application/pdf'});
+      zoneFiles[zone] = [file];
+      const cnt = document.getElementById('cnt-'+zone);
+      const el  = document.getElementById('zone-'+zone);
+      if(cnt) cnt.textContent = '1 file selected';
+      if(el)  el.classList.add('has-files');
+      ok++;
+    }catch(e){ console.warn('Transfer error:', e); }
+  }
+  const ts = document.getElementById('it-ad-transfer-status');
+  if(ok > 0){
+    if(ts) { ts.textContent = `✅ ${ok} PDF(s) loaded into zones`; ts.style.color='var(--grn)'; }
+  } else {
+    if(ts) { ts.textContent = '❌ Transfer failed — try again'; ts.style.color='var(--red)'; }
+  }
+}
+
+// ── IT Bulk Download ─────────────────────────────────────────────
+let _itBulkJobId = null;
+
+async function startITBulk(){
+  const files = zoneFiles['itbulk'] || [];
+  if(!files.length){ alert('Upload an IT client list Excel first'); return; }
+  const fy   = document.getElementById('itbulk-fy').value;
+  const mode = document.getElementById('itbulk-mode').value;
+  const fd = new FormData();
+  files.forEach(f => fd.append('clients_file', f));
+  fd.append('fy', fy);
+  fd.append('mode', mode);
+  document.getElementById('itbulk-pw').style.display = 'block';
+  document.getElementById('itbulk-dw').style.display = 'none';
+  document.getElementById('itbulk-otp-card').style.display = 'none';
+  document.getElementById('itbulk-lb').innerHTML = '';
+  document.getElementById('itbulk-pb').style.width = '0%';
+  const btn = document.getElementById('itbulk-submit');
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try{
+    const res = await fetch('/api/it-bulk-start', {method:'POST', body:fd});
+    const d   = await res.json();
+    if(d.error){ alert('Error: '+d.error); btn.disabled=false; btn.textContent='🚀 Start IT Bulk Download'; return; }
+    _itBulkJobId = d.job_id;
+    _itBulkAddLog('ok', `Loaded ${d.total} clients. Starting…`);
+    _itBulkPoll(_itBulkJobId);
+  }catch(err){
+    alert('Network error: '+err.message);
+    btn.disabled=false; btn.textContent='🚀 Start IT Bulk Download';
+  }
+}
+function _itBulkAddLog(type, msg){
+  const b = document.getElementById('itbulk-lb'); if(!b) return;
+  const l = document.createElement('div'); l.className = type;
+  l.textContent = '['+new Date().toLocaleTimeString()+'] '+msg;
+  b.appendChild(l); b.scrollTop = b.scrollHeight;
+}
+async function _itBulkPoll(jid){
+  try{
+    const r = await fetch('/api/job/'+jid);
+    const d = await r.json();
+    if(d.logs) d.logs.forEach(l => _itBulkAddLog(l.type, l.msg));
+    if(d.progress != null) document.getElementById('itbulk-pb').style.width = d.progress+'%';
+    if(d.counter) document.getElementById('itbulk-counter').textContent = d.counter;
+    const oc = document.getElementById('itbulk-otp-card');
+    if(d.captcha_needed && d.captcha_img){
+      document.getElementById('itbulk-otp-img').src = 'data:image/png;base64,'+d.captcha_img;
+      if(d.captcha_company){
+        document.getElementById('itbulk-client-name').textContent = d.captcha_company.name || d.captcha_company.pan || '';
+        document.getElementById('itbulk-cap-pan').value = d.captcha_company.pan || '';
+      }
+      if(oc.style.display === 'none'){
+        oc.style.display='block';
+        oc.scrollIntoView({behavior:'smooth',block:'center'});
+        document.getElementById('itbulk-otp-input').focus();
+      }
+    } else { if(oc) oc.style.display='none'; }
+    if(d.status==='done'){
+      document.getElementById('itbulk-badge').className='sbg s-d';
+      document.getElementById('itbulk-badge').textContent='Complete';
+      document.getElementById('itbulk-pb').style.width='100%';
+      document.getElementById('itbulk-submit').disabled=false;
+      document.getElementById('itbulk-submit').textContent='🚀 Start IT Bulk Download';
+      if(oc) oc.style.display='none';
+      _itBulkShowFiles(jid, d.files);
+      _registerFilesForGlobalDl('itbulk', jid, d.files||[], '/api/it-dl');
+      return;
+    }
+    if(d.status==='error'){
+      document.getElementById('itbulk-badge').className='sbg s-e';
+      document.getElementById('itbulk-badge').textContent='Failed';
+      document.getElementById('itbulk-submit').disabled=false;
+      document.getElementById('itbulk-submit').textContent='🚀 Start IT Bulk Download';
+      if(oc) oc.style.display='none';
+      return;
+    }
+    setTimeout(()=>_itBulkPoll(jid),1500);
+  }catch(e){ setTimeout(()=>_itBulkPoll(jid),3000); }
+}
+async function submitITBulkOTP(){
+  const text = document.getElementById('itbulk-otp-input').value.trim();
+  if(!text){ document.getElementById('itbulk-otp-err').textContent='Enter a value or type SKIP'; return; }
+  document.getElementById('itbulk-otp-err').textContent='';
+  try{
+    const res = await fetch(`/api/it-bulk-otp/${_itBulkJobId}`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({otp:text})
+    });
+    const d = await res.json();
+    if(d.ok){
+      document.getElementById('itbulk-otp-input').value='';
+      _itBulkAddLog('ok','OTP submitted — continuing…');
+      document.getElementById('itbulk-otp-card').style.display='none';
+    } else {
+      document.getElementById('itbulk-otp-err').textContent=d.error||'Failed';
+    }
+  }catch(err){ document.getElementById('itbulk-otp-err').textContent='Network error: '+err.message; }
+}
+async function itBulkRefreshShot(){
+  if(!_itBulkJobId) return;
+  try{
+    const res=await fetch(`/api/captcha-refresh/${_itBulkJobId}`,{method:'POST'});
+    const d=await res.json();
+    if(d.img) document.getElementById('itbulk-otp-img').src='data:image/png;base64,'+d.img;
+  }catch(e){}
+}
+function _itBulkShowFiles(jid, files){
+  const sec=document.getElementById('itbulk-dw'),grid=document.getElementById('itbulk-dlg');
+  sec.style.display='block'; grid.innerHTML='';
+  if(!files||!files.length){ grid.innerHTML='<p style="color:var(--muted);font-size:.8rem">No files downloaded.</p>'; return; }
+  if(files.length>1){
+    const ab=document.createElement('button');
+    ab.className='btn-sec'; ab.style.cssText='margin-bottom:.75rem;width:auto;padding:.5rem 1.2rem;';
+    ab.innerHTML=`⬇ Download All (${files.length} files)`;
+    ab.onclick=()=>_downloadAllFiles(files,jid,'/api/it-dl');
+    grid.appendChild(ab);
+  }
+  files.forEach(f=>{
+    const icon=f.name.endsWith('.pdf')?'📄':f.name.endsWith('.zip')?'🗜':'📊';
+    const c=document.createElement('div'); c.className='dlc';
+    c.innerHTML=`<div style="font-size:1.4rem">${icon}</div>
+      <div class="dl-n">${f.name}</div><div class="dl-s">${f.size||''}</div>
+      <a href="/api/it-dl/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
+    grid.appendChild(c);
+  });
+}
+
+
 </body>
 </html>"""
 
@@ -3648,17 +4154,40 @@ def _auto_download(job_id, gstin, client_name,
         return False
 
     def _generate_and_download(save_name, gen_xpaths, dl_extensions, max_wait=120):
-        """Click GENERATE → poll for download link → click it (mirrors generate_then_download_immediate)"""
+        """Click GENERATE → immediately check for auto-download → poll for download link.
+        GSTR-2B / GSTR-3B Excel downloads start instantly when Generate is clicked.
+        GSTR-1 / GSTR-2A need portal to generate (may take 30s-2min)."""
+        import time as _t
+        start_time = _t.time()
         time.sleep(3)
         log(f"  Generate page: {driver.current_url}")
 
+        # List files already in dl_dir before clicking
+        before_files = {str(f): f.stat().st_mtime for f in dl_dir.iterdir()
+                        if f.suffix.lower() in [e.lower() for e in dl_extensions]}
+
         gen_clicked = _try_click(gen_xpaths, timeout=10)
         if gen_clicked:
-            log(f"  GENERATE clicked — polling for download link...")
+            log(f"  GENERATE clicked — checking for instant download...")
         else:
             log(f"  ⚠ GENERATE button not found — checking for existing link...", "warn")
-        time.sleep(3)
 
+        # ── Immediate download check (GSTR-2B Excel / GSTR-3B Excel download instantly) ──
+        for _chk in range(25):   # up to 5 seconds
+            time.sleep(0.2)
+            for f in dl_dir.iterdir():
+                if f.suffix.lower() not in [e.lower() for e in dl_extensions]:
+                    continue
+                # New file or grown file?
+                prev_mtime = before_files.get(str(f))
+                if prev_mtime is None or f.stat().st_mtime > prev_mtime + 0.1:
+                    if f.stat().st_size > 500 and not f.name.endswith(".crdownload"):
+                        log(f"  ⚡ Instant download detected: {f.name}")
+                        time.sleep(1)  # let it finish
+                        if _rename_latest(save_name, dl_extensions):
+                            return True
+
+        # ── Polling: wait for download link to appear (GSTR-1 / GSTR-2A which need portal generation) ──
         DOWNLOAD_XP = [
             "//a[contains(text(),'Click here to download')]",
             "//a[contains(text(),'click here to download')]",
@@ -3686,13 +4215,25 @@ def _auto_download(job_id, gstin, client_name,
                                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
                                 time.sleep(0.5)
                                 driver.execute_script("arguments[0].click();", el)
-                                time.sleep(10)
+                                time.sleep(8)
                                 if _rename_latest(save_name, dl_extensions):
                                     return True
                 except: continue
 
-            elapsed += 5
-            time.sleep(5)
+            # Also check dl_dir for any new file that may have arrived
+            for f in dl_dir.iterdir():
+                if f.suffix.lower() not in [e.lower() for e in dl_extensions]:
+                    continue
+                prev_mtime = before_files.get(str(f))
+                if (prev_mtime is None or f.stat().st_mtime > prev_mtime + 0.1) and \
+                   f.stat().st_size > 500 and not f.name.endswith(".crdownload"):
+                    log(f"  📥 File appeared in downloads: {f.name}")
+                    time.sleep(1)
+                    if _rename_latest(save_name, dl_extensions):
+                        return True
+
+            elapsed += 3
+            time.sleep(3)
 
             if elapsed % 30 == 0:
                 log(f"  Still waiting... ({elapsed}s) — refreshing page")
@@ -3742,6 +4283,9 @@ def _auto_download(job_id, gstin, client_name,
     if returns == "gstr2b": returns_set = {"GSTR2B"}
     if returns == "gstr2a": returns_set = {"GSTR2A"}
     if returns == "gstr3b": returns_set = {"GSTR3B"}
+    # Extra combo options (no GSTR-2A)
+    if returns == "gstr1_2b_3b":    returns_set = {"GSTR1", "GSTR2B", "GSTR3B"}
+    if returns == "gstr1_1a_2b_3b": returns_set = {"GSTR1", "GSTR1A", "GSTR2B", "GSTR3B"}
 
     # ── Setup browser ────────────────────────────────────────────────
     try:
@@ -3766,8 +4310,15 @@ def _auto_download(job_id, gstin, client_name,
         opts.add_experimental_option("useAutomationExtension", False)
 
         try:
-            from webdriver_manager.chrome import ChromeDriverManager
-            driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=opts)
+            import shutil as _sh
+            _IS_SERVER = bool(os.environ.get("RENDER") or os.environ.get("HEADLESS"))
+            _cb = _sh.which("chromium-browser") or _sh.which("chromium") or _sh.which("google-chrome")
+            if _IS_SERVER and _cb:
+                opts.binary_location = _cb
+                driver = webdriver.Chrome(service=ChromeService(), options=opts)
+            else:
+                from webdriver_manager.chrome import ChromeDriverManager
+                driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=opts)
         except Exception:
             driver = webdriver.Chrome(options=opts)
 
@@ -3856,7 +4407,7 @@ def _auto_download(job_id, gstin, client_name,
                     _select_and_search(month_name)
                     current_tile[0] = "GSTR1"
                     if _click_tile_download("GSTR1"):
-                        time.sleep(8)
+                        time.sleep(4)
                         if _try_click(GENERATE_JSON_XP, timeout=8):
                             log(f"  GSTR-1 GENERATE JSON clicked ✓")
                             triggered[f"{key}_GSTR1"] = "TRIGGERED"
@@ -3880,7 +4431,7 @@ def _auto_download(job_id, gstin, client_name,
                     _select_and_search(month_name)
                     current_tile[0] = "GSTR1A"
                     if _click_tile_download("GSTR1A"):
-                        time.sleep(8)
+                        time.sleep(4)
                         if _try_click(GENERATE_JSON_XP, timeout=8):
                             log(f"  GSTR-1A GENERATE JSON clicked ✓")
                             triggered[f"{key}_GSTR1A"] = "TRIGGERED"
@@ -3896,21 +4447,20 @@ def _auto_download(job_id, gstin, client_name,
                     triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
                     save_failure_screenshot(f"GSTR1A {month_name} {year} — Exception: {str(e)[:60]}")
 
-            # GSTR-2B: GENERATE EXCEL + download immediately (generates in seconds)
+            # GSTR-2B: direct download like GSTR-3B (no generate button, no wait loop)
             if "GSTR2B" in returns_set:
                 try:
-                    log(f"\n── {month_name} {year}: GSTR-2B (generate + download) ──")
+                    log(f"\n── {month_name} {year}: GSTR-2B (direct download) ──")
                     _go_to_dashboard()
                     _select_and_search(month_name)
                     save_name = f"GSTR2B_{month_name}_{year}.xlsx"
                     current_tile[0] = "GSTR2B"
                     if _click_tile_download("GSTR2B"):
-                        time.sleep(8)
-                        if _generate_and_download(save_name, GENERATE_EXCEL_XP, [".xlsx",".zip"], max_wait=90):
+                        time.sleep(11)
+                        if _rename_latest(save_name, [".xlsx", ".zip", ".json"]):
                             triggered[f"{key}_GSTR2B"] = "OK"
                             src_f = dl_dir / save_name
                             sz = src_f.stat().st_size // 1024
-                            # Copy immediately to out_dir so /api/dl-file works during live polling
                             try: _shutil.copy2(str(src_f), str(out_dir / save_name))
                             except: pass
                             downloaded.append({"name": save_name, "size": f"{sz} KB"})
@@ -3918,7 +4468,7 @@ def _auto_download(job_id, gstin, client_name,
                                 if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
                         else:
                             triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
-                            save_failure_screenshot(f"GSTR2B {month_name} {year} — Download Link Not Found")
+                            save_failure_screenshot(f"GSTR2B {month_name} {year} — File Not Found after click")
                     else:
                         triggered[f"{key}_GSTR2B"] = "TILE_FAIL"
                         save_failure_screenshot(f"GSTR2B {month_name} {year} — Tile Not Found on Dashboard")
@@ -3927,22 +4477,22 @@ def _auto_download(job_id, gstin, client_name,
                     triggered[f"{key}_GSTR2B"] = f"ERR:{e}"
                     save_failure_screenshot(f"GSTR2B {month_name} {year} — Exception: {str(e)[:60]}")
 
-            # GSTR-2A: trigger GENERATE EXCEL
+            # GSTR-2A: trigger GENERATE JSON (portal returns ZIP file)
             if "GSTR2A" in returns_set:
                 try:
-                    log(f"\n── {month_name} {year}: GSTR-2A (trigger generate) ──")
+                    log(f"\n── {month_name} {year}: GSTR-2A (Phase 1 — trigger Generate Excel → ZIP) ──")
                     _go_to_dashboard()
                     _select_and_search(month_name)
                     current_tile[0] = "GSTR2A"
                     if _click_tile_download("GSTR2A"):
-                        time.sleep(8)
+                        time.sleep(4)
                         if _try_click(GENERATE_EXCEL_XP, timeout=8):
-                            log(f"  GSTR-2A GENERATE EXCEL clicked ✓")
+                            log(f"  GSTR-2A GENERATE EXCEL clicked ✓ (Phase 1 — will download as ZIP containing Excel)")
                             triggered[f"{key}_GSTR2A"] = "TRIGGERED"
                             time.sleep(2)
                         else:
                             triggered[f"{key}_GSTR2A"] = "GEN_FAIL"
-                            save_failure_screenshot(f"GSTR2A {month_name} {year} — Generate Button Not Found")
+                            save_failure_screenshot(f"GSTR2A {month_name} {year} — Generate Excel Button Not Found (Phase 1)")
                     else:
                         triggered[f"{key}_GSTR2A"] = "TILE_FAIL"
                         save_failure_screenshot(f"GSTR2A {month_name} {year} — Tile Not Found on Dashboard")
@@ -3962,13 +4512,13 @@ def _auto_download(job_id, gstin, client_name,
 
         if need_phase2:
             log(f"\n📥 Phase 2 — Downloading generated files (portal generates in ~30s-2min)...")
-            log("  Waiting 60 seconds for portal to finish generating files...")
-            time.sleep(60)
+            log("  Waiting 30 seconds for portal to finish generating files...")
+            time.sleep(30)
 
             ret_config = {
-                "GSTR1":  (GENERATE_JSON_XP,  [".zip",".json"]),
-                "GSTR1A": (GENERATE_JSON_XP,  [".zip",".json"]),
-                "GSTR2A": (GENERATE_EXCEL_XP, [".zip",".xlsx"]),
+                "GSTR1":  (GENERATE_JSON_XP,   [".zip",".json"]),
+                "GSTR1A": (GENERATE_JSON_XP,   [".zip",".json"]),
+                "GSTR2A": (GENERATE_EXCEL_XP,  [".zip",".xlsx"]),  # Phase 2: click Generate Excel → ZIP contains Excel
             }
             p2_total = sum(
                 1 for mn, mm, yr in MONTHS_LIST
@@ -3986,7 +4536,7 @@ def _auto_download(job_id, gstin, client_name,
                     tkey = f"{key}_{ret_type}"
                     if triggered.get(tkey) != "TRIGGERED": continue
 
-                    save_name = f"{ret_type}_{month_name}_{year}" + (".zip" if ret_type != "GSTR2A" else ".xlsx")
+                    save_name = f"{ret_type}_{month_name}_{year}.zip"  # All JSON-based returns are saved as ZIP
                     log(f"\n── {month_name} {year}: {ret_type} (download) ──")
                     current_tile[0] = ret_type
 
@@ -3994,7 +4544,7 @@ def _auto_download(job_id, gstin, client_name,
                         _go_to_dashboard()
                         _select_and_search(month_name)
                         if _click_tile_download(ret_type):
-                            time.sleep(8)
+                            time.sleep(4)
                             if _generate_and_download(save_name, gen_xp, dl_exts, max_wait=120):
                                 triggered[tkey] = "OK"
                                 src_f = dl_dir / save_name
@@ -4327,6 +4877,9 @@ def _bulk_worker(job_id, companies, fy, returns, sess, out_dir):
         if returns in ("all","gstr2b"): ret_types.append("gstr2b")
         if returns in ("all","gstr2a"): ret_types.append("gstr2a")
         if returns in ("all","gstr3b"): ret_types.append("gstr3b")
+        # Combo options (no GSTR-2A)
+        if returns == "gstr1_2b_3b":    ret_types = ["gstr1","gstr2b","gstr3b"]
+        if returns == "gstr1_1a_2b_3b": ret_types = ["gstr1","gstr1a","gstr2b","gstr3b"]
 
         token_expired = False
         for rt in ret_types:
@@ -4596,6 +5149,1016 @@ def api_it_dl(job_id, filename):
     if not fp.exists() or not fp.is_file():
         abort(404)
     return send_file(str(fp), as_attachment=True, download_name=filename)
+
+
+
+# ═══════════════════════════════════════════════════════════════════
+# INCOME TAX PORTAL AUTO DOWNLOAD — Selenium-based
+# Downloads 26AS, AIS, TIS automatically from incometax.gov.in
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/it-auto-download", methods=["POST"])
+@rate_limit(limit=5, window=60)
+def api_it_auto_download():
+    d = request.get_json(silent=True) or {}
+    pan          = d.get("pan","").strip().upper()
+    company_name = d.get("company_name","").strip()
+    username     = d.get("username","").strip()
+    password     = d.get("password","")
+    fy           = d.get("fy","2025-26")
+
+    if not pan or len(pan) != 10:
+        return jsonify(error="PAN must be 10 characters"), 400
+    if not company_name:
+        return jsonify(error="Company name required"), 400
+    if not username:
+        return jsonify(error="IT Portal username (PAN) required"), 400
+
+    job_id  = str(uuid.uuid4())[:8]
+    out_dir = OUTPUT_DIR / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "running", "progress": 0,
+            "logs": [{"type":"info","msg":"Starting IT Portal auto-download..."}],
+            "files": [], "error": None,
+            "captcha_needed": False, "captcha_img": None,
+            "out_dir": str(out_dir),
+            "failure_screenshots": [],
+        }
+
+    sess = {"captcha_q": _queue.Queue(), "refresh_event": threading.Event(), "screenshot": None}
+    with _sess_lock:
+        _sessions[job_id] = sess
+
+    def run_bg():
+        try:
+            _it_auto_download(job_id, pan, company_name, username, password, fy, sess)
+        except Exception as _exc:
+            import traceback as _tb
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id]["status"] = "error"
+                    jobs[job_id]["error"]  = str(_exc)
+                    for _l in _tb.format_exc().split("\n"):
+                        if _l.strip():
+                            jobs[job_id]["logs"].append({"type":"err","msg":f"  {_l}"})
+        finally:
+            with _sess_lock:
+                _sessions.pop(job_id, None)
+
+    threading.Thread(target=run_bg, daemon=True).start()
+    return jsonify(job_id=job_id)
+
+
+def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
+    """
+    Server-side IT Portal auto-downloader.
+    Mirrors it_suite.py exactly:
+      1. incometax.gov.in → Login button → PAN → Continue → Password → Login/Submit
+      2. OTP handling (show screenshot → user types OTP)
+      3. Remember Device → auto-click YES
+      4. e-File → Income Tax Returns → View AIS → TIS download → AIS download
+      5. e-File → Income Tax Returns → View Form 26AS → TRACES → Export as PDF
+      6. ZIP all files
+    """
+    import base64, shutil as _shutil
+
+    # ── Assessment year from FY ──────────────────────────────────────────
+    fy_start = int(fy.split("-")[0])
+    AY_LABEL  = f"{fy_start+1}-{str(fy_start+2)[-2:]}"   # e.g. "2025-26"
+    IT_PORTAL = "https://www.incometax.gov.in/iec/foportal"
+    PAGE_WAIT, SHORT_WAIT = 8, 3
+
+    def log(msg, t="info"):
+        print(f"[IT {job_id}] {msg}")
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["logs"].append({"type": t, "msg": msg})
+
+    def prog(p):
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["progress"] = p
+
+    def show_captcha(img_b64):
+        sess["screenshot"] = img_b64
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"] = True
+                jobs[job_id]["captcha_img"]    = img_b64
+
+    def clear_captcha():
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"] = False
+                jobs[job_id]["captcha_img"]    = None
+
+    def wait_user_input(prompt_msg):
+        while not sess["captcha_q"].empty():
+            try: sess["captcha_q"].get_nowait()
+            except: pass
+        log(f"⏳ {prompt_msg}")
+        try:
+            return sess["captcha_q"].get(timeout=600)
+        except _queue.Empty:
+            raise RuntimeError("Timeout — no input received in 10 minutes")
+
+    def save_fail_shot(label):
+        try:
+            img_b64 = base64.b64encode(driver.get_screenshot_as_png()).decode()
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id].setdefault("failure_screenshots", []).append({
+                        "label": label, "img_b64": img_b64,
+                        "ts": datetime.now().strftime("%H:%M:%S"),
+                    })
+            log(f"  📸 Screenshot saved: {label}", "warn")
+        except: pass
+
+    def _sshot_b64():
+        try: return base64.b64encode(driver.get_screenshot_as_png()).decode()
+        except: return None
+
+    out_dir = Path(jobs[job_id]["out_dir"])
+    dl_dir  = out_dir / "it_downloads"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    downloaded = []
+    driver = None
+
+    # ── Selenium setup ────────────────────────────────────────────────────
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait, Select
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.chrome.options import Options as ChromeOptions
+        from selenium.webdriver.chrome.service import Service as ChromeService
+    except ImportError:
+        raise RuntimeError("Selenium not installed. Run: pip install selenium")
+
+    # ── Helper: try_click ─────────────────────────────────────────────────
+    def _click(xpaths, timeout=8):
+        for xp in xpaths:
+            try:
+                el = WebDriverWait(driver, timeout).until(
+                    EC.element_to_be_clickable((By.XPATH, xp)))
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                time.sleep(0.3)
+                try: el.click()
+                except: driver.execute_script("arguments[0].click();", el)
+                return True
+            except: continue
+        return False
+
+    # ── Helper: human_type ────────────────────────────────────────────────
+    def _type(by, val, text, timeout=10):
+        try:
+            el = WebDriverWait(driver, timeout).until(EC.element_to_be_clickable((by, val)))
+            driver.execute_script("arguments[0].scrollIntoView(true);", el)
+            time.sleep(0.3); el.click(); time.sleep(0.2)
+            el.clear(); time.sleep(0.2)
+            for ch in str(text): el.send_keys(ch); time.sleep(0.04)
+            time.sleep(0.3)
+            # JS fallback if field is still empty
+            if not (el.get_attribute("value") or "").strip():
+                driver.execute_script(
+                    "arguments[0].value=arguments[1];"
+                    "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+                    "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
+                    el, text)
+            return True
+        except: return False
+
+    # ── Helper: wait_for_new_file ─────────────────────────────────────────
+    def _wait_new_file(extensions, before_set, timeout=120):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(2)
+            for f in dl_dir.iterdir():
+                if (f not in before_set
+                        and f.suffix.lower() in extensions
+                        and not f.name.endswith((".crdownload",".tmp"))
+                        and f.stat().st_size > 5000):
+                    time.sleep(1)  # let download finish
+                    return f
+        return None
+
+    # ── Browser launch ────────────────────────────────────────────────────
+    try:
+        opts = ChromeOptions()
+        opts.add_argument("--headless=new")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--window-size=1280,900")
+        opts.add_argument("--disable-blink-features=AutomationControlled")
+        opts.add_argument(
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+        opts.add_experimental_option("prefs", {
+            "download.default_directory":       str(dl_dir),
+            "download.prompt_for_download":     False,
+            "download.directory_upgrade":       True,
+            "plugins.always_open_pdf_externally": True,
+            "safebrowsing.enabled":             True,
+            "credentials_enable_service":       False,
+            "profile.password_manager_enabled": False,
+        })
+        opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
+        opts.add_experimental_option("useAutomationExtension", False)
+
+        try:
+            import shutil as _sh2
+            _IS_SERVER2 = bool(os.environ.get("RENDER") or os.environ.get("HEADLESS"))
+            _cb2 = _sh2.which("chromium-browser") or _sh2.which("chromium") or _sh2.which("google-chrome")
+            if _IS_SERVER2 and _cb2:
+                opts.binary_location = _cb2
+                driver = webdriver.Chrome(service=ChromeService(), options=opts)
+            else:
+                from webdriver_manager.chrome import ChromeDriverManager
+                driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=opts)
+        except:
+            driver = webdriver.Chrome(options=opts)
+
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+        })
+        log("✅ Headless Chrome started for IT Portal", "ok")
+        prog(5)
+
+        # ════════════════════════════════════════════════════════════════
+        # STEP 1: LOGIN  (mirrors it_login() from it_suite.py exactly)
+        # ════════════════════════════════════════════════════════════════
+        log("🌐 Opening incometax.gov.in ...")
+        driver.get(IT_PORTAL)
+        time.sleep(PAGE_WAIT)
+
+        log("  Clicking Login button on portal home...")
+        _click([
+            "//a[normalize-space()='Login']",
+            "//button[normalize-space()='Login']",
+            "//a[contains(@href,'login')]",
+            "//span[normalize-space()='Login']",
+        ])
+        time.sleep(PAGE_WAIT)
+        log(f"  Login page URL: {driver.current_url}")
+
+        log(f"  Entering PAN/User ID: {username}")
+        filled = False
+        for by, val in [
+            (By.ID,   "pan"),
+            (By.ID,   "userId"),
+            (By.ID,   "user_id"),
+            (By.NAME, "userId"),
+            (By.NAME, "pan"),
+            (By.CSS_SELECTOR, "input[placeholder*='PAN']"),
+            (By.CSS_SELECTOR, "input[placeholder*='User ID']"),
+            (By.CSS_SELECTOR, "input[placeholder*='user']"),
+            (By.CSS_SELECTOR, "input[type='text']:not([readonly])"),
+        ]:
+            if _type(by, val, username):
+                filled = True; break
+        if not filled:
+            raise RuntimeError("Cannot find User ID / PAN field on IT portal login page")
+
+        time.sleep(1)
+        # Some portals have a 2-step: PAN first → Continue → Password
+        _click([
+            "//button[normalize-space()='Continue']",
+            "//input[@value='Continue']",
+            "//button[contains(text(),'Continue')]",
+        ])
+        time.sleep(SHORT_WAIT)
+
+        log("  Entering password...")
+        filled = False
+        for by, val in [
+            (By.ID,   "password"),
+            (By.NAME, "password"),
+            (By.ID,   "current-password"),
+            (By.CSS_SELECTOR, "input[type='password']"),
+            (By.CSS_SELECTOR, "input[placeholder*='assword']"),
+        ]:
+            if _type(by, val, password):
+                filled = True; break
+        if not filled:
+            raise RuntimeError("Cannot find password field on IT portal login page")
+
+        time.sleep(1)
+
+        log("  Clicking Login submit...")
+        _click([
+            "//button[@type='submit']",
+            "//button[normalize-space()='Login']",
+            "//button[normalize-space()='Sign In']",
+            "//input[@type='submit']",
+            "//button[contains(text(),'Login')]",
+            "//button[contains(text(),'Sign in')]",
+        ])
+        time.sleep(PAGE_WAIT + 2)
+
+        # ── OTP handling ──────────────────────────────────────────────────
+        try:
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            otp_present = "otp" in body and ("enter" in body or "verify" in body or "sent" in body)
+            if otp_present:
+                log("📱 OTP screen detected — showing screenshot for input...")
+                img = _sshot_b64()
+                show_captcha(img)
+                otp_text = wait_user_input(
+                    "OTP was sent to your registered mobile/email. "
+                    "Enter the OTP below and click Submit. "
+                    "Type SKIP if no OTP is required."
+                )
+                clear_captcha()
+
+                if otp_text.upper() != "SKIP":
+                    log(f"  Entering OTP...")
+                    otp_filled = False
+                    for by, val in [
+                        (By.ID,   "otp"),
+                        (By.NAME, "otp"),
+                        (By.CSS_SELECTOR, "input[placeholder*='OTP']"),
+                        (By.CSS_SELECTOR, "input[placeholder*='otp']"),
+                        (By.CSS_SELECTOR, "input[type='tel']"),
+                        (By.CSS_SELECTOR, "input[maxlength='6']"),
+                    ]:
+                        if _type(by, val, otp_text):
+                            otp_filled = True; break
+
+                    log("  Clicking Validate/Submit for OTP...")
+                    _click([
+                        "//button[contains(text(),'Validate')]",
+                        "//button[normalize-space()='Submit']",
+                        "//button[normalize-space()='Verify']",
+                        "//button[@type='submit']",
+                    ])
+                    time.sleep(PAGE_WAIT)
+                    log("  OTP submitted ✓", "ok")
+        except Exception as e:
+            log(f"  OTP check skipped: {e}", "warn")
+
+        # ── Remember Device handling (auto-click YES for permanent unlock) ─
+        time.sleep(SHORT_WAIT)
+        try:
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            remember_present = any(w in body for w in [
+                "remember", "register this device", "trust this device",
+                "don't ask again", "secure access", "add device"
+            ])
+            if remember_present:
+                log("  'Remember Device' prompt detected — clicking YES...")
+                _click([
+                    "//button[normalize-space()='Yes']",
+                    "//button[normalize-space()='YES']",
+                    "//button[contains(text(),'Yes')]",
+                    "//button[contains(text(),'Register')]",
+                    "//button[contains(text(),'Trust')]",
+                    "//a[normalize-space()='Yes']",
+                    "//input[@value='Yes']",
+                ])
+                time.sleep(SHORT_WAIT)
+                log("  ✅ Device registered — future logins will skip OTP", "ok")
+        except: pass
+
+        # ── Verify login success ───────────────────────────────────────────
+        cur = driver.current_url.lower()
+        log(f"  Post-login URL: {driver.current_url}")
+        login_ok = any([
+            "dashboard" in cur,
+            "profile"   in cur,
+            "myaccount" in cur,
+            ("home" in cur and "foportal" in cur),
+            ("iec/foportal" in cur and "login" not in cur),
+        ])
+        if not login_ok:
+            # Show screenshot and let user verify / continue
+            img = _sshot_b64()
+            show_captcha(img)
+            resp = wait_user_input(
+                "Login may need an extra step. Check the screenshot — "
+                "enter any additional OTP/CAPTCHA, or type SKIP to continue."
+            )
+            clear_captcha()
+            if resp.upper() != "SKIP":
+                for by, val in [
+                    (By.CSS_SELECTOR, "input[type='tel']"),
+                    (By.CSS_SELECTOR, "input[type='text']:not([readonly])"),
+                    (By.ID, "otp"),
+                ]:
+                    if _type(by, val, resp): break
+                _click(["//button[@type='submit']", "//button[contains(text(),'Continu')]"])
+                time.sleep(PAGE_WAIT)
+
+        log("  ✅ Login successful!", "ok")
+        prog(20)
+
+        # ════════════════════════════════════════════════════════════════
+        # STEP 2: DOWNLOAD TIS  (Taxpayer Information Summary)
+        # Path: e-File → Income Tax Returns → View AIS → TIS tab → Download
+        # ════════════════════════════════════════════════════════════════
+        log("\n📑 Downloading TIS (Taxpayer Information Summary)...")
+
+        def _navigate_to_ais():
+            """Navigate to AIS/TIS page via e-File menu."""
+            log("  Nav: e-File → Income Tax Returns → View AIS")
+            _click([
+                "//a[normalize-space()='e-File']",
+                "//li//a[contains(text(),'e-File')]",
+                "//nav//a[contains(text(),'e-File')]",
+            ])
+            time.sleep(SHORT_WAIT)
+            _click([
+                "//a[contains(text(),'Income Tax Returns')]",
+                "//*[contains(@class,'dropdown')]//a[contains(text(),'Returns')]",
+            ])
+            time.sleep(SHORT_WAIT)
+            clicked = _click([
+                "//a[contains(text(),'View AIS')]",
+                "//a[contains(text(),'AIS')]",
+                "//a[contains(text(),'Annual Information')]",
+            ])
+            if not clicked:
+                log("  AIS menu not found — trying direct URL...", "warn")
+                driver.get("https://www.incometax.gov.in/iec/foportal/pages/ais-tis-taxpayer-information-summary")
+                time.sleep(PAGE_WAIT)
+                return True
+            time.sleep(PAGE_WAIT)
+            return True
+
+        _navigate_to_ais()
+        log(f"  AIS page URL: {driver.current_url}")
+
+        # Show screenshot so user can see AIS page
+        img = _sshot_b64()
+        show_captcha(img)
+        time.sleep(2)
+        clear_captcha()
+
+        # ── Download TIS ───────────────────────────────────────────────────
+        before_tis = set(dl_dir.iterdir())
+        _click([
+            "//a[contains(text(),'Taxpayer Information Summary')]",
+            "//button[contains(text(),'Taxpayer Information')]",
+            "//a[normalize-space()='TIS']",
+            "//span[contains(text(),'TIS')]",
+        ])
+        time.sleep(SHORT_WAIT)
+
+        tis_clicked = _click([
+            "//button[contains(text(),'Download') and contains(text(),'TIS')]",
+            "//*[contains(@class,'tis')]//button[contains(text(),'Download')]",
+            "//*[contains(@class,'tis')]//a[contains(text(),'Download')]",
+            "//button[@id='downloadTIS']",
+            "(//button[contains(text(),'Download PDF')])[1]",
+            "(//a[contains(text(),'Download PDF')])[1]",
+            "(//button[contains(text(),'Download')])[1]",
+        ])
+        if tis_clicked:
+            _click(["//button[normalize-space()='OK']", "//button[normalize-space()='Confirm']"])
+            new_f = _wait_new_file({".pdf"}, before_tis, timeout=60)
+            if new_f:
+                tis_name = f"TIS_{pan}_AY{AY_LABEL.replace('-','_')}.pdf"
+                dest = out_dir / tis_name
+                _shutil.copy2(str(new_f), str(dest))
+                sz = dest.stat().st_size // 1024
+                downloaded.append({"name": tis_name, "size": f"{sz} KB"})
+                log(f"  ✅ TIS saved: {tis_name} ({sz} KB)", "ok")
+                with jobs_lock:
+                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+            else:
+                log("  ⚠ TIS PDF not downloaded within 60s", "warn")
+                save_fail_shot("TIS — PDF not downloaded")
+        else:
+            log("  ⚠ TIS Download button not found", "warn")
+            save_fail_shot("TIS — Download button not found")
+
+        prog(40)
+
+        # ── Download AIS ───────────────────────────────────────────────────
+        log("\n📊 Downloading AIS (Annual Information Statement)...")
+        before_ais = set(dl_dir.iterdir())
+
+        _click([
+            "//a[contains(text(),'Annual Information Statement')]",
+            "//button[contains(text(),'Annual Information')]",
+            "//a[normalize-space()='AIS']",
+            "//span[contains(text(),'AIS')]",
+        ])
+        time.sleep(SHORT_WAIT)
+
+        ais_clicked = _click([
+            "//button[contains(text(),'Download') and contains(text(),'AIS')]",
+            "//*[contains(@class,'ais')]//button[contains(text(),'Download')]",
+            "//*[contains(@class,'ais')]//a[contains(text(),'Download')]",
+            "//button[@id='downloadAIS']",
+            "(//button[contains(text(),'Download PDF')])[2]",
+            "(//a[contains(text(),'Download PDF')])[2]",
+            "(//button[contains(text(),'Download')])[2]",
+            "(//button[contains(text(),'Download')])[1]",
+        ])
+        if ais_clicked:
+            _click(["//button[normalize-space()='OK']", "//button[normalize-space()='Confirm']"])
+            new_f = _wait_new_file({".pdf"}, before_ais, timeout=90)
+            if new_f:
+                ais_name = f"AIS_{pan}_AY{AY_LABEL.replace('-','_')}.pdf"
+                dest = out_dir / ais_name
+                _shutil.copy2(str(new_f), str(dest))
+                sz = dest.stat().st_size // 1024
+                downloaded.append({"name": ais_name, "size": f"{sz} KB"})
+                log(f"  ✅ AIS saved: {ais_name} ({sz} KB)", "ok")
+                with jobs_lock:
+                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+            else:
+                log("  ⚠ AIS PDF not downloaded within 90s", "warn")
+                save_fail_shot("AIS — PDF not downloaded")
+        else:
+            log("  ⚠ AIS Download button not found", "warn")
+            save_fail_shot("AIS — Download button not found")
+
+        prog(60)
+
+        # ════════════════════════════════════════════════════════════════
+        # STEP 3: DOWNLOAD FORM 26AS
+        # Path: e-File → Income Tax Returns → View Form 26AS
+        #       → Confirm TRACES redirect → Select AY → Export as PDF
+        # ════════════════════════════════════════════════════════════════
+        log("\n📄 Downloading Form 26AS...")
+
+        # Navigate back to dashboard first
+        driver.get(IT_PORTAL)
+        time.sleep(PAGE_WAIT)
+
+        log("  Nav: e-File → Income Tax Returns → View Form 26AS")
+        _click([
+            "//a[normalize-space()='e-File']",
+            "//li//a[contains(text(),'e-File')]",
+            "//nav//a[contains(text(),'e-File')]",
+        ])
+        time.sleep(SHORT_WAIT)
+        _click([
+            "//a[contains(text(),'Income Tax Returns')]",
+            "//*[contains(@class,'dropdown')]//a[contains(text(),'Returns')]",
+        ])
+        time.sleep(SHORT_WAIT)
+        f26_clicked = _click([
+            "//a[contains(text(),'Form 26AS')]",
+            "//a[contains(text(),'26AS')]",
+            "//a[contains(text(),'View Tax Credit')]",
+        ])
+        if not f26_clicked:
+            log("  26AS menu not found — trying direct URL...", "warn")
+            driver.get("https://www.incometax.gov.in/iec/foportal/pages/form-26AS-tax-credit-statement")
+        time.sleep(PAGE_WAIT)
+
+        # Confirm redirect to TRACES if popup appears
+        _click([
+            "//button[normalize-space()='Confirm']",
+            "//button[normalize-space()='OK']",
+            "//button[normalize-space()='Proceed']",
+            "//button[contains(text(),'Confirm')]",
+            "//button[contains(text(),'Continue')]",
+        ])
+        time.sleep(PAGE_WAIT + 2)
+        log(f"  After nav URL: {driver.current_url}")
+
+        # Handle TRACES window (may open in new tab)
+        handles = driver.window_handles
+        if len(handles) > 1:
+            driver.switch_to.window(handles[-1])
+            log(f"  Switched to TRACES window: {driver.current_url}")
+            time.sleep(PAGE_WAIT)
+
+        # ── On TRACES: Select AY ───────────────────────────────────────────
+        try:
+            selects = driver.find_elements(By.TAG_NAME, "select")
+            for sel_el in selects:
+                try:
+                    s = Select(sel_el)
+                    for opt in s.options:
+                        if AY_LABEL in opt.text or str(fy_start+1) in opt.text:
+                            s.select_by_visible_text(opt.text)
+                            log(f"  Selected AY: {opt.text} ✓")
+                            break
+                except: continue
+            time.sleep(SHORT_WAIT)
+        except: pass
+
+        # ── Click View Tax Credit (Form 26AS) ──────────────────────────────
+        _click([
+            "//input[@value='View Tax Credit (Form 26AS)']",
+            "//button[contains(text(),'View Tax Credit')]",
+            "//a[contains(text(),'View Tax Credit')]",
+            "//input[contains(@value,'26AS')]",
+            "//button[contains(text(),'26AS')]",
+        ])
+        time.sleep(PAGE_WAIT + 2)
+
+        # ── Export as PDF ──────────────────────────────────────────────────
+        before_26as = set(dl_dir.iterdir())
+        _click([
+            "//a[contains(text(),'Export as PDF')]",
+            "//button[contains(text(),'Export as PDF')]",
+            "//a[contains(text(),'Download')]",
+            "//button[contains(text(),'Download')]",
+            "//input[@value='Download']",
+            "//a[@title='Download PDF']",
+            "//a[contains(@href,'.pdf')]",
+        ])
+        time.sleep(SHORT_WAIT)
+        # Confirm any dialog
+        _click([
+            "//button[normalize-space()='OK']",
+            "//button[normalize-space()='Confirm']",
+        ])
+
+        new_f = _wait_new_file({".pdf"}, before_26as, timeout=90)
+        if new_f:
+            form_name = f"26AS_{pan}_AY{AY_LABEL.replace('-','_')}.pdf"
+            dest = out_dir / form_name
+            _shutil.copy2(str(new_f), str(dest))
+            sz = dest.stat().st_size // 1024
+            downloaded.append({"name": form_name, "size": f"{sz} KB"})
+            log(f"  ✅ Form 26AS saved: {form_name} ({sz} KB)", "ok")
+            with jobs_lock:
+                if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+        else:
+            log("  ⚠ 26AS PDF not downloaded within 90s", "warn")
+            save_fail_shot("26AS — PDF not downloaded from TRACES")
+
+        prog(90)
+
+        # ── ZIP all downloaded files ───────────────────────────────────────
+        if downloaded:
+            import zipfile as _zf
+            zip_name = f"IT_Downloads_{company_name.replace(' ','_')}_{fy}.zip"
+            zip_path = out_dir / zip_name
+            with _zf.ZipFile(str(zip_path), "w", _zf.ZIP_DEFLATED) as zf:
+                for item in downloaded:
+                    fp = out_dir / item["name"]
+                    if fp.exists(): zf.write(str(fp), item["name"])
+            sz = zip_path.stat().st_size // 1024
+            downloaded.insert(0, {"name": zip_name, "size": f"{sz} KB"})
+            log(f"✅ ZIP created: {zip_name} ({sz} KB)", "ok")
+
+        prog(100)
+        n = len([d for d in downloaded if not d["name"].endswith(".zip")])
+        log(f"✅ Complete! {n} file(s) downloaded from IT Portal.", "ok")
+
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = downloaded
+
+    except Exception as exc:
+        import traceback
+        log(f"❌ Error: {exc}", "err")
+        for ln in traceback.format_exc().split("\n"):
+            if ln.strip(): log(f"  {ln}", "err")
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"]  = str(exc)
+    finally:
+        if driver:
+            try: driver.quit()
+            except: pass
+
+
+
+# ═══════════════════════════════════════════════════════════════════
+# IT BULK DOWNLOAD — Multiple clients from Excel list
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route("/api/it-bulk-template")
+def it_bulk_template():
+    """Return a sample Excel template for IT bulk download."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active; ws.title = "IT Clients"
+    headers = ["COMPANY NAME", "PAN", "GSTIN (optional)", "IT PASSWORD", "IT_ACTIVE"]
+    widths  = [32, 14, 22, 20, 12]
+    for i,(h,w) in enumerate(zip(headers,widths),1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F3864")
+        c.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[chr(64+i)].width = w
+    examples = [
+        ["ABC Traders Pvt Ltd", "AABCT1234C", "33AABCT1234C1ZX", "Password@123", "YES"],
+        ["XYZ Enterprises",     "XYZAB5678E", "29XYZAB5678E2ZY", "MyPass456",     "YES"],
+    ]
+    note = ws.cell(row=1, column=6, value="NOTE: PAN is used as IT Portal User ID. GSTIN is optional (for IT Recon linking).")
+    note.font = Font(italic=True, color="9C6500", size=8)
+    ws.column_dimensions["F"].width = 70
+    for row in examples:
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    from flask import Response
+    return Response(buf.read(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=it_clients_template.xlsx"})
+
+
+@app.route("/api/it-bulk-start", methods=["POST"])
+@rate_limit(limit=5, window=60)
+def api_it_bulk_start():
+    fobj = request.files.get("clients_file")
+    if not fobj:
+        return jsonify(error="No file uploaded"), 400
+    fy   = request.form.get("fy", "2025-26")
+    mode = request.form.get("mode", "all")
+
+    import io, openpyxl
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(fobj.read()), read_only=True, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+    except Exception as e:
+        return jsonify(error=f"Cannot read Excel: {e}"), 400
+
+    if not rows or len(rows) < 2:
+        return jsonify(error="Excel is empty or has only headers"), 400
+
+    headers = [str(c or "").strip().upper() for c in rows[0]]
+    def _col(*names):
+        for n in names:
+            if n in headers: return headers.index(n)
+        return -1
+
+    ci_name = _col("COMPANY NAME","NAME","CLIENT NAME","COMPANY")
+    ci_pan  = _col("PAN")
+    ci_gst  = _col("GSTIN","GSTIN (OPTIONAL)","GST")
+    ci_pass = _col("IT PASSWORD","IT_PASSWORD","PASSWORD")
+    ci_act  = _col("IT_ACTIVE","ACTIVE")
+
+    if ci_pan < 0:
+        return jsonify(error="Column 'PAN' not found in Excel"), 400
+    if ci_pass < 0:
+        return jsonify(error="Column 'IT PASSWORD' not found in Excel"), 400
+
+    clients = []
+    for row in rows[1:]:
+        pan  = str(row[ci_pan] or "").strip().upper() if ci_pan >= 0 else ""
+        if not pan or len(pan) != 10: continue
+        active = str(row[ci_act] or "YES").strip().upper() if ci_act >= 0 else "YES"
+        if active == "NO": continue
+        it_pass = str(row[ci_pass] or "").strip() if ci_pass >= 0 else ""
+        if not it_pass: continue
+        clients.append({
+            "name":    str(row[ci_name] or pan).strip() if ci_name >= 0 else pan,
+            "pan":     pan,
+            "gstin":   str(row[ci_gst] or "").strip() if ci_gst >= 0 else "",
+            "it_pass": it_pass,
+        })
+
+    if not clients:
+        return jsonify(error="No valid clients found — check PAN (10 chars) and IT PASSWORD columns"), 400
+
+    job_id  = str(uuid.uuid4())[:8]
+    out_dir = OUTPUT_DIR / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with jobs_lock:
+        jobs[job_id] = {
+            "status":"running","progress":0,
+            "logs":[{"type":"info","msg":f"Loaded {len(clients)} clients. Starting IT downloads…"}],
+            "files":[],"error":None,
+            "captcha_needed":False,"captcha_img":None,"captcha_company":None,
+            "out_dir":str(out_dir),"counter":"",
+            "failure_screenshots":[],
+        }
+
+    sess = {"captcha_q": _queue.Queue(), "screenshot": None, "refresh_event": threading.Event()}
+    with _sess_lock:
+        _sessions[job_id] = sess
+
+    def _run():
+        try:
+            _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir)
+        except Exception as exc:
+            import traceback as _tb
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id]["status"] = "error"
+                    jobs[job_id]["error"]  = str(exc)
+                    for ln in _tb.format_exc().split("\n"):
+                        if ln.strip():
+                            jobs[job_id]["logs"].append({"type":"err","msg":ln})
+        finally:
+            with _sess_lock:
+                _sessions.pop(job_id, None)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify(job_id=job_id, total=len(clients))
+
+
+@app.route("/api/it-bulk-otp/<job_id>", methods=["POST"])
+def api_it_bulk_otp(job_id):
+    """User submits OTP/CAPTCHA for a client during IT bulk download."""
+    otp = (request.get_json(silent=True) or {}).get("otp","").strip()
+    if not otp:
+        return jsonify(ok=False, error="Empty input")
+    with _sess_lock:
+        sess = _sessions.get(job_id)
+    if not sess:
+        return jsonify(ok=False, error="No active session")
+    sess["captcha_q"].put(otp)
+    with jobs_lock:
+        if job_id in jobs:
+            jobs[job_id]["captcha_needed"] = False
+            jobs[job_id]["captcha_img"]    = None
+    return jsonify(ok=True)
+
+
+def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
+    """Process each IT client one by one."""
+    import base64, shutil as _shutil
+
+    def log(msg, t="info"):
+        print(f"[IT-BULK {job_id}] {msg}")
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["logs"].append({"type":t,"msg":msg})
+
+    def prog(p):
+        with jobs_lock:
+            if job_id in jobs: jobs[job_id]["progress"] = p
+
+    def set_counter(i, total):
+        with jobs_lock:
+            if job_id in jobs: jobs[job_id]["counter"] = f"Client {i}/{total}"
+
+    def show_captcha_for_client(img_b64, company):
+        sess["screenshot"] = img_b64
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"]  = True
+                jobs[job_id]["captcha_img"]     = img_b64
+                jobs[job_id]["captcha_company"] = company
+
+    def clear_captcha():
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["captcha_needed"]  = False
+                jobs[job_id]["captcha_img"]     = None
+                jobs[job_id]["captcha_company"] = None
+
+    def wait_otp(prompt):
+        while not sess["captcha_q"].empty():
+            try: sess["captcha_q"].get_nowait()
+            except: pass
+        log(f"⏳ {prompt}")
+        try:
+            return sess["captcha_q"].get(timeout=900)
+        except _queue.Empty:
+            raise RuntimeError("OTP timeout — no input received in 15 minutes")
+
+    total    = len(clients)
+    all_files = []
+    out_path  = Path(out_dir)
+
+    for idx, client in enumerate(clients, 1):
+        set_counter(idx, total)
+        name    = client["name"]
+        pan     = client["pan"]
+        gstin   = client.get("gstin","")
+        it_pass = client["it_pass"]
+        log(f"━━━ [{idx}/{total}] {name} (PAN: {pan}) ━━━")
+        prog(int((idx-1)/total*100))
+
+        client_dir = out_path / pan
+        client_dir.mkdir(exist_ok=True)
+
+        # Run the IT auto-downloader for this client
+        # We create a mini job state just for the sub-session
+        sub_job_id = f"{job_id}_{pan}"
+        with jobs_lock:
+            jobs[sub_job_id] = {
+                "status":"running","progress":0,"logs":[],
+                "files":[],"error":None,
+                "captcha_needed":False,"captcha_img":None,
+                "out_dir":str(client_dir),"failure_screenshots":[],
+            }
+
+        # Shared sess: route captcha/OTP from sub-job to main job UI
+        sub_sess = {
+            "captcha_q":     sess["captcha_q"],   # shared queue!
+            "screenshot":    None,
+            "refresh_event": sess["refresh_event"],
+        }
+        # Intercept captcha_needed updates so main job shows them
+        import threading as _th
+        import queue as _q
+
+        # Monkey-patch: after _it_auto_download sets captcha on sub_job,
+        # mirror it to the parent job with client info
+        _orig_q = sub_sess["captcha_q"]
+
+        class _MirrorSess(dict):
+            """Wrapper that mirrors show_captcha calls to parent job."""
+            def __setitem__(self, k, v):
+                super().__setitem__(k, v)
+                if k == "screenshot" and v:
+                    with jobs_lock:
+                        if job_id in jobs:
+                            jobs[job_id]["captcha_needed"] = True
+                            jobs[job_id]["captcha_img"]    = v
+                            jobs[job_id]["captcha_company"] = {"name":name,"pan":pan}
+
+        mirror_sess = _MirrorSess(sub_sess)
+
+        try:
+            if mode in ("all","pdfs","26as","ais_tis"):
+                _it_auto_download(sub_job_id, pan, name, pan, it_pass, fy, mirror_sess)
+            clear_captcha()
+
+            # Collect downloaded files into main output
+            sub_job = jobs.get(sub_job_id,{})
+            if sub_job.get("status") == "done":
+                co_files = sub_job.get("files",[])
+                for f in co_files:
+                    fp = client_dir / f["name"]
+                    if not fp.exists():
+                        # try sub output dir
+                        sub_out = Path(sub_job.get("out_dir",""))
+                        candidate = sub_out / f["name"]
+                        if candidate.exists():
+                            try: _shutil.copy2(str(candidate), str(fp))
+                            except: pass
+                    if fp.exists():
+                        dest_name = f"{pan}_{f['name']}" if not f["name"].startswith(pan) else f["name"]
+                        dest = out_path / dest_name
+                        try: _shutil.copy2(str(fp), str(dest))
+                        except: pass
+                        sz = dest.stat().st_size // 1024 if dest.exists() else 0
+                        all_files.append({"name": dest_name, "size": f"{sz} KB"})
+                        log(f"  ✓ {dest_name} ({sz} KB)", "ok")
+                log(f"  ✅ {name}: {len(co_files)} file(s) downloaded", "ok")
+            else:
+                log(f"  ⚠ {name}: download may have failed — check failure screenshots", "warn")
+
+            # Run IT Recon if requested
+            if mode in ("all","recon"):
+                engine_path = _find_engine("it_recon_engine.py")
+                if engine_path:
+                    log(f"  Running IT Recon for {name}...")
+                    import importlib.util as _ilu
+                    spec = _ilu.spec_from_file_location("it_recon_bulk", str(engine_path))
+                    it_mod = _ilu.module_from_spec(spec)
+                    spec.loader.exec_module(it_mod)
+                    recon_xl = client_dir / f"IT_RECONCILIATION_{name.replace(' ','_')}_{fy}.xlsx"
+                    try:
+                        it_mod.write_it_reconciliation(
+                            str(client_dir), name, pan, gstin, fy, log=lambda m,t="info": log(f"    {m}",t))
+                        if recon_xl.exists():
+                            dest = out_path / recon_xl.name
+                            _shutil.copy2(str(recon_xl), str(dest))
+                            sz = dest.stat().st_size // 1024
+                            all_files.append({"name": recon_xl.name, "size": f"{sz} KB"})
+                            log(f"  ✅ IT Recon: {recon_xl.name}", "ok")
+                    except Exception as re:
+                        log(f"  ⚠ IT Recon error for {name}: {re}", "warn")
+
+        except Exception as e:
+            log(f"  ✗ Error for {name}: {e}", "err")
+            clear_captcha()
+        finally:
+            # Clean up sub-job
+            with jobs_lock:
+                jobs.pop(sub_job_id, None)
+
+        # Update running file list
+        with jobs_lock:
+            if job_id in jobs: jobs[job_id]["files"] = list(all_files)
+
+    # ── Create master ZIP ──────────────────────────────────────────
+    prog(98)
+    if all_files:
+        import zipfile as _zf
+        zip_name = f"IT_BULK_{fy}_{datetime.now().strftime('%Y%m%d')}.zip"
+        zip_path = out_path / zip_name
+        with _zf.ZipFile(str(zip_path), "w", _zf.ZIP_DEFLATED) as zf:
+            for f in all_files:
+                fp = out_path / f["name"]
+                if fp.exists(): zf.write(str(fp), f["name"])
+        sz = zip_path.stat().st_size // 1024
+        all_files.insert(0, {"name": zip_name, "size": f"{sz} KB"})
+        log(f"✅ ZIP created: {zip_name} ({sz} KB)", "ok")
+
+    prog(100)
+    log(f"✅ IT Bulk complete — {total} clients processed, {len(all_files)-1} file(s).", "ok")
+    with jobs_lock:
+        if job_id in jobs:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = all_files
+            jobs[job_id]["captcha_needed"]  = False
+            jobs[job_id]["captcha_company"] = None
 
 
 if __name__ == "__main__":
