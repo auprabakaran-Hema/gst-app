@@ -2,15 +2,13 @@ services:
   - type: web
     name: gst-it-portal
     runtime: python
-    region: singapore          # closest to India; change to oregon/frankfurt if preferred
+    region: singapore
     buildCommand: |
       apt-get update && apt-get install -y \
         chromium-browser \
         chromium-chromedriver \
-        libqpdf-dev \
-        libqpdf29 \
         --no-install-recommends && \
-      pip install --upgrade pip setuptools wheel && \
+      pip install --upgrade pip && \
       pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 300 --worker-class gthread
     envVars:
@@ -22,5 +20,5 @@ services:
         value: /usr/bin/chromium-browser
       - key: CHROMEDRIVER_PATH
         value: /usr/bin/chromedriver
-    plan: standard          # needs at least 512 MB RAM; upgrade to pro for bulk jobs
+    plan: standard
     healthCheckPath: /

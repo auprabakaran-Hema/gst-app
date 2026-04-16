@@ -63,11 +63,15 @@ except ImportError:
     MISSING.append("pandas")
 
 try:
-    import pikepdf
-    PIKEPDF_AVAILABLE = True
+    from pypdf import PdfReader, PdfWriter
+    PIKEPDF_AVAILABLE = True  # keep same flag name so rest of code unchanged
 except ImportError:
-    PIKEPDF_AVAILABLE = False
-    MISSING.append("pikepdf")
+    try:
+        from PyPDF2 import PdfReader, PdfWriter
+        PIKEPDF_AVAILABLE = True
+    except ImportError:
+        PIKEPDF_AVAILABLE = False
+        MISSING.append("pypdf")
 
 # ── Constants ─────────────────────────────────────────────
 IT_PORTAL      = "https://www.incometax.gov.in/iec/foportal"
@@ -573,15 +577,20 @@ def get_profile_details(driver, pan_hint=None, log=None):
 # PDF UNLOCK FUNCTIONS
 # ==========================================================
 def unlock_pdf(input_path, output_path, password, log=None):
-    """Remove password from PDF using pikepdf."""
+    """Remove password from PDF using pypdf."""
     if not PIKEPDF_AVAILABLE:
-        if log: log.warning("    pikepdf not installed — cannot unlock PDF")
+        if log: log.warning("    pypdf not installed — cannot unlock PDF")
         return False
-    
+
     try:
-        pdf = pikepdf.open(input_path, password=password)
-        pdf.save(output_path)
-        pdf.close()
+        reader = PdfReader(input_path)
+        if reader.is_encrypted:
+            reader.decrypt(password)
+        writer = PdfWriter()
+        for page in reader.pages:
+            writer.add_page(page)
+        with open(output_path, "wb") as f:
+            writer.write(f)
         if log: log.info(f"    ✓ PDF unlocked: {os.path.basename(output_path)}")
         return True
     except Exception as e:
@@ -600,7 +609,7 @@ def unlock_all_pdfs(client_dir, pdf_password, log=None):
     so the final filename stays clean (no _unlocked suffix).
     """
     if not PIKEPDF_AVAILABLE:
-        print("\n  ⚠  pikepdf not installed. Install with: pip install pikepdf")
+        print("\n  ⚠  pypdf not installed. Install with: pip install pypdf")
         print("     PDFs will remain password-protected.")
         return {}
 
@@ -619,14 +628,24 @@ def unlock_all_pdfs(client_dir, pdf_password, log=None):
         # Write to a temp file first, then replace original
         tmp_path = pdf_file.parent / (pdf_file.stem + "_tmp_unlock.pdf")
         try:
-            pdf = pikepdf.open(str(pdf_file), password=pdf_password)
-            pdf.save(str(tmp_path))
-            pdf.close()
+            reader = PdfReader(str(pdf_file))
+            if reader.is_encrypted:
+                result = reader.decrypt(pdf_password)
+                if result == 0:
+                    if log: log.warning(
+                        f"    Wrong password for {pdf_file.name} — "
+                        f"tried: {pdf_password}  (check PAN case + DOB format)")
+                    continue
+            writer = PdfWriter()
+            for page in reader.pages:
+                writer.add_page(page)
+            with open(str(tmp_path), "wb") as f_out:
+                writer.write(f_out)
             # Replace original with unlocked version
             tmp_path.replace(pdf_file)
             if log: log.info(f"    ✓ Unlocked in-place: {pdf_file.name}")
             unlocked_files[pdf_file.name] = pdf_file.name
-        except pikepdf.PasswordError:
+        except ValueError:
             if log: log.warning(
                 f"    Wrong password for {pdf_file.name} — "
                 f"tried: {pdf_password}  (check PAN case + DOB format)")
@@ -2086,8 +2105,8 @@ def process_it_client(client, base_dir, log):
             else:
                 print(f"  ⚠  No PDFs were unlocked (may already be unlocked)")
         elif not PIKEPDF_AVAILABLE:
-            print(f"\n  ⚠  pikepdf not installed — PDFs remain password-protected")
-            print(f"     Install with: pip install pikepdf")
+            print(f"\n  ⚠  pypdf not installed — PDFs remain password-protected")
+            print(f"     Install with: pip install pypdf")
 
         # ── IT Reconciliation ─────────────────────────────────────
         print(f"\n  [{name}] Running IT Reconciliation...")
