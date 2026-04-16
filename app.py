@@ -4298,6 +4298,22 @@ def _auto_download(job_id, gstin, client_name,
         opts.add_argument("--disable-gpu")
         opts.add_argument("--window-size=1280,900")
         opts.add_argument("--disable-blink-features=AutomationControlled")
+        # Speed flags for Render server
+        opts.add_argument("--no-zygote")
+        opts.add_argument("--single-process")
+        opts.add_argument("--disable-setuid-sandbox")
+        opts.add_argument("--disable-software-rasterizer")
+        opts.add_argument("--disable-background-networking")
+        opts.add_argument("--disable-default-apps")
+        opts.add_argument("--disable-sync")
+        opts.add_argument("--metrics-recording-only")
+        opts.add_argument("--mute-audio")
+        opts.add_argument("--no-first-run")
+        opts.add_argument("--safebrowsing-disable-auto-update")
+        opts.add_argument("--disable-background-timer-throttling")
+        opts.add_argument("--disable-renderer-backgrounding")
+        opts.add_argument("--disable-backgrounding-occluded-windows")
+        opts.add_argument("--memory-pressure-off")
         opts.add_argument(
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -4310,6 +4326,7 @@ def _auto_download(job_id, gstin, client_name,
         })
         opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
+        opts.page_load_strategy = "eager"
 
         try:
             import shutil as _sh
@@ -5366,6 +5383,22 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         opts.add_argument("--disable-gpu")
         opts.add_argument("--window-size=1280,900")
         opts.add_argument("--disable-blink-features=AutomationControlled")
+        # Speed flags for Render server
+        opts.add_argument("--no-zygote")
+        opts.add_argument("--single-process")
+        opts.add_argument("--disable-setuid-sandbox")
+        opts.add_argument("--disable-software-rasterizer")
+        opts.add_argument("--disable-background-networking")
+        opts.add_argument("--disable-default-apps")
+        opts.add_argument("--disable-sync")
+        opts.add_argument("--metrics-recording-only")
+        opts.add_argument("--mute-audio")
+        opts.add_argument("--no-first-run")
+        opts.add_argument("--safebrowsing-disable-auto-update")
+        opts.add_argument("--disable-background-timer-throttling")
+        opts.add_argument("--disable-renderer-backgrounding")
+        opts.add_argument("--disable-backgrounding-occluded-windows")
+        opts.add_argument("--memory-pressure-off")
         opts.add_argument(
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -5381,14 +5414,20 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         })
         opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
+        opts.page_load_strategy = "eager"
 
         try:
             import shutil as _sh2
             _IS_SERVER2 = bool(os.environ.get("RENDER") or os.environ.get("HEADLESS"))
-            _cb2 = _sh2.which("chromium-browser") or _sh2.which("chromium") or _sh2.which("google-chrome")
+            _cb2 = (os.environ.get("CHROME_BIN")
+                    or _sh2.which("chromium") or _sh2.which("chromium-browser")
+                    or _sh2.which("google-chrome"))
+            _cd2 = (os.environ.get("CHROMEDRIVER_PATH")
+                    or _sh2.which("chromedriver"))
             if _IS_SERVER2 and _cb2:
                 opts.binary_location = _cb2
-                driver = webdriver.Chrome(service=ChromeService(), options=opts)
+                svc2 = ChromeService(executable_path=_cd2) if _cd2 else ChromeService()
+                driver = webdriver.Chrome(service=svc2, options=opts)
             else:
                 from webdriver_manager.chrome import ChromeDriverManager
                 driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=opts)

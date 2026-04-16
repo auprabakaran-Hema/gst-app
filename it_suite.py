@@ -186,7 +186,22 @@ def make_driver(download_dir):
             opts.add_argument("--headless=new")
             opts.add_argument("--disable-gpu")
             opts.add_argument("--window-size=1920,1080")
-            opts.add_argument("--remote-debugging-port=9222")
+            # --- Speed flags: remove --remote-debugging-port (causes ~5s delay) ---
+            opts.add_argument("--no-zygote")                          # faster startup
+            opts.add_argument("--single-process")                     # less memory, faster on Render
+            opts.add_argument("--disable-setuid-sandbox")
+            opts.add_argument("--disable-software-rasterizer")
+            opts.add_argument("--disable-background-networking")
+            opts.add_argument("--disable-default-apps")
+            opts.add_argument("--disable-sync")
+            opts.add_argument("--metrics-recording-only")
+            opts.add_argument("--mute-audio")
+            opts.add_argument("--no-first-run")
+            opts.add_argument("--safebrowsing-disable-auto-update")
+            opts.add_argument("--disable-background-timer-throttling")
+            opts.add_argument("--disable-renderer-backgrounding")
+            opts.add_argument("--disable-backgrounding-occluded-windows")
+            opts.add_argument("--memory-pressure-off")
         else:
             opts.add_argument("--start-maximized")
         opts.add_argument("--disable-blink-features=AutomationControlled")
@@ -195,6 +210,8 @@ def make_driver(download_dir):
         opts.add_argument("--disable-extensions")
         opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
+        # Eager page load: don't wait for all resources, just DOM ready (30-50% faster)
+        opts.page_load_strategy = "eager"
         # On Render, use system chromium; locally use webdriver_manager
         if _IS_SERVER:
             import shutil as _sh
