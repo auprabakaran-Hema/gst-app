@@ -6140,12 +6140,12 @@ def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
                         sub_out = Path(sub_job.get("out_dir",""))
                         candidate = sub_out / f["name"]
                         if candidate.exists():
-                            try: _shutil.copy2(str(candidate), str(fp))
+                            try: shutil.copy2(str(candidate), str(fp))
                             except: pass
                     if fp.exists():
                         dest_name = f"{pan}_{f['name']}" if not f["name"].startswith(pan) else f["name"]
                         dest = out_path / dest_name
-                        try: _shutil.copy2(str(fp), str(dest))
+                        try: shutil.copy2(str(fp), str(dest))
                         except: pass
                         sz = dest.stat().st_size // 1024 if dest.exists() else 0
                         all_files.append({"name": dest_name, "size": f"{sz} KB"})
@@ -6163,18 +6163,28 @@ def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
                     spec = _ilu.spec_from_file_location("it_recon_bulk", str(engine_path))
                     it_mod = _ilu.module_from_spec(spec)
                     spec.loader.exec_module(it_mod)
-                    recon_xl = client_dir / f"IT_RECONCILIATION_{name.replace(' ','_')}_{fy}.xlsx"
+                    # Build filename exactly as write_it_reconciliation does:
+                    # re.sub(r'[\\/:*?"<>|]', "_", name)  — spaces are kept
+                    import re as _re
+                    safe_name = _re.sub(r'[\\/:*?"<>|]', "_", name)
+                    fy_safe = fy.replace("-", "_")
+                    recon_xl = client_dir / f"IT_RECONCILIATION_{safe_name}_FY{fy_safe}.xlsx"
                     try:
-                        it_mod.write_it_reconciliation(
+                        rp = it_mod.write_it_reconciliation(
                             str(client_dir), name, pan, gstin, fy, log=lambda m,t="info": log(f"    {m}",t))
+                        # Use the path returned by the engine when available
+                        if rp:
+                            recon_xl = Path(rp)
                         if recon_xl.exists():
                             dest = out_path / recon_xl.name
-                            _shutil.copy2(str(recon_xl), str(dest))
+                            shutil.copy2(str(recon_xl), str(dest))
                             sz = dest.stat().st_size // 1024
                             all_files.append({"name": recon_xl.name, "size": f"{sz} KB"})
                             log(f"  ✅ IT Recon: {recon_xl.name}", "ok")
-                    except Exception as re:
-                        log(f"  ⚠ IT Recon error for {name}: {re}", "warn")
+                        else:
+                            log(f"  ⚠ IT Recon file not found: {recon_xl.name}", "warn")
+                    except Exception as recon_err:
+                        log(f"  ⚠ IT Recon error for {name}: {recon_err}", "warn")
 
         except Exception as e:
             log(f"  ✗ Error for {name}: {e}", "err")
@@ -6203,7 +6213,8 @@ def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
         log(f"✅ ZIP created: {zip_name} ({sz} KB)", "ok")
 
     prog(100)
-    log(f"✅ IT Bulk complete — {total} clients processed, {len(all_files)-1} file(s).", "ok")
+    file_count = len(all_files) - 1 if all_files and all_files[0]["name"].endswith(".zip") else len(all_files)
+    log(f"✅ IT Bulk complete — {total} clients processed, {file_count} file(s).", "ok")
     with jobs_lock:
         if job_id in jobs:
             jobs[job_id]["status"] = "done"
