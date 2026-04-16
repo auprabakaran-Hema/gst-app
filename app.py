@@ -4476,17 +4476,21 @@ def _auto_download(job_id, gstin, client_name,
                     triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
                     save_failure_screenshot(f"GSTR1A {month_name} {year} — Exception: {str(e)[:60]}")
 
-            # GSTR-2B: direct download like GSTR-3B (no generate button, no wait loop)
+            # GSTR-2B: single-level download (same as GSTR-3B)
+            # Portal may (a) download directly OR (b) show generate page.
+            # Both handled automatically — no Phase 2 needed for GSTR-2B.
             if "GSTR2B" in returns_set:
                 try:
-                    log(f"\n── {month_name} {year}: GSTR-2B (direct download) ──")
+                    log(f"\n── {month_name} {year}: GSTR-2B (single-level download) ──")
                     _go_to_dashboard()
                     _select_and_search(month_name)
                     save_name = f"GSTR2B_{month_name}_{year}.xlsx"
                     current_tile[0] = "GSTR2B"
                     if _click_tile_download("GSTR2B"):
                         time.sleep(11)
+                        # Case (a): file downloaded directly
                         if _rename_latest(save_name, [".xlsx", ".zip", ".json"]):
+                            log(f"  GSTR-2B [{month_name}] — direct download OK", "ok")
                             triggered[f"{key}_GSTR2B"] = "OK"
                             src_f = dl_dir / save_name
                             sz = src_f.stat().st_size // 1024
@@ -4496,8 +4500,23 @@ def _auto_download(job_id, gstin, client_name,
                             with jobs_lock:
                                 if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
                         else:
-                            triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
-                            save_failure_screenshot(f"GSTR2B {month_name} {year} — File Not Found after click")
+                            # Case (b): portal showed generate page — click GENERATE and wait
+                            log(f"  GSTR-2B [{month_name}] — no direct file, trying generate page...", "warn")
+                            ok = _generate_and_download(save_name, GENERATE_EXCEL_XP,
+                                                        [".xlsx", ".zip", ".json"], max_wait=120)
+                            if ok:
+                                log(f"  GSTR-2B [{month_name}] — downloaded via generate page OK", "ok")
+                                triggered[f"{key}_GSTR2B"] = "OK"
+                                src_f = dl_dir / save_name
+                                sz = src_f.stat().st_size // 1024
+                                try: _shutil.copy2(str(src_f), str(out_dir / save_name))
+                                except: pass
+                                downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                                with jobs_lock:
+                                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+                            else:
+                                triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
+                                save_failure_screenshot(f"GSTR2B {month_name} {year} — File Not Found (direct + generate)")
                     else:
                         triggered[f"{key}_GSTR2B"] = "TILE_FAIL"
                         save_failure_screenshot(f"GSTR2B {month_name} {year} — Tile Not Found on Dashboard")
@@ -4505,7 +4524,6 @@ def _auto_download(job_id, gstin, client_name,
                     log(f"  GSTR2B error [{month_name}]: {e}", "warn")
                     triggered[f"{key}_GSTR2B"] = f"ERR:{e}"
                     save_failure_screenshot(f"GSTR2B {month_name} {year} — Exception: {str(e)[:60]}")
-
             # GSTR-2A: trigger GENERATE JSON (portal returns ZIP file)
             if "GSTR2A" in returns_set:
                 try:

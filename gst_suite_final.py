@@ -1215,8 +1215,11 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                 log.warning(f"    GSTR1A trigger failed [{month_name}]: {e}")
                 triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
 
-        # -- GSTR-2B: direct download like GSTR-3B ----------
-        # Click DOWNLOAD on tile → file downloads directly → rename
+        # -- GSTR-2B: single-level download (same as GSTR-3B) ----------
+        # Click DOWNLOAD on tile → portal may:
+        #   (a) download file directly  → rename immediately, OR
+        #   (b) show generate page      → auto-click GENERATE → poll for link
+        # Either way, this is handled in ONE step with no manual phase-2 needed.
         if "GSTR2B" in returns_todo:
             try:
                 safe_go_to_dashboard(driver, log)
@@ -1224,10 +1227,17 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                 save_name = f"GSTR2B_{month_name}_{year}.xlsx"
                 if click_tile_download(driver, "GSTR2B", log):
                     time.sleep(PAGE_WAIT + 3)
+                    # Case (a): file already downloaded directly
                     if rename_latest(client_dir, save_name, [".xlsx", ".zip", ".json"], log):
+                        log.info(f"    GSTR-2B [{month_name}] — direct download ✓")
                         triggered[f"{key}_GSTR2B"] = "OK"
                     else:
-                        triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
+                        # Case (b): landed on generate page — click GENERATE and wait
+                        log.info(f"    GSTR-2B [{month_name}] — no direct file, trying generate page...")
+                        ok = generate_then_download_immediate(
+                            driver, client_dir, save_name, log,
+                            gen_xpaths=EXCEL_GENERATE_XPATHS, max_wait=120)
+                        triggered[f"{key}_GSTR2B"] = "OK" if ok else "NOT_FOUND"
                 else:
                     triggered[f"{key}_GSTR2B"] = "TILE_FAIL"
             except Exception as e:
@@ -6706,9 +6716,24 @@ def retry_from_master_excel(log=None):
                             print(f"      → {save} already exists, skipping")
                             continue
                         if click_tile_download(driver_r, rtype, log):
-                            if rtype == "GSTR3B":
-                                time.sleep(8)
+                            if rtype in ("GSTR3B", "GSTR2B"):
+                                # Both GSTR-3B and GSTR-2B: single-level direct download
+                                time.sleep(PAGE_WAIT + 3)
                                 ok = rename_latest(cdir_r, save, [suf], log)
+                                if not ok and rtype == "GSTR2B":
+                                    # Fallback: portal showed generate page
+                                    log.info(f"    GSTR-2B retry [{mn_r}] — generate page fallback...")
+                                    _GEN_XP = [
+                                        "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+                                        "//button[contains(text(),'GENERATE EXCEL')]",
+                                        "//button[contains(text(),'Generate Excel')]",
+                                        "//a[contains(text(),'GENERATE EXCEL')]",
+                                        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+                                        "//button[contains(text(),'Generate JSON')]",
+                                    ]
+                                    ok = generate_then_download_immediate(
+                                        driver_r, cdir_r, save, log,
+                                        gen_xpaths=_GEN_XP, max_wait=120)
                             else:
                                 time.sleep(PAGE_WAIT)
                                 ok = generate_then_download_immediate(
