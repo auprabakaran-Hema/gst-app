@@ -1393,12 +1393,14 @@ function switchTab(name, e){
   if(e) e.preventDefault();
   document.querySelectorAll('.tb').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.tp').forEach(p=>p.classList.remove('active'));
-  if(e&&e.currentTarget) e.currentTarget.classList.add('active');
-  else document.querySelectorAll('.tb').forEach(b=>{
-    if(b.getAttribute('onclick')&&b.getAttribute('onclick').includes("'"+name+"'"))
+  // Always find the button by matching the name in its onclick attribute
+  document.querySelectorAll('.tb').forEach(b=>{
+    const oc = b.getAttribute('onclick') || '';
+    if(oc.includes("'"+name+"'") || oc.includes('"'+name+'"'))
       b.classList.add('active');
   });
-  document.getElementById('tab-'+name).classList.add('active');
+  const tabEl = document.getElementById('tab-'+name);
+  if(tabEl) tabEl.classList.add('active');
   
   // Check connection status when switching to autodl tab
   if(name==='autodl') checkBrowserConnection();
