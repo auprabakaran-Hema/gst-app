@@ -2952,7 +2952,7 @@ function _itBulkShowFiles(jid, files){
   });
 }
 
-
+</script>
 </body>
 </html>"""
 
