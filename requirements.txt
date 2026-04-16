@@ -6,17 +6,17 @@ gunicorn>=22.0.0,<23.0.0
 # ── Data / Excel ───────────────────────────────────────────────────
 pandas>=2.2.0,<3.0.0
 openpyxl>=3.1.2,<4.0.0
-xlrd>=2.0.1,<3.0.0          # legacy .xls support
+xlrd>=2.0.1,<3.0.0
 
-# ── PDF handling ───────────────────────────────────────────────────
+# ── PDF handling (pure-Python only — no C build deps needed) ──────
 pdfplumber>=0.11.0,<1.0.0
 PyPDF2>=3.0.1,<4.0.0
-pypdf>=4.0.0,<6.0.0         # PDF password unlock — pure Python, no C deps needed
+pypdf>=4.0.0,<6.0.0
 
-# ── Browser automation (GST + IT portal auto-download) ────────────
+# ── Browser automation ────────────────────────────────────────────
 selenium>=4.21.0,<5.0.0
 webdriver-manager>=4.0.1,<5.0.0
 
-# ── HTTP ───────────────────────────────────────────────────────────
+# ── HTTP / Utilities ──────────────────────────────────────────────
 requests>=2.31.0,<3.0.0
 python-dotenv>=1.0.0,<2.0.0
