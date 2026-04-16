@@ -9,5 +9,9 @@ services:
         value: "true"
       - key: RENDER
         value: "true"
+      - key: CHROME_BIN
+        value: /usr/bin/chromium
+      - key: CHROMEDRIVER_PATH
+        value: /usr/bin/chromedriver
     plan: standard
     healthCheckPath: /

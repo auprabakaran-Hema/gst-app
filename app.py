@@ -4312,15 +4312,25 @@ def _auto_download(job_id, gstin, client_name,
         try:
             import shutil as _sh
             _IS_SERVER = bool(os.environ.get("RENDER") or os.environ.get("HEADLESS"))
-            _cb = _sh.which("chromium-browser") or _sh.which("chromium") or _sh.which("google-chrome")
+            # Prefer explicit env vars set in Dockerfile/render.yaml
+            _cb  = (os.environ.get("CHROME_BIN")
+                    or _sh.which("chromium") or _sh.which("chromium-browser")
+                    or _sh.which("google-chrome"))
+            _cd  = (os.environ.get("CHROMEDRIVER_PATH")
+                    or _sh.which("chromedriver"))
+            log(f"  Chrome binary : {_cb}", "info")
+            log(f"  Chromedriver  : {_cd}", "info")
             if _IS_SERVER and _cb:
                 opts.binary_location = _cb
-                driver = webdriver.Chrome(service=ChromeService(), options=opts)
+                svc = ChromeService(executable_path=_cd) if _cd else ChromeService()
+                driver = webdriver.Chrome(service=svc, options=opts)
             else:
                 from webdriver_manager.chrome import ChromeDriverManager
-                driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=opts)
-        except Exception:
-            driver = webdriver.Chrome(options=opts)
+                driver = webdriver.Chrome(
+                    service=ChromeService(ChromeDriverManager().install()), options=opts)
+        except Exception as _ce:
+            log(f"  ✗ Chrome failed to start: {_ce}", "err")
+            raise
 
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"

@@ -198,10 +198,14 @@ def make_driver(download_dir):
         # On Render, use system chromium; locally use webdriver_manager
         if _IS_SERVER:
             import shutil as _sh
-            _cb = _sh.which("chromium-browser") or _sh.which("chromium") or _sh.which("google-chrome")
+            _cb = (os.environ.get("CHROME_BIN")
+                   or _sh.which("chromium") or _sh.which("chromium-browser")
+                   or _sh.which("google-chrome"))
+            _cd = (os.environ.get("CHROMEDRIVER_PATH")
+                   or _sh.which("chromedriver"))
             if _cb:
                 opts.binary_location = _cb
-            svc = ChromeService()
+            svc = ChromeService(executable_path=_cd) if _cd else ChromeService()
         else:
             svc = ChromeService(ChromeDriverManager().install()) if CHROME_MGR else ChromeService()
         driver = webdriver.Chrome(service=svc, options=opts)
