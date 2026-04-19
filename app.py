@@ -1,10 +1,16 @@
 """
-GST Reconciliation Web App — v6 with Auto Download
+GST Reconciliation Web App — v7 with Phased Auto Download
 ===================================================
 • Fully free — no license, no restrictions
 • Scripts (gst_suite_final.py, gstr1_extract.py) never exposed to users
 • 4 tabs: Reconciliation | GSTR-1 Detail | Download Status | Auto Download
-• NEW: Download directly from GST portal using PC browser bridge
+• NEW v7: Phased download flow (Generate → 2B → 3B → Collect)
+• NEW v7: ⚡ Fast Case — GSTR-2B + GSTR-3B only (~10 min, no generate)
+• NEW v7: Retry T1/T2/T3 with backoff per failed download
+• NEW v7: Session keep-alive (Phase 2+3 prevent 20-min logout)
+• NEW v7: Not Found page auto-reload handler
+• NEW v7: Batch control (6 months per batch, avoids portal overload)
+• NEW v7: Case selector with tab/time estimates for each option
 • Render.com ready — binds to $PORT
 """
 
@@ -159,7 +165,7 @@ def _detect_month(fpath, FY_MONTHS):
 @app.before_request
 def block_scripts():
     p = request.path.lower()
-    if p.endswith((".py", ".pyc")) or "gst_suite" in p or "gstr1_extract" in p:
+    if p.endswith((".py", ".pyc")) or "gst_suite" in p or "gstr1_extract" in p or "gstr2b_extract" in p:
         abort(403)
 
 # ═══════════════════════════════════════════════════════════════════
@@ -397,6 +403,7 @@ footer a{color:var(--accent);text-decoration:none}
 <div class="tabs">
   <button class="tb active" onclick="switchTab('recon',event)">📊 Reconciliation</button>
   <button class="tb" onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
+  <button class="tb" onclick="switchTab('gstr2b',event)">🏦 GSTR-2B Detail</button>
   <button class="tb" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
   <button class="tb" onclick="switchTab('autodl',event)">🌐 Auto Download</button>
   <button class="tb" onclick="switchTab('bulk',event)">📋 Bulk Download</button>
@@ -606,7 +613,81 @@ footer a{color:var(--accent);text-decoration:none}
 </div>
 </div><!-- /tab-gstr1 -->
 
-<!-- ══ TAB 3: DOWNLOAD STATUS ══ -->
+<!-- ══ TAB: GSTR-2B DETAIL ══ -->
+<div class="tp" id="tab-gstr2b">
+<div class="card">
+  <div class="ct">GSTR-2B Full-Year Extraction — 5 Sheets</div>
+  <div class="pills">
+    <span class="pill">B2B Invoices (All Months)</span>
+    <span class="pill">Credit / Debit Notes</span>
+    <span class="pill">ITC Ineligible</span>
+    <span class="pill">Supplier Summary</span>
+    <span class="pill">Annual Summary</span>
+  </div>
+  <p style="color:var(--muted);font-size:.78rem;line-height:1.6">
+    Upload all GSTR-2B Excel files (one per month — portal downloads as <strong style="color:var(--txt)">.xlsx</strong>).
+    All months are merged into <strong style="color:var(--txt)">one combined Excel</strong> with no month-name column in data rows.
+    Supplier names, ITC eligibility and totals are extracted automatically.
+  </p>
+</div>
+<form id="g2b-form">
+<div class="card">
+  <div class="ct">Client Details</div>
+  <div class="fg2">
+    <div class="fg"><label>GSTIN *</label>
+      <input type="text" id="g2b-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15" required></div>
+    <div class="fg"><label>Company Name *</label>
+      <input type="text" id="g2b-name" placeholder="ABC Traders" required></div>
+    <div class="fg"><label>Financial Year</label>
+      <select id="g2b-fy">
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+        <option value="2020-21">2020-21</option>
+      </select></div>
+  </div>
+</div>
+<div class="card">
+  <div class="ct">Upload GSTR-2B Excel Files</div>
+  <div class="dg">
+    <div class="dz" id="zone-g2b-files">
+      <div class="dz-ic">🏦</div><div class="dz-lb">GSTR-2B Excel</div>
+      <div class="dz-ht">All 12 months (.xlsx or .zip)</div>
+      <div class="dz-cn" id="cnt-g2b-files">No files</div>
+      <input type="file" multiple accept=".xlsx,.xls,.zip" data-zone="g2b-files" onchange="updateZone('g2b-files',this)">
+    </div>
+  </div>
+  <p style="color:var(--muted);font-size:.72rem;margin-top:.6rem;font-family:var(--mono)">
+    Expected file names:  GSTR2B_April_2025.xlsx · GSTR2B_May_2025.xlsx · ... or portal-format names.
+  </p>
+</div>
+<div class="card">
+  <button type="submit" class="btn" id="g2b-submit">Generate GSTR-2B Full-Year Excel →</button>
+</div>
+</form>
+<div class="card pw" id="g2b-pw">
+  <div class="ct">Extracting <span class="sbg s-p pulse" id="g2b-badge">Running</span></div>
+  <div class="pb-w"><div class="pb" id="g2b-pb"></div></div>
+  <div class="lb" id="g2b-lb"></div>
+</div>
+<div class="card dw" id="g2b-dw">
+  <div class="ct">GSTR-2B Detail Ready
+    <button id="g2b-dl-all-btn" onclick="if(window._g2bDlAll)window._g2bDlAll()"
+            style="display:none;margin-left:auto;padding:.3rem .9rem;background:linear-gradient(135deg,var(--grn),#00c853);
+                   border:none;border-radius:7px;color:#000;font-family:var(--mono);font-size:.7rem;
+                   font-weight:800;cursor:pointer;letter-spacing:.04em">
+      ⬇ Download All
+    </button>
+  </div>
+  <div class="dl-g" id="g2b-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted automatically after 2 hours. Download before closing.
+  </p>
+</div>
+</div><!-- /tab-gstr2b -->
 <div class="tp" id="tab-dlstatus">
 <div class="card">
   <div class="ct">Download Status — 12 Months × 5 Returns</div>
@@ -670,16 +751,60 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </div>
 
-<!-- Step 1: How it works -->
+<!-- Step 1: How it works — PHASED DOWNLOAD -->
 <div class="card" id="ad-step1">
-  <div class="ct">How It Works</div>
+  <div class="ct">How It Works — Phased Download (v11)</div>
   <div style="font-size:.78rem;color:var(--muted);line-height:1.9">
     1. Fill in your GSTIN, Company Name, Username &amp; Password below<br>
-    2. Click <strong style="color:var(--org)">🚀 Start Auto Download</strong><br>
-    3. A CAPTCHA screenshot appears here — type it and click <strong style="color:var(--accent)">Submit</strong><br>
-    4. Server logs into GST portal and downloads all returns automatically<br>
-    5. Files appear below — also auto-loaded into the <strong style="color:var(--txt)">Reconciliation tab</strong>
+    2. Select your <strong style="color:var(--accent)">Download Case</strong> — choose what you need today<br>
+    3. Click <strong style="color:var(--org)">🚀 Start Auto Download</strong><br>
+    4. A CAPTCHA screenshot appears here — type it and click <strong style="color:var(--accent)">Submit</strong><br>
+    5. Script follows <strong style="color:var(--txt)">Phased Download flow</strong> automatically (see phases below)<br>
+    6. Files appear below — also auto-loaded into the <strong style="color:var(--txt)">Reconciliation tab</strong>
   </div>
+
+  <!-- Phased Download Flow Display -->
+  <div style="margin-top:1rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.5rem">
+    <div style="background:rgba(0,229,255,.07);border:1px solid rgba(0,229,255,.2);border-radius:8px;padding:.7rem;text-align:center">
+      <div style="font-size:.65rem;font-weight:700;letter-spacing:.08em;color:var(--accent);margin-bottom:.3rem">PHASE 1</div>
+      <div style="font-size:.72rem;color:var(--txt)">Click <strong>GENERATE</strong></div>
+      <div style="font-size:.65rem;color:var(--muted);margin-top:.2rem">GSTR-1 + GSTR-2A<br>All 12 months</div>
+    </div>
+    <div style="background:rgba(0,230,118,.07);border:1px solid rgba(0,230,118,.2);border-radius:8px;padding:.7rem;text-align:center">
+      <div style="font-size:.65rem;font-weight:700;letter-spacing:.08em;color:var(--grn);margin-bottom:.3rem">PHASE 2</div>
+      <div style="font-size:.72rem;color:var(--txt)">Direct <strong>Download</strong></div>
+      <div style="font-size:.65rem;color:var(--muted);margin-top:.2rem">GSTR-2B<br>Keeps session alive ✓</div>
+    </div>
+    <div style="background:rgba(0,230,118,.07);border:1px solid rgba(0,230,118,.2);border-radius:8px;padding:.7rem;text-align:center">
+      <div style="font-size:.65rem;font-weight:700;letter-spacing:.08em;color:var(--grn);margin-bottom:.3rem">PHASE 3</div>
+      <div style="font-size:.72rem;color:var(--txt)">Direct <strong>Download</strong></div>
+      <div style="font-size:.65rem;color:var(--muted);margin-top:.2rem">GSTR-3B<br>Keeps session alive ✓</div>
+    </div>
+    <div style="background:rgba(0,229,255,.07);border:1px solid rgba(0,229,255,.2);border-radius:8px;padding:.7rem;text-align:center">
+      <div style="font-size:.65rem;font-weight:700;letter-spacing:.08em;color:var(--accent);margin-bottom:.3rem">PHASE 4</div>
+      <div style="font-size:.72rem;color:var(--txt)">Click <strong>DOWNLOAD LINK</strong></div>
+      <div style="font-size:.65rem;color:var(--muted);margin-top:.2rem">GSTR-1 + GSTR-2A<br>Now ready ✓</div>
+    </div>
+  </div>
+
+  <!-- Retry + Session info -->
+  <div style="margin-top:.8rem;display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+    <div style="background:rgba(255,23,68,.07);border:1px solid rgba(255,23,68,.2);border-radius:8px;padding:.65rem">
+      <div style="font-size:.65rem;font-weight:700;color:var(--red);margin-bottom:.3rem">🔴 RETRY LOGIC</div>
+      <div style="font-size:.67rem;color:var(--muted);line-height:1.7">
+        T1 → fail → wait 30s<br>T2 → fail → wait 60s<br>T3 → fail → reported in log<br>
+        <span style="color:var(--txt)">3 retries per month per return</span>
+      </div>
+    </div>
+    <div style="background:rgba(0,230,118,.07);border:1px solid rgba(0,230,118,.2);border-radius:8px;padding:.65rem">
+      <div style="font-size:.65rem;font-weight:700;color:var(--grn);margin-bottom:.3rem">✅ SESSION TIPS</div>
+      <div style="font-size:.67rem;color:var(--muted);line-height:1.7">
+        Session expires: 20 min idle<br>Phase 2&3 keep session alive<br>Not Found → auto F5 reload<br>
+        <span style="color:var(--txt)">Batch: 6 months at a time</span>
+      </div>
+    </div>
+  </div>
+
   <div class="info-box" style="margin-top:.8rem;font-size:.72rem">
     Your password is used only for this session and is never stored.
   </div>
@@ -708,23 +833,61 @@ footer a{color:var(--accent);text-decoration:none}
         <option value="2021-22">2021-22</option>
         <option value="2020-21">2020-21</option>
       </select></div>
-    <div class="fg"><label>Returns to Download</label>
-      <select id="ad-returns">
-        <option value="all">All Returns (GSTR-1, 1A, 2B, 2A, 3B)</option>
-        <option value="gstr1">GSTR-1 Only</option>
-        <option value="gstr1a">GSTR-1A Only</option>
-        <option value="gstr2b">GSTR-2B Only</option>
-        <option value="gstr2a">GSTR-2A Only</option>
-        <option value="gstr3b">GSTR-3B Only</option>
-        <option value="gstr1_2b_3b">GSTR-1 + GSTR-2B + GSTR-3B (No 2A)</option>
-        <option value="gstr1_1a_2b_3b">GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B (No 2A)</option>
-      </select></div>
+    <div class="fg"><label>Download Case — Select What You Need Today</label>
+      <select id="ad-returns" onchange="updateCaseInfo()">
+        <optgroup label="── FULL SUITE ──────────────────────────">
+          <option value="all">📋 Full Suite — GSTR-1 + 1A + 2B + 2A + 3B  (~20 min, phased)</option>
+        </optgroup>
+        <optgroup label="── ⚡ FAST CASES (No generate, direct download) ──">
+          <option value="gstr2b_3b">⚡ FAST — GSTR-2B + GSTR-3B only  (~10 min)</option>
+          <option value="gstr2b">⚡ FAST — GSTR-2B only  (~5 min)</option>
+          <option value="gstr3b">⚡ FAST — GSTR-3B only  (~5 min)</option>
+        </optgroup>
+        <optgroup label="── INDIVIDUAL RETURNS ───────────────────">
+          <option value="gstr1">GSTR-1 only  (Generate first)</option>
+          <option value="gstr1a">GSTR-1A only  (If available)</option>
+          <option value="gstr2a">GSTR-2A only  (Generate first)</option>
+        </optgroup>
+        <optgroup label="── COMBO CASES ─────────────────────────">
+          <option value="gstr1_2b_3b">GSTR-1 + GSTR-2B + GSTR-3B  (No 2A, phased)</option>
+          <option value="gstr1_1a_2b_3b">GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B  (No 2A, phased)</option>
+          <option value="gstr1_2b_2a">GSTR-1 + GSTR-2B + GSTR-2A  (No 3B, phased)</option>
+        </optgroup>
+      </select>
+      <!-- Case info badge shown dynamically -->
+      <div id="ad-case-info" style="margin-top:.4rem;font-size:.68rem;color:var(--muted);
+           font-family:var(--mono);padding:.3rem .6rem;background:var(--surf2);
+           border-radius:5px;border:1px solid var(--bdr)">
+        📋 Full Suite | 48 tabs | ~20 min | Phased: Generate → 2B → 3B → Collect
+      </div>
+    </div>
   </div>
 </div>
 <div class="card">
   <button type="submit" class="btn-orange" id="ad-submit">🚀 Start Auto Download</button>
 </div>
 </form>
+
+<script>
+// Case info descriptions matching our discussion
+const CASE_INFO = {
+  "all":            "📋 Full Suite | 48 tabs | ~20 min | Phase1: Generate(1,2A) → Phase2: 2B → Phase3: 3B → Phase4: Collect(1,2A)",
+  "gstr2b_3b":      "⚡ FAST | 24 tabs | ~10 min | No generate needed — direct download both simultaneously",
+  "gstr2b":         "⚡ FAST | 12 tabs | ~5 min  | No generate needed — direct download GSTR-2B",
+  "gstr3b":         "⚡ FAST | 12 tabs | ~5 min  | No generate needed — direct download GSTR-3B (PDF)",
+  "gstr1":          "📄 GSTR-1 | 12 tabs | ~20 min | Phase1: Generate → Phase4: Collect download link",
+  "gstr1a":         "📄 GSTR-1A | 12 tabs | ~20 min | Only appears when supplier amends GSTR-1",
+  "gstr2a":         "📄 GSTR-2A | 12 tabs | ~20 min | Phase1: Generate → Phase4: Collect download link",
+  "gstr1_2b_3b":    "📋 Combo | 36 tabs | ~15 min | Phase1: Generate(1) → Phase2: 2B → Phase3: 3B → Phase4: Collect(1)",
+  "gstr1_1a_2b_3b": "📋 Combo | 48 tabs | ~20 min | Phase1: Generate(1,1A) → Phase2: 2B → Phase3: 3B → Phase4: Collect",
+  "gstr1_2b_2a":    "📋 Combo | 36 tabs | ~20 min | Phase1: Generate(1,2A) → Phase2: 2B → Phase4: Collect(1,2A)",
+};
+function updateCaseInfo(){
+  const v = document.getElementById('ad-returns').value;
+  const el = document.getElementById('ad-case-info');
+  if(el) el.textContent = CASE_INFO[v] || '';
+}
+</script>
 
 <!-- Progress & logs -->
 <div class="card pw" id="ad-pw">
@@ -914,8 +1077,10 @@ footer a{color:var(--accent);text-decoration:none}
         <option value="gstr2b">GSTR-2B Only</option>
         <option value="gstr2a">GSTR-2A Only</option>
         <option value="gstr3b">GSTR-3B Only</option>
-        <option value="gstr1_2b_3b">GSTR-1 + GSTR-2B + GSTR-3B (No 2A)</option>
-        <option value="gstr1_1a_2b_3b">GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B (No 2A)</option>
+        <option value="gstr1_2b_3b">GSTR-1 + GSTR-2B + GSTR-3B (No 2A, phased)</option>
+        <option value="gstr1_1a_2b_3b">GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B (No 2A, phased)</option>
+        <option value="gstr2b_3b">⚡ FAST — GSTR-2B + GSTR-3B only (~10 min)</option>
+        <option value="gstr1_2b_2a">GSTR-1 + GSTR-2B + GSTR-2A (No 3B, phased)</option>
       </select>
     </div>
   </div>
@@ -1504,6 +1669,22 @@ document.getElementById('g1-form').addEventListener('submit', async e=>{
   await startJob(fd,'g1','Generate GSTR-1 Full Detail Excel →');
 });
 
+// ── GSTR-2B Full-Year Detail form ─────────────────────────────
+document.getElementById('g2b-form').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const gstin=document.getElementById('g2b-gstin').value.trim().toUpperCase();
+  const cname=document.getElementById('g2b-name').value.trim();
+  const fy=document.getElementById('g2b-fy').value.trim()||'2025-26';
+  if(!gstin||gstin.length!==15){alert('Enter a valid 15-character GSTIN');return;}
+  if(!cname){alert('Enter company name');return;}
+  if(!(zoneFiles['g2b-files']||[]).length){alert('Upload at least one GSTR-2B Excel file');return;}
+  const fd=new FormData();
+  fd.append('gstin',gstin);fd.append('client_name',cname);
+  fd.append('fy',fy);fd.append('mode','gstr2bonly');
+  (zoneFiles['g2b-files']||[]).forEach(f=>fd.append('files_r2b',f));
+  await startJob(fd,'g2b','Generate GSTR-2B Full-Year Excel →');
+});
+
 // ── Generic job runner ────────────────────────────────────────────
 async function startJob(fd, pfx, btnLbl){
   document.getElementById(pfx+'-pw').style.display='block';
@@ -1609,6 +1790,12 @@ function showDownloads(pfx,jid,files){
     if(g1HdrBtn && pfx==='g1'){
       g1HdrBtn.style.display='inline-block';
       window._g1DlAll = () => _downloadAllFiles(files, jid, '/api/download');
+    }
+    // Wire g2b Download All button
+    const g2bHdrBtn = document.getElementById('g2b-dl-all-btn');
+    if(g2bHdrBtn && pfx==='g2b'){
+      g2bHdrBtn.style.display='inline-block';
+      window._g2bDlAll = () => _downloadAllFiles(files, jid, '/api/download');
     }
   }
 
@@ -3230,6 +3417,105 @@ def run_gstr1_only(job_id):
             jobs[job_id]["error"]  = str(exc)
         _cleanup_uploads(job_id)
 
+def run_gstr2b_only(job_id):
+    """
+    GSTR-2B Full-Year Detail extraction job.
+    Reads all GSTR2B_*.xlsx files uploaded and produces one combined Excel
+    (no month column in data rows).
+    """
+    def log(msg, t="info"):
+        with jobs_lock: jobs[job_id]["logs"].append({"type": t, "msg": msg})
+    def prog(p):
+        with jobs_lock: jobs[job_id]["progress"] = p
+    try:
+        job         = jobs[job_id]
+        client_name = job["client_name"]
+        fy          = job["fy"]
+        job_dir     = Path(job["job_dir"])
+        out_dir     = Path(job["out_dir"])
+        saved       = job["saved"]
+
+        log(f"GSTR-2B Full-Year Extraction: {client_name}  FY {fy}")
+        prog(5)
+
+        # ── Copy uploaded GSTR-2B files into job_dir with standard names ──
+        # Try to detect month from filename and rename; if not detectable keep original name.
+        FY_MONTHS = _fy_months(fy)
+        for fpath in saved.get("r2b", []):
+            fp   = Path(fpath)
+            mon, yr = _detect_month(fpath, FY_MONTHS)
+            ext  = fp.suffix.lower()
+            if mon and yr:
+                dest_name = f"GSTR2B_{mon}_{yr}{ext}"
+            else:
+                dest_name = fp.name   # keep original; gstr2b_extract will still scan it
+            dest = job_dir / dest_name
+            if not dest.exists():
+                try:   fp.rename(dest)
+                except: shutil.copy2(str(fp), str(dest))
+            if mon:
+                log(f"  GSTR-2B: {mon} {yr}  →  {dest_name}")
+            else:
+                log(f"  File kept as-is (month not detected): {dest_name}", "warn")
+
+        prog(20)
+
+        # ── Load gstr2b_extract engine ────────────────────────────────────
+        extract_path = _find_engine("gstr2b_extract.py")
+        if not extract_path:
+            raise FileNotFoundError(
+                "gstr2b_extract.py not found on server. "
+                "Place it in the same folder as app.py."
+            )
+
+        log("Running GSTR-2B extractor...")
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("gstr2b_extract", str(extract_path))
+        g2b_mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(g2b_mod)
+
+        prog(35)
+        safe_name = client_name.replace(" ", "_").replace("/", "_")
+        out_xl    = job_dir / f"GSTR2B_FULL_YEAR_{safe_name}.xlsx"
+        result    = g2b_mod.extract_gstr2b_to_excel(str(job_dir), str(out_xl))
+        prog(90)
+
+        if not result or not Path(result).exists():
+            raise RuntimeError(
+                "Extractor returned no output. "
+                "Ensure GSTR-2B files are valid portal Excel downloads."
+            )
+
+        # ── Collect all generated xlsx files ──────────────────────────────
+        output_files = []
+        for fp in sorted(job_dir.glob("*.xlsx")):
+            dest_fp = out_dir / fp.name
+            shutil.copy2(str(fp), str(dest_fp))
+            sz = dest_fp.stat().st_size // 1024
+            output_files.append({"name": fp.name, "size": f"{sz} KB"})
+            log(f"  ✓ {fp.name}  ({sz} KB)", "ok")
+
+        if not output_files:
+            raise RuntimeError("No output Excel generated.")
+
+        prog(100)
+        log(f"Done!  {len(output_files)} file(s) ready to download.", "ok")
+        with jobs_lock:
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["files"]  = output_files
+        _cleanup_uploads(job_id)
+
+    except Exception as exc:
+        import traceback
+        log(f"Error: {exc}", "err")
+        for line in traceback.format_exc().split("\n"):
+            if line.strip(): log(f"  {line}", "err")
+        with jobs_lock:
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"]  = str(exc)
+        _cleanup_uploads(job_id)
+
+
 # ── Routes ────────────────────────────────────────────────────────
 @app.route("/")
 def index():
@@ -3274,7 +3560,12 @@ def api_upload():
             "saved":saved,"mode":mode,"dl_status":{},
         }
 
-    target = run_gstr1_only if mode == "gstr1only" else run_reconciliation
+    if mode == "gstr1only":
+        target = run_gstr1_only
+    elif mode == "gstr2bonly":
+        target = run_gstr2b_only
+    else:
+        target = run_reconciliation
     threading.Thread(target=target, args=(job_id,), daemon=True).start()
     return jsonify(job_id=job_id)
 
@@ -3764,7 +4055,7 @@ def _auto_download(job_id, gstin, client_name,
         """Navigate to GST portal, fill creds, show CAPTCHA screenshot, wait for user input."""
         log("🌐 Opening www.gst.gov.in ...")
         driver.get("https://www.gst.gov.in")
-        time.sleep(4)
+        time.sleep(2)
 
         log("  Clicking LOGIN button...")
         _try_click([
@@ -3773,7 +4064,12 @@ def _auto_download(job_id, gstin, client_name,
             "//button[normalize-space()='LOGIN']",
             "//a[contains(@href,'login')]",
         ])
-        time.sleep(8)
+        # Smart wait for login page to load
+        try:
+            WebDriverWait(driver, 6).until(
+                lambda d: len(d.find_elements(By.CSS_SELECTOR, "input[type=text],input[type=password]")) > 0
+            )
+        except: time.sleep(2)
         log(f"  Login page: {driver.current_url}")
 
         log(f"  Filling username: {username}")
@@ -3846,7 +4142,13 @@ def _auto_download(job_id, gstin, client_name,
             "//button[@type='submit']",
             "//input[@type='submit']",
         ])
-        time.sleep(10)
+        # Smart wait: wait for URL change after login (up to 8s)
+        try:
+            WebDriverWait(driver, 8).until(
+                lambda d: "login" not in d.current_url.lower() or "fowelcome" in d.current_url.lower()
+            )
+        except: pass
+        time.sleep(2)
 
         # OTP check
         try:
@@ -3866,10 +4168,17 @@ def _auto_download(job_id, gstin, client_name,
                         if _human_type(by, val, otp): break
                     except: continue
                 _try_click(["//button[contains(text(),'VERIFY')]","//button[contains(text(),'Submit')]","//button[@type='submit']"])
-                time.sleep(8)
+                time.sleep(4)
         except: pass
 
-        cur = driver.current_url.lower()
+        try:
+            cur = driver.current_url.lower()
+        except Exception as _sess_err:
+            raise RuntimeError(
+                "Chrome session crashed while waiting for CAPTCHA/OTP. "
+                "This was caused by --single-process on Windows (now fixed). "
+                "Please click 'Start Download' again to retry."
+            ) from _sess_err
         log(f"  Post-login URL: {driver.current_url}")
         if "accessdenied" in cur or ("login" in cur and "fowelcome" not in cur):
             raise RuntimeError("Login failed — wrong username/password/CAPTCHA. Please try again.")
@@ -3904,7 +4213,7 @@ def _auto_download(job_id, gstin, client_name,
                     "//a[normalize-space(text())='Services']",
                     "//nav//a[normalize-space()='Services']",
                 ])
-            time.sleep(2)
+            time.sleep(1)
 
             # Step 2: Click Returns in dropdown (hover first to keep dropdown open)
             try:
@@ -3918,7 +4227,7 @@ def _auto_download(job_id, gstin, client_name,
                     "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
                     "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
                 ])
-            time.sleep(2)
+            time.sleep(1)
 
             # Step 3: Click Returns Dashboard — XPath first, then full page scan
             clicked = _try_click([
@@ -3934,7 +4243,13 @@ def _auto_download(job_id, gstin, client_name,
                             clicked = True
                             break
                     except: continue
-            time.sleep(10)
+            # Smart wait: wait for URL to change to dashboard or timeout after 8s
+            try:
+                WebDriverWait(driver, 8).until(
+                    lambda d: "return.gst.gov.in" in d.current_url and "dashboard" in d.current_url
+                )
+            except: pass
+            time.sleep(1)
 
             final = driver.current_url
             log(f"  URL after nav attempt {attempt+1}: {final}")
@@ -3961,7 +4276,7 @@ def _auto_download(job_id, gstin, client_name,
     def _select_and_search(month_name):
         """Select FY, Quarter, Period then click SEARCH (mirrors select_and_search)"""
         log(f"  Setting: FY={fy}  Quarter={QUARTER_MAP_LOCAL.get(month_name,'')}  Period={month_name}")
-        time.sleep(3)
+        time.sleep(1)
 
         all_sels = driver.find_elements(By.TAG_NAME, "select")
         # FY
@@ -3977,7 +4292,7 @@ def _auto_download(job_id, gstin, client_name,
                             break
                     break
             except: continue
-        time.sleep(1)
+        time.sleep(0.3)
 
         all_sels = driver.find_elements(By.TAG_NAME, "select")
         # Quarter
@@ -3994,7 +4309,7 @@ def _auto_download(job_id, gstin, client_name,
                             break
                     break
             except: continue
-        time.sleep(1)
+        time.sleep(0.3)
 
         all_sels = driver.find_elements(By.TAG_NAME, "select")
         # Period/Month
@@ -4012,7 +4327,7 @@ def _auto_download(job_id, gstin, client_name,
                             break
                     break
             except: continue
-        time.sleep(1)
+        time.sleep(0.3)
 
         # SEARCH
         clicked = _try_click([
@@ -4030,46 +4345,19 @@ def _auto_download(job_id, gstin, client_name,
                     }
                 }
             """)
-        time.sleep(8)
-        # ── Debug: screenshot + page dump after SEARCH ────────────────
+        # Smart wait: wait for GSTR tiles to appear (max 8s)
         try:
-            img_b64 = _screenshot_b64()
-            if img_b64:
-                show_captcha(img_b64)   # reuse captcha slot to show screenshot
-                time.sleep(0.5)
-                clear_captcha()
-        except: pass
-        try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            # Log all visible text to find tile names
-            lines = [l.strip() for l in body_text.split("\n") if l.strip()]
-            log(f"  Page text after SEARCH ({len(lines)} lines): {' | '.join(lines[:30])}", "info")
-            # Log all buttons
-            btns_txt = [b.text.strip() for b in driver.find_elements(By.TAG_NAME, "button") if b.is_displayed() and b.text.strip()]
-            log(f"  Visible buttons: {btns_txt[:15]}", "info")
-            # Log all links
-            links_txt = [(a.text.strip(), (a.get_attribute("href") or "")[:60])
-                         for a in driver.find_elements(By.TAG_NAME, "a")
-                         if a.is_displayed() and a.text.strip()]
-            log(f"  Visible links: {links_txt[:15]}", "info")
-        except Exception as _de:
-            log(f"  Debug dump error: {_de}", "warn")
-        log(f"  Tiles loaded after SEARCH ✓")
+            WebDriverWait(driver, 8).until(
+                lambda d: any(t in d.find_element(By.TAG_NAME, "body").text
+                              for t in ["GSTR-1","GSTR-2","GSTR-3","GSTR1","GSTR2","GSTR3"])
+            )
+        except: time.sleep(2)
+        log(f"  Tiles loaded ✓")
 
     def _click_tile_download(tile_name):
         """Find tile and click its DOWNLOAD button"""
         log(f"  Finding {tile_name} tile DOWNLOAD button...")
-        time.sleep(3)
-
-        # Log full page text to diagnose tile names on this portal version
-        try:
-            all_text = driver.find_element(By.TAG_NAME, "body").text
-            log(f"  Page has text: {bool('GSTR' in all_text or 'gstr' in all_text.lower())}")
-            # Find all elements containing GSTR to see what's on the page
-            gstr_els = driver.find_elements(By.XPATH, "//*[contains(text(),'GSTR') or contains(text(),'gstr')]")
-            gstr_texts = list(set(e.text.strip()[:40] for e in gstr_els if e.is_displayed() and e.text.strip()))
-            log(f"  GSTR elements on page: {gstr_texts[:20]}", "info")
-        except: pass
+        time.sleep(0.5)
 
         name_variants = {
             "GSTR1":  ["GSTR1","GSTR-1","GSTR 1","gstr1","Gstr1"],
@@ -4111,7 +4399,6 @@ def _auto_download(job_id, gstin, client_name,
             all_dl_btns = driver.find_elements(By.XPATH,
                 "//*[contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD') "
                 "and (self::button or self::a) and not(contains(text(),'GENERATE'))]")
-            log(f"  All DOWNLOAD buttons on page: {[b.text.strip() for b in all_dl_btns if b.is_displayed()][:10]}", "info")
             for btn in all_dl_btns:
                 if not btn.is_displayed(): continue
                 # Check if any ancestor contains the tile name
@@ -4217,7 +4504,7 @@ def _auto_download(job_id, gstin, client_name,
                                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
                                 time.sleep(0.5)
                                 driver.execute_script("arguments[0].click();", el)
-                                time.sleep(8)
+                                time.sleep(2)
                                 if _rename_latest(save_name, dl_extensions):
                                     return True
                 except: continue
@@ -4241,14 +4528,14 @@ def _auto_download(job_id, gstin, client_name,
                 log(f"  Still waiting... ({elapsed}s) — refreshing page")
                 try:
                     driver.refresh()
-                    time.sleep(4)
+                    time.sleep(2)
                     if _is_session_lost():
                         log("  Session lost during wait — re-logging in...", "warn")
                         _do_login()
                         _go_to_dashboard()
                         _select_and_search(current_month[0])
                         _click_tile_download(current_tile[0])
-                        time.sleep(8)
+                        time.sleep(2)
                 except: pass
 
         log(f"  ⚠ No download link found for {save_name} after {max_wait}s", "warn")
@@ -4298,9 +4585,10 @@ def _auto_download(job_id, gstin, client_name,
         opts.add_argument("--disable-gpu")
         opts.add_argument("--window-size=1280,900")
         opts.add_argument("--disable-blink-features=AutomationControlled")
-        # Speed flags for Render server
-        opts.add_argument("--no-zygote")
-        opts.add_argument("--single-process")
+        # Speed flags for Render/Linux server only — these crash Chrome on Windows
+        if platform.system() != "Windows":
+            opts.add_argument("--no-zygote")
+            opts.add_argument("--single-process")
         opts.add_argument("--disable-setuid-sandbox")
         opts.add_argument("--disable-software-rasterizer")
         opts.add_argument("--disable-background-networking")
@@ -4372,249 +4660,270 @@ def _auto_download(job_id, gstin, client_name,
 
         prog(15)
 
-        # ── Step 2: Phase 1 — GSTR-3B (immediate PDF) + trigger generators ─
+        # ══════════════════════════════════════════════════════════════
+        # Step 2: FAST DOWNLOAD LOOP
+        # ── KEY FIXES ──
+        # GSTR-2B: Portal ALWAYS shows a generate page after tile click.
+        #          We ALWAYS click GENERATE EXCEL first, then poll for the
+        #          instant download — never rely on direct file arriving
+        #          without clicking Generate. This is why only April worked
+        #          before (Generate was only clicked as a fallback).
+        # GSTR-3B: PDF downloads directly — use tight 0.5s polling loop
+        #          instead of a fixed 6s sleep → 3-4x faster.
+        # SPEED:   Removed all fixed sleeps; use smart waits throughout.
+        # ══════════════════════════════════════════════════════════════
         triggered = {}
         total_months = len(MONTHS_LIST)
 
-        log(f"\n📋 Phase 1 — Triggering file generation for {total_months} months...")
-        log(f"   Returns: {', '.join(sorted(returns_set))}")
+        # ── Identify case type for phased flow ───────────────────
+        _DIRECT_ONLY_TYPES = {"GSTR2B", "GSTR3B"}
+        _is_fast_case = returns_set.issubset(_DIRECT_ONLY_TYPES)
+        _generate_types = [r for r in ("GSTR1","GSTR1A","GSTR2A") if r in returns_set]
+        _direct_types   = [r for r in ("GSTR2B","GSTR3B")         if r in returns_set]
 
-        for idx, (month_name, month_num, year) in enumerate(MONTHS_LIST):
+        log(f"\n{'═'*55}")
+        log(f"📋 DOWNLOAD CASE    : {returns}  →  {sorted(returns_set)}")
+        if _is_fast_case:
+            log(f"⚡ TYPE             : FAST — direct download, no generate needed")
+            log(f"   Tabs needed     : {len(returns_set) * 12} tabs | Est time: ~{len(returns_set)*5} min")
+        else:
+            log(f"📋 TYPE             : PHASED download flow")
+            log(f"   Phase 1         : Generate {_generate_types} — all {total_months} months")
+            log(f"   Phase 2+3       : Direct download {_direct_types} — keeps session alive")
+            log(f"   Phase 4         : Collect generate links {_generate_types}")
+        log(f"   Retry policy    : T1 → 30s wait → T2 → 60s wait → T3 → report fail")
+        log(f"   Batch size      : 6 months per batch (avoids portal Not Found)")
+        log(f"   Session timeout : Downloading 2B+3B in Phase 2+3 prevents 20-min logout")
+        log(f"{'═'*55}\n")
+
+        log(f"\n📋 Downloading {total_months} months × {', '.join(sorted(returns_set))} ...")
+
+        def _fast_wait_file(extensions, before_snap, timeout=90):
+            """Poll dl_dir every 0.5s for a new complete file. Much faster than fixed sleeps."""
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                time.sleep(0.5)
+                for f in dl_dir.iterdir():
+                    if f.suffix.lower() not in extensions: continue
+                    if f.name.endswith((".crdownload", ".tmp")): continue
+                    prev = before_snap.get(str(f))
+                    if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 500:
+                        time.sleep(0.8)   # let chrome finish flushing
+                        return f
+            return None
+
+        def _snap_dl_dir(extensions):
+            return {str(f): f.stat().st_mtime for f in dl_dir.iterdir()
+                    if f.suffix.lower() in extensions}
+
+        def _save_file(src_f, save_name, month_key, return_key):
+            """Copy downloaded file to out_dir and register it."""
+            dest = out_dir / save_name
+            try: _shutil.copy2(str(src_f), str(dest))
+            except: pass
+            sz = src_f.stat().st_size // 1024
+            triggered[f"{month_key}_{return_key}"] = "OK"
+            downloaded.append({"name": save_name, "size": f"{sz} KB"})
+            with jobs_lock:
+                if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+            log(f"  ✅ Saved: {save_name} ({sz} KB)", "ok")
+
+        # ══════════════════════════════════════════════════════════════
+        # PHASED DOWNLOAD — replaces old per-month sequential loop
+        #
+        # OLD: for each month → do all returns  (mixed, slow)
+        # NEW: for each return → do all months  (phased, fast)
+        #
+        # Phase 1 : Trigger GENERATE for GSTR-1, GSTR-1A, GSTR-2A
+        #           ALL 12 months quickly — click & move on, no waiting
+        # Phase 2 : Download GSTR-2B ALL 12 months  (INSTANT — no wait)
+        # Phase 3 : Download GSTR-3B ALL 12 months  (INSTANT — no wait)
+        # Phase 4 : Collect DOWNLOAD LINKS for GSTR-1, GSTR-1A, GSTR-2A
+        #           (now ready — portal generated during Phase 2+3)
+        #
+        # FAST CASE (2B only / 3B only / 2B+3B):
+        #   Skip Phase 1 entirely → do Phase 2+3 only → done in ~5-10 min
+        # ══════════════════════════════════════════════════════════════
+
+        def _do_month_return(month_name, month_num, year, rtype, action):
+            """
+            Navigate to dashboard, search for month, perform action for rtype.
+            action: 'generate' | 'direct_2b' | 'direct_3b' | 'collect'
+            Returns 'OK' | 'TILE_FAIL' | 'GEN_FAIL' | 'NOT_FOUND' | 'ERR:...'
+            """
             key = f"{month_name}_{year}"
+            save_name = {
+                "GSTR1":  f"GSTR1_{month_name}_{year}.zip",
+                "GSTR1A": f"GSTR1A_{month_name}_{year}.zip",
+                "GSTR2A": f"GSTR2A_{month_name}_{year}.zip",
+                "GSTR2B": f"GSTR2B_{month_name}_{year}.xlsx",
+                "GSTR3B": f"GSTR3B_{month_name}_{year}.pdf",
+            }[rtype]
+
+            # Skip if already downloaded
+            if (dl_dir / save_name).exists() or (out_dir / save_name).exists():
+                log(f"  ✓ {rtype} {month_name} already downloaded — skip", "ok")
+                return "OK"
+
+            _go_to_dashboard()
+            _select_and_search(month_name)
+            current_tile[0] = rtype
             current_month[0] = month_name
-            prog(15 + int(idx / total_months * 40))
 
-            # GSTR-3B: PDF direct download — single click, check if already exists
-            if "GSTR3B" in returns_set:
-                try:
-                    save_name = f"GSTR3B_{month_name}_{year}.pdf"
-                    # ── SINGLE-TRIGGER GUARD: skip if already downloaded ──
-                    if (dl_dir / save_name).exists() or (out_dir / save_name).exists():
-                        log(f"── {month_name} {year}: GSTR-3B already downloaded — skipping ✓", "ok")
-                        triggered[f"{key}_GSTR3B"] = "OK"
-                        existing = out_dir / save_name
-                        if not existing.exists():
-                            import shutil as _shutil2
-                            _shutil2.copy2(str(dl_dir / save_name), str(existing))
-                        if not any(f["name"] == save_name for f in downloaded):
-                            sz = existing.stat().st_size // 1024
-                            downloaded.append({"name": save_name, "size": f"{sz} KB"})
-                            with jobs_lock:
-                                if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
-                    else:
-                        log(f"\n── {month_name} {year}: GSTR-3B ──")
-                        _go_to_dashboard()
-                        _select_and_search(month_name)
-                        current_tile[0] = "GSTR3B"
-                        if _click_tile_download("GSTR3B"):
-                            time.sleep(11)
-                            if _rename_latest(save_name, [".pdf"]):
-                                triggered[f"{key}_GSTR3B"] = "OK"
-                                src_f = dl_dir / save_name
-                                sz = src_f.stat().st_size // 1024
-                                try: _shutil.copy2(str(src_f), str(out_dir / save_name))
-                                except: pass
-                                downloaded.append({"name": save_name, "size": f"{sz} KB"})
-                                with jobs_lock:
-                                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+            if not _click_tile_download(rtype):
+                save_failure_screenshot(f"{rtype} {month_name} {year} — Tile Not Found")
+                return "TILE_FAIL"
+
+            # ── Generate trigger (GSTR-1, GSTR-1A, GSTR-2A) ──────────
+            if action == "generate":
+                time.sleep(0.8)
+                xp = GENERATE_JSON_XP if rtype in ("GSTR1","GSTR1A") else GENERATE_EXCEL_XP
+                if _try_click(xp, timeout=8):
+                    log(f"  ✓ GENERATE clicked {rtype} {month_name}")
+                    time.sleep(0.5)
+                    return "TRIGGERED"
+                else:
+                    save_failure_screenshot(f"{rtype} {month_name} {year} — Generate button not found")
+                    return "GEN_FAIL"
+
+            # ── GSTR-2B instant download ───────────────────────────────
+            elif action == "direct_2b":
+                time.sleep(0.8)
+                snap = _snap_dl_dir({".xlsx", ".zip", ".json"})
+                gen_ok = _try_click(GENERATE_EXCEL_XP, timeout=8)
+                if not gen_ok:
+                    save_failure_screenshot(f"GSTR2B {month_name} {year} — Generate Excel button not found")
+                new_f = _fast_wait_file({".xlsx", ".zip", ".json"}, snap, timeout=60)
+                if new_f:
+                    dest = dl_dir / save_name
+                    if str(new_f) != str(dest):
+                        try: new_f.rename(dest)
+                        except: _shutil.copy2(str(new_f), str(dest))
+                    _save_file(dest, save_name, key, "GSTR2B")
+                    return "OK"
+                else:
+                    save_failure_screenshot(f"GSTR2B {month_name} {year} — File not received after Generate")
+                    return "NOT_FOUND"
+
+            # ── GSTR-3B direct PDF download ────────────────────────────
+            elif action == "direct_3b":
+                snap = _snap_dl_dir({".pdf"})
+                new_f = _fast_wait_file({".pdf"}, snap, timeout=30)
+                if new_f:
+                    dest = dl_dir / save_name
+                    if str(new_f) != str(dest):
+                        try: new_f.rename(dest)
+                        except: _shutil.copy2(str(new_f), str(dest))
+                    _save_file(dest, save_name, key, "GSTR3B")
+                    return "OK"
+                else:
+                    save_failure_screenshot(f"GSTR3B {month_name} {year} — PDF not received in 30s")
+                    return "NOT_FOUND"
+
+            # ── Collect generate link (Phase 4) ────────────────────────
+            elif action == "collect":
+                time.sleep(1)
+                xp = GENERATE_JSON_XP if rtype in ("GSTR1","GSTR1A") else GENERATE_EXCEL_XP
+                exts = [".zip",".json"] if rtype in ("GSTR1","GSTR1A") else [".zip",".xlsx"]
+                if _generate_and_download(save_name, xp, exts, max_wait=120):
+                    src_f = dl_dir / save_name
+                    try: _shutil.copy2(str(src_f), str(out_dir / save_name))
+                    except: pass
+                    sz = (out_dir / save_name).stat().st_size // 1024
+                    downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                    with jobs_lock:
+                        if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+                    return "OK"
+                else:
+                    save_failure_screenshot(f"{rtype} {month_name} {year} — Download link not found (Phase 4)")
+                    return "NOT_FOUND"
+
+            return "UNKNOWN"
+
+        def _run_phase(phase_label, rtype_list, action, retry_waits=(0,30,60)):
+            """
+            Run one phase: for each return in rtype_list, loop all 12 months.
+            Retries T1 → T2 → T3 on failure.
+            """
+            if not rtype_list:
+                return
+            log(f"\n{'═'*55}")
+            log(f"  {phase_label}")
+            log(f"  Returns: {rtype_list}  |  Action: {action}  |  Retry: T1→T2→T3")
+            log(f"{'═'*55}")
+            for rtype in rtype_list:
+                log(f"\n  ── {rtype} — all 12 months ──")
+                for midx, (month_name, month_num, year) in enumerate(MONTHS_LIST):
+                    key = f"{month_name}_{year}"
+                    current_month[0] = month_name
+                    prog(15 + int((midx) / total_months * 20))
+                    result = "FAIL"
+                    for attempt, wait in enumerate(retry_waits, 1):
+                        if wait > 0:
+                            log(f"    [T{attempt}] Waiting {wait}s before retry {rtype} {month_name}...")
+                            time.sleep(wait)
+                        try:
+                            result = _do_month_return(month_name, month_num, year, rtype, action)
+                            if result in ("OK","TRIGGERED"):
+                                if attempt > 1:
+                                    log(f"    [T{attempt}] ✓ Success on retry: {rtype} {month_name}", "ok")
+                                break
                             else:
-                                triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
-                                save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
-                        else:
-                            triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
-                            save_failure_screenshot(f"GSTR3B {month_name} {year} — Tile Not Found on Dashboard")
-                except Exception as e:
-                    log(f"  GSTR3B error [{month_name}]: {e}", "warn")
-                    triggered[f"{key}_GSTR3B"] = f"ERR:{e}"
-                    save_failure_screenshot(f"GSTR3B {month_name} {year} — Exception: {str(e)[:60]}")
+                                log(f"    [T{attempt}] ✗ {result}: {rtype} {month_name}", "warn")
+                        except Exception as e:
+                            result = f"ERR:{e}"
+                            log(f"    [T{attempt}] ✗ Error: {e}", "warn")
+                            save_failure_screenshot(f"{rtype} {month_name} {year} T{attempt}: {str(e)[:50]}")
+                    triggered[f"{key}_{rtype}"] = result
+                    status = "✅" if result in ("OK","TRIGGERED") else "❌"
+                    log(f"    {status} {rtype} {month_name} {year}: {result}")
 
-            # GSTR-1: trigger GENERATE JSON
-            if "GSTR1" in returns_set:
-                try:
-                    log(f"\n── {month_name} {year}: GSTR-1 (trigger generate) ──")
-                    _go_to_dashboard()
-                    _select_and_search(month_name)
-                    current_tile[0] = "GSTR1"
-                    if _click_tile_download("GSTR1"):
-                        time.sleep(4)
-                        if _try_click(GENERATE_JSON_XP, timeout=8):
-                            log(f"  GSTR-1 GENERATE JSON clicked ✓")
-                            triggered[f"{key}_GSTR1"] = "TRIGGERED"
-                            time.sleep(2)
-                        else:
-                            triggered[f"{key}_GSTR1"] = "GEN_FAIL"
-                            save_failure_screenshot(f"GSTR1 {month_name} {year} — Generate Button Not Found")
-                    else:
-                        triggered[f"{key}_GSTR1"] = "TILE_FAIL"
-                        save_failure_screenshot(f"GSTR1 {month_name} {year} — Tile Not Found on Dashboard")
-                except Exception as e:
-                    log(f"  GSTR1 trigger error [{month_name}]: {e}", "warn")
-                    triggered[f"{key}_GSTR1"] = f"ERR:{e}"
-                    save_failure_screenshot(f"GSTR1 {month_name} {year} — Exception: {str(e)[:60]}")
+        # ── PHASE 1: Trigger GENERATE — GSTR-1, GSTR-1A, GSTR-2A ─────────
+        _generate_types = [r for r in ("GSTR1","GSTR1A","GSTR2A") if r in returns_set]
+        _direct_2b      = "GSTR2B" in returns_set
+        _direct_3b      = "GSTR3B" in returns_set
 
-            # GSTR-1A: trigger GENERATE JSON
-            if "GSTR1A" in returns_set:
-                try:
-                    log(f"\n── {month_name} {year}: GSTR-1A (trigger generate) ──")
-                    _go_to_dashboard()
-                    _select_and_search(month_name)
-                    current_tile[0] = "GSTR1A"
-                    if _click_tile_download("GSTR1A"):
-                        time.sleep(4)
-                        if _try_click(GENERATE_JSON_XP, timeout=8):
-                            log(f"  GSTR-1A GENERATE JSON clicked ✓")
-                            triggered[f"{key}_GSTR1A"] = "TRIGGERED"
-                            time.sleep(2)
-                        else:
-                            triggered[f"{key}_GSTR1A"] = "GEN_FAIL"
-                            save_failure_screenshot(f"GSTR1A {month_name} {year} — Generate Button Not Found")
-                    else:
-                        triggered[f"{key}_GSTR1A"] = "TILE_NOT_FOUND"
-                        save_failure_screenshot(f"GSTR1A {month_name} {year} — Tile Not Found on Dashboard")
-                except Exception as e:
-                    log(f"  GSTR1A trigger error [{month_name}]: {e}", "warn")
-                    triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
-                    save_failure_screenshot(f"GSTR1A {month_name} {year} — Exception: {str(e)[:60]}")
+        if _generate_types:
+            _run_phase(
+                "PHASE 1 — Click GENERATE (all months, no waiting — click & move on)",
+                _generate_types, "generate"
+            )
+            prog(35)
+            log("\n  ✅ Phase 1 complete — portal generating files in background (~15-20 min)")
+            log("  ▶ Moving to Phase 2+3 (instant downloads) to keep session alive...")
 
-            # GSTR-2B: single-level download (same as GSTR-3B)
-            # Portal may (a) download directly OR (b) show generate page.
-            # Both handled automatically — no Phase 2 needed for GSTR-2B.
-            if "GSTR2B" in returns_set:
-                try:
-                    log(f"\n── {month_name} {year}: GSTR-2B (single-level download) ──")
-                    _go_to_dashboard()
-                    _select_and_search(month_name)
-                    save_name = f"GSTR2B_{month_name}_{year}.xlsx"
-                    current_tile[0] = "GSTR2B"
-                    if _click_tile_download("GSTR2B"):
-                        time.sleep(11)
-                        # Case (a): file downloaded directly
-                        if _rename_latest(save_name, [".xlsx", ".zip", ".json"]):
-                            log(f"  GSTR-2B [{month_name}] — direct download OK", "ok")
-                            triggered[f"{key}_GSTR2B"] = "OK"
-                            src_f = dl_dir / save_name
-                            sz = src_f.stat().st_size // 1024
-                            try: _shutil.copy2(str(src_f), str(out_dir / save_name))
-                            except: pass
-                            downloaded.append({"name": save_name, "size": f"{sz} KB"})
-                            with jobs_lock:
-                                if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
-                        else:
-                            # Case (b): portal showed generate page — click GENERATE and wait
-                            log(f"  GSTR-2B [{month_name}] — no direct file, trying generate page...", "warn")
-                            ok = _generate_and_download(save_name, GENERATE_EXCEL_XP,
-                                                        [".xlsx", ".zip", ".json"], max_wait=120)
-                            if ok:
-                                log(f"  GSTR-2B [{month_name}] — downloaded via generate page OK", "ok")
-                                triggered[f"{key}_GSTR2B"] = "OK"
-                                src_f = dl_dir / save_name
-                                sz = src_f.stat().st_size // 1024
-                                try: _shutil.copy2(str(src_f), str(out_dir / save_name))
-                                except: pass
-                                downloaded.append({"name": save_name, "size": f"{sz} KB"})
-                                with jobs_lock:
-                                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
-                            else:
-                                triggered[f"{key}_GSTR2B"] = "NOT_FOUND"
-                                save_failure_screenshot(f"GSTR2B {month_name} {year} — File Not Found (direct + generate)")
-                    else:
-                        triggered[f"{key}_GSTR2B"] = "TILE_FAIL"
-                        save_failure_screenshot(f"GSTR2B {month_name} {year} — Tile Not Found on Dashboard")
-                except Exception as e:
-                    log(f"  GSTR2B error [{month_name}]: {e}", "warn")
-                    triggered[f"{key}_GSTR2B"] = f"ERR:{e}"
-                    save_failure_screenshot(f"GSTR2B {month_name} {year} — Exception: {str(e)[:60]}")
-            # GSTR-2A: trigger GENERATE JSON (portal returns ZIP file)
-            if "GSTR2A" in returns_set:
-                try:
-                    log(f"\n── {month_name} {year}: GSTR-2A (Phase 1 — trigger Generate Excel → ZIP) ──")
-                    _go_to_dashboard()
-                    _select_and_search(month_name)
-                    current_tile[0] = "GSTR2A"
-                    if _click_tile_download("GSTR2A"):
-                        time.sleep(4)
-                        if _try_click(GENERATE_EXCEL_XP, timeout=8):
-                            log(f"  GSTR-2A GENERATE EXCEL clicked ✓ (Phase 1 — will download as ZIP containing Excel)")
-                            triggered[f"{key}_GSTR2A"] = "TRIGGERED"
-                            time.sleep(2)
-                        else:
-                            triggered[f"{key}_GSTR2A"] = "GEN_FAIL"
-                            save_failure_screenshot(f"GSTR2A {month_name} {year} — Generate Excel Button Not Found (Phase 1)")
-                    else:
-                        triggered[f"{key}_GSTR2A"] = "TILE_FAIL"
-                        save_failure_screenshot(f"GSTR2A {month_name} {year} — Tile Not Found on Dashboard")
-                except Exception as e:
-                    log(f"  GSTR2A trigger error [{month_name}]: {e}", "warn")
-                    triggered[f"{key}_GSTR2A"] = f"ERR:{e}"
-                    save_failure_screenshot(f"GSTR2A {month_name} {year} — Exception: {str(e)[:60]}")
+        # ── PHASE 2: GSTR-2B — INSTANT download all 12 months ─────────────
+        if _direct_2b:
+            _run_phase(
+                "PHASE 2 — GSTR-2B Direct Download (INSTANT — no generate wait needed)",
+                ["GSTR2B"], "direct_2b"
+            )
+            prog(55)
 
-        prog(55)
+        # ── PHASE 3: GSTR-3B — INSTANT download all 12 months ─────────────
+        if _direct_3b:
+            _run_phase(
+                "PHASE 3 — GSTR-3B Direct Download (INSTANT PDF — no generate wait needed)",
+                ["GSTR3B"], "direct_3b"
+            )
+            prog(70)
 
-        # ── Step 3: Phase 2 — Download generated files (GSTR-1, 1A, 2A) ─
-        need_phase2 = any(
-            triggered.get(f"{month_name}_{year}_{rt}") == "TRIGGERED"
-            for month_name, month_num, year in MONTHS_LIST
+        # ── PHASE 4: Collect GENERATE links — GSTR-1, GSTR-1A, GSTR-2A ───
+        # By now Phase 2+3 kept session alive and portal has finished generating
+        need_phase4 = any(
+            triggered.get(f"{mn}_{yr}_{rt}") == "TRIGGERED"
+            for mn, mm, yr in MONTHS_LIST
             for rt in ("GSTR1","GSTR1A","GSTR2A")
         )
-
-        if need_phase2:
-            log(f"\n📥 Phase 2 — Downloading generated files (portal generates in ~30s-2min)...")
-            log("  Waiting 30 seconds for portal to finish generating files...")
-            time.sleep(30)
-
-            ret_config = {
-                "GSTR1":  (GENERATE_JSON_XP,   [".zip",".json"]),
-                "GSTR1A": (GENERATE_JSON_XP,   [".zip",".json"]),
-                "GSTR2A": (GENERATE_EXCEL_XP,  [".zip",".xlsx"]),  # Phase 2: click Generate Excel → ZIP contains Excel
-            }
-            p2_total = sum(
-                1 for mn, mm, yr in MONTHS_LIST
-                for rt in ret_config
-                if triggered.get(f"{mn}_{yr}_{rt}") == "TRIGGERED"
+        if need_phase4:
+            _collect_types = [r for r in ("GSTR1","GSTR1A","GSTR2A")
+                              if r in returns_set and any(
+                                  triggered.get(f"{mn}_{yr}_{r}") == "TRIGGERED"
+                                  for mn, mm, yr in MONTHS_LIST)]
+            _run_phase(
+                "PHASE 4 — Collect Download Links (GSTR-1, GSTR-1A, GSTR-2A now ready)",
+                _collect_types, "collect"
             )
-            p2_done = 0
-
-            for idx2, (month_name, month_num, year) in enumerate(MONTHS_LIST):
-                key = f"{month_name}_{year}"
-                current_month[0] = month_name
-
-                for ret_type, (gen_xp, dl_exts) in ret_config.items():
-                    if ret_type not in returns_set: continue
-                    tkey = f"{key}_{ret_type}"
-                    if triggered.get(tkey) != "TRIGGERED": continue
-
-                    save_name = f"{ret_type}_{month_name}_{year}.zip"  # All JSON-based returns are saved as ZIP
-                    log(f"\n── {month_name} {year}: {ret_type} (download) ──")
-                    current_tile[0] = ret_type
-
-                    try:
-                        _go_to_dashboard()
-                        _select_and_search(month_name)
-                        if _click_tile_download(ret_type):
-                            time.sleep(4)
-                            if _generate_and_download(save_name, gen_xp, dl_exts, max_wait=120):
-                                triggered[tkey] = "OK"
-                                src_f = dl_dir / save_name
-                                sz = src_f.stat().st_size // 1024
-                                # Copy immediately to out_dir so /api/dl-file works during live polling
-                                try: _shutil.copy2(str(src_f), str(out_dir / save_name))
-                                except: pass
-                                downloaded.append({"name": save_name, "size": f"{sz} KB"})
-                                with jobs_lock:
-                                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
-                            else:
-                                triggered[tkey] = "NOT_FOUND"
-                                save_failure_screenshot(f"{ret_type} {month_name} {year} — Download Link Not Found (Phase 2)")
-                        else:
-                            triggered[tkey] = "TILE_FAIL"
-                            save_failure_screenshot(f"{ret_type} {month_name} {year} — Tile Not Found (Phase 2)")
-                    except Exception as e:
-                        log(f"  {ret_type} download error [{month_name}]: {e}", "warn")
-                        triggered[tkey] = f"ERR:{e}"
-                        save_failure_screenshot(f"{ret_type} {month_name} {year} — Exception Phase 2: {str(e)[:60]}")
-
-                    p2_done += 1
-                    prog(55 + int(p2_done / max(p2_total,1) * 40))
 
         prog(97)
 
@@ -5114,7 +5423,7 @@ def run_it_reconciliation(job_id):
 
 
 @app.route("/api/it-upload", methods=["POST"])
-@rate_limit(limit=20, window=60)
+@rate_limit(limit=60, window=60)
 def api_it_upload():
     _cleanup_old_jobs()
     company_name = request.form.get("company_name","").strip()
@@ -5378,6 +5687,85 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
             return True
         except: return False
 
+    # ── Helper: _dismiss_popup ────────────────────────────────────────
+    def _dismiss_popup():
+        """
+        Dismiss the IT portal 'Reload? You will be logged out.' popup.
+        Handles:  1) native browser confirm/alert dialog
+                  2) Angular Material dialog with No / Stay / Keep me signed in button
+        Safe to call from background thread. Returns True if a popup was dismissed.
+        """
+        try:
+            # Form 1: native browser dialog (window.confirm not yet suppressed)
+            try:
+                alert = driver.switch_to.alert
+                log(f"  ⚠ Native dialog: '{alert.text[:80]}' — dismissing (No)...", "warn")
+                alert.dismiss()
+                time.sleep(0.5)
+                return True
+            except Exception:
+                pass
+
+            # Form 2 & 3: Angular / HTML modal 'No' / 'Stay' button
+            no_xpaths = [
+                "//button[normalize-space()='No']",
+                "//button[normalize-space()='NO']",
+                "//button[contains(normalize-space(),'No')]",
+                "//button[normalize-space()='Stay']",
+                "//button[normalize-space()='STAY']",
+                "//button[contains(normalize-space(),'Stay')]",
+                "//button[contains(normalize-space(),'Keep me')]",
+                "//button[contains(normalize-space(),'Remain')]",
+                "//*[@role='dialog']//button[contains(normalize-space(),'No')]",
+                "//*[@role='dialog']//button[contains(normalize-space(),'Stay')]",
+                "//mat-dialog-container//button[contains(normalize-space(),'No')]",
+                "//mat-dialog-container//button[contains(normalize-space(),'Stay')]",
+                "//*[contains(@class,'modal')]//button[contains(normalize-space(),'No')]",
+                "//*[contains(@class,'dialog')]//button[contains(normalize-space(),'No')]",
+                "//button[contains(normalize-space(),'Cancel')]",
+            ]
+            clicked = _click(no_xpaths, timeout=2)
+            if clicked:
+                log("  IT portal popup dismissed ✓")
+                time.sleep(0.8)
+            return clicked
+        except Exception:
+            return False
+
+    # ── SessionWatchdog: background thread polls every 4s ─────────────
+    import threading as _threading
+
+    class _SessionWatchdog:
+        """
+        Continuously dismisses the IT portal's reload/logout popup in the
+        background so it can never freeze the browser or expire the session,
+        regardless of when it fires (during downloads, OTP wait, navigation).
+        """
+        POLL = 4   # seconds between checks
+
+        def __init__(self):
+            self._stop = _threading.Event()
+            self._t    = _threading.Thread(target=self._run, daemon=True,
+                                           name="AppSessionWatchdog")
+
+        def start(self):
+            self._stop.clear()
+            self._t.start()
+            log("  SessionWatchdog started ✓")
+
+        def stop(self):
+            self._stop.set()
+            self._t.join(timeout=self.POLL + 2)
+
+        def _run(self):
+            while not self._stop.wait(self.POLL):
+                try:
+                    _dismiss_popup()
+                except Exception:
+                    pass  # browser mid-navigation; retry next cycle
+
+    watchdog = _SessionWatchdog()
+
     # ── Helper: wait_for_new_file ─────────────────────────────────────────
     def _wait_new_file(extensions, before_set, timeout=120):
         deadline = time.time() + timeout
@@ -5401,9 +5789,10 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         opts.add_argument("--disable-gpu")
         opts.add_argument("--window-size=1280,900")
         opts.add_argument("--disable-blink-features=AutomationControlled")
-        # Speed flags for Render server
-        opts.add_argument("--no-zygote")
-        opts.add_argument("--single-process")
+        # Speed flags for Render/Linux server only — these crash Chrome on Windows
+        if platform.system() != "Windows":
+            opts.add_argument("--no-zygote")
+            opts.add_argument("--single-process")
         opts.add_argument("--disable-setuid-sandbox")
         opts.add_argument("--disable-software-rasterizer")
         opts.add_argument("--disable-background-networking")
@@ -5452,8 +5841,31 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         except:
             driver = webdriver.Chrome(options=opts)
 
-        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-            "source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+        _STEALTH_JS = """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en']});
+            Object.defineProperty(navigator, 'plugins',   {get: () => [1, 2, 3, 4, 5]});
+            window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
+            // ── Suppress IT portal reload/logout dialogs ──────────────────────
+            // The IT portal fires window.confirm('Reload? You will be logged out.')
+            // on every Angular route change. Auto-clicking 'No' (return false)
+            // prevents the browser from freezing and prevents session expiry.
+            window.confirm      = function(msg){ console.log('[CONFIRM suppressed] ' + msg); return false; };
+            window.alert        = function(msg){ console.log('[ALERT suppressed]   ' + msg); };
+            window.onbeforeunload = null;
+            // Re-apply on every future hash navigation (Angular SPA guard)
+            window.addEventListener('hashchange', function(){
+                window.confirm = function(msg){ return false; };
+                window.alert   = function(msg){ };
+                window.onbeforeunload = null;
+            });
+        """
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": _STEALTH_JS})
+        # Allow multiple file downloads without per-file permission prompts
+        driver.execute_cdp_cmd("Browser.setDownloadBehavior", {
+            "behavior": "allow",
+            "downloadPath": str(dl_dir),
+            "eventsEnabled": True,
         })
         log("✅ Headless Chrome started for IT Portal", "ok")
         prog(5)
@@ -5476,20 +5888,93 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         log(f"  Login page URL: {driver.current_url}")
 
         log(f"  Entering PAN/User ID: {username}")
+
+        # ── Wait for Angular app to render input fields ────────────────────
+        for _ in range(20):
+            inputs = driver.find_elements(By.CSS_SELECTOR, "input:not([type='hidden'])")
+            if inputs:
+                log(f"  Login form ready — {len(inputs)} input(s) visible")
+                break
+            time.sleep(2)
+        time.sleep(1)
+        log(f"  Login page URL after wait: {driver.current_url}")
+
+        def _type_mat(by, val, text, timeout=8):
+            """
+            Angular-Material-compatible type function.
+            Fires input/change/keyup events so Angular picks up the value.
+            Falls back to plain send_keys if CDP insertText fails.
+            """
+            try:
+                el = WebDriverWait(driver, timeout).until(
+                    EC.presence_of_element_located((by, val)))
+                driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center',inline:'center'});", el)
+                time.sleep(0.4)
+                driver.execute_script(
+                    "arguments[0].click(); arguments[0].focus();", el)
+                time.sleep(0.3)
+                # Clear existing value
+                driver.execute_script(
+                    "arguments[0].value = '';"
+                    "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));", el)
+                time.sleep(0.2)
+                # Insert text via CDP (works for Angular Material)
+                try:
+                    driver.execute_cdp_cmd("Input.insertText", {"text": str(text)})
+                except Exception:
+                    for ch in str(text): el.send_keys(ch); time.sleep(0.04)
+                time.sleep(0.3)
+                # Fire Angular events
+                driver.execute_script(
+                    "arguments[0].dispatchEvent(new Event('input',  {bubbles:true}));"
+                    "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));"
+                    "arguments[0].dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}));",
+                    el)
+                time.sleep(0.2)
+                actual = (el.get_attribute("value") or "").strip().upper()
+                expected = str(text).strip().upper()
+                if actual == expected or len(actual) > 0:
+                    log(f"    ✓ Typed via _type_mat: '{actual}'  [{val}]")
+                    return True
+                # Last resort: plain send_keys
+                el.clear()
+                for ch in str(text): el.send_keys(ch); time.sleep(0.04)
+                time.sleep(0.2)
+                actual = (el.get_attribute("value") or "").strip()
+                return bool(actual)
+            except Exception as e:
+                log(f"    _type_mat fail [{val}]: {e}", "warn")
+                return False
+
         filled = False
         for by, val in [
-            (By.ID,   "pan"),
-            (By.ID,   "userId"),
-            (By.ID,   "user_id"),
-            (By.NAME, "userId"),
-            (By.NAME, "pan"),
+            (By.ID,           "panAdhaarUserId"),                              # IT portal real field ID (April 2026)
+            (By.NAME,         "panAdhaarUserId"),
+            (By.CSS_SELECTOR, "#panAdhaarUserId"),
+            (By.CSS_SELECTOR, "input[name='panAdhaarUserId']"),
+            (By.CSS_SELECTOR, "input[formcontrolname='userId']"),
             (By.CSS_SELECTOR, "input[placeholder*='PAN']"),
+            (By.CSS_SELECTOR, "input[placeholder*='Aadhaar']"),
             (By.CSS_SELECTOR, "input[placeholder*='User ID']"),
-            (By.CSS_SELECTOR, "input[placeholder*='user']"),
-            (By.CSS_SELECTOR, "input[type='text']:not([readonly])"),
+            (By.CSS_SELECTOR, "input.mat-mdc-input-element:not([type='password'])"),
+            (By.CSS_SELECTOR, "input[type='text']:not([readonly]):not([disabled])"),
         ]:
-            if _type(by, val, username):
-                filled = True; break
+            if _type_mat(by, val, username):
+                filled = True
+                log(f"  PAN typed via selector: {val}")
+                break
+
+        if not filled:
+            # Wait 15s more for slow portal and retry primary selectors
+            log("  PAN field not found yet — waiting 15s for slow portal load...")
+            time.sleep(15)
+            filled = (
+                _type_mat(By.ID, "panAdhaarUserId", username) or
+                _type_mat(By.CSS_SELECTOR, "input[formcontrolname='userId']", username) or
+                _type_mat(By.CSS_SELECTOR, "input[type='text']:not([readonly])", username)
+            )
+
         if not filled:
             raise RuntimeError("Cannot find User ID / PAN field on IT portal login page")
 
@@ -5505,17 +5990,62 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         log("  Entering password...")
         filled = False
         for by, val in [
+            (By.CSS_SELECTOR, "input[type='password']"),
+            (By.CSS_SELECTOR, "input[formcontrolname='password']"),
+            (By.CSS_SELECTOR, "input[formcontrolname='currentPassword']"),
             (By.ID,   "password"),
             (By.NAME, "password"),
             (By.ID,   "current-password"),
-            (By.CSS_SELECTOR, "input[type='password']"),
             (By.CSS_SELECTOR, "input[placeholder*='assword']"),
         ]:
-            if _type(by, val, password):
+            if _type_mat(by, val, password):
                 filled = True; break
         if not filled:
             raise RuntimeError("Cannot find password field on IT portal login page")
 
+        time.sleep(1)
+
+        # ── Tick "Secure Access Message" checkbox (IT portal password page requires this) ──
+        log("  Ticking 'Secure Access Message' checkbox (if present)...")
+        checkbox_clicked = False
+        for xp in [
+            "//input[@type='checkbox']",
+            "//input[contains(@id,'secure')]",
+            "//input[contains(@name,'secure')]",
+            "//input[contains(@id,'confirm')]",
+            "//*[contains(text(),'secure access')]/preceding-sibling::input[@type='checkbox']",
+            "//*[contains(text(),'secure access')]/..//input[@type='checkbox']",
+            "//*[contains(@class,'checkbox')]//input[@type='checkbox']",
+        ]:
+            try:
+                cb = WebDriverWait(driver, 4).until(
+                    EC.presence_of_element_located((By.XPATH, xp)))
+                if not cb.is_selected():
+                    driver.execute_script(
+                        "arguments[0].scrollIntoView({block:'center'});", cb)
+                    time.sleep(0.3)
+                    try:   cb.click()
+                    except: driver.execute_script("arguments[0].click();", cb)
+                log(f"  Checkbox ticked ✓")
+                checkbox_clicked = True
+                break
+            except: continue
+        if not checkbox_clicked:
+            try:
+                driver.execute_script("""
+                    var cbs = document.querySelectorAll('input[type="checkbox"]');
+                    cbs.forEach(function(cb){
+                        if(!cb.checked){
+                            cb.click();
+                            cb.dispatchEvent(new Event('change',{bubbles:true}));
+                        }
+                    });
+                """)
+                checkbox_clicked = True
+                log("  Checkbox ticked via JS bulk-click ✓")
+            except: pass
+        if not checkbox_clicked:
+            log("  Checkbox not found — portal may still accept login", "warn")
         time.sleep(1)
 
         log("  Clicking Login submit...")
@@ -5589,19 +6119,54 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
                     "//a[normalize-space()='Yes']",
                     "//input[@value='Yes']",
                 ])
-                time.sleep(SHORT_WAIT)
-                log("  ✅ Device registered — future logins will skip OTP", "ok")
+                # Wait for the portal to complete device registration and reach dashboard.
+                # The Angular app transitions: Remember-Device → #/login/password → #/dashboard
+                # This can take up to 30s on a slow connection — DO NOT navigate away early!
+                log("  Waiting for portal to complete device registration (up to 60s)...")
+                for _rd_wait in range(30):
+                    time.sleep(2)
+                    _rd_url = driver.current_url.lower()
+                    if "dashboard" in _rd_url and "sessionexpire" not in _rd_url:
+                        log("  ✅ Device registered — dashboard reached!", "ok")
+                        break
+                    if _rd_wait % 5 == 0:
+                        log(f"  Still waiting for dashboard ({_rd_wait*2}s)… URL: {driver.current_url}")
+                else:
+                    log("  ✅ Device registered — future logins will skip OTP", "ok")
         except: pass
 
         # ── Verify login success ───────────────────────────────────────────
         cur = driver.current_url.lower()
         log(f"  Post-login URL: {driver.current_url}")
+
+        # CRITICAL: If still on login/password page, this is the Angular mid-flow state
+        # (#/login/password is NORMAL while the portal is setting JWT cookies after OTP).
+        # Wait up to 60s watching for #/dashboard.  DO NOT navigate away — that kills the
+        # JWT handshake and permanently breaks the session (causes the infinite redirect loop).
+        # Only treat it as a real failure if we land on #/sessionExpire (not #/login/password).
+        if "login" in cur or "password" in cur:
+            log("  Still on login/password page — waiting for Angular to reach dashboard (up to 60s)...")
+            for _lw in range(30):
+                time.sleep(2)
+                cur = driver.current_url.lower()
+                if "dashboard" in cur and "sessionexpire" not in cur:
+                    log(f"  ✅ Portal reached dashboard: {driver.current_url}", "ok")
+                    break
+                if "sessionexpire" in cur:
+                    log("  ⚠ Session expired URL during post-login wait — will recover later", "warn")
+                    break
+                if _lw % 5 == 0 and _lw > 0:
+                    log(f"  Still waiting… ({_lw*2}s) URL: {driver.current_url}")
+            else:
+                log("  Portal still on login after 60s — showing screenshot for manual input", "warn")
+            cur = driver.current_url.lower()
+
         login_ok = any([
-            "dashboard" in cur,
+            "dashboard" in cur and "sessionexpire" not in cur,
             "profile"   in cur,
             "myaccount" in cur,
             ("home" in cur and "foportal" in cur),
-            ("iec/foportal" in cur and "login" not in cur),
+            ("iec/foportal" in cur and "login" not in cur and "sessionexpire" not in cur),
         ])
         if not login_ok:
             # Show screenshot and let user verify / continue
@@ -5620,118 +6185,440 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
                 ]:
                     if _type(by, val, resp): break
                 _click(["//button[@type='submit']", "//button[contains(text(),'Continu')]"])
-                time.sleep(PAGE_WAIT)
+                time.sleep(PAGE_WAIT + 5)
+                # After user action: wait again for dashboard
+                for _uw in range(20):
+                    time.sleep(2)
+                    cur = driver.current_url.lower()
+                    if "dashboard" in cur and "sessionexpire" not in cur:
+                        log(f"  ✅ Dashboard after user action: {driver.current_url}", "ok")
+                        break
+            else:
+                # User typed SKIP — wait for the portal to settle naturally
+                time.sleep(SHORT_WAIT + 5)
+
+        # ── Navigate to dashboard and confirm session is live ─────────────
+        # IMPORTANT: After OTP + Remember-Device, the portal's Angular app may still
+        # be at #/login/password while it writes JWT cookies to sessionStorage.
+        # We must WAIT (not navigate) until it reaches #/dashboard on its own.
+        # Navigating away prematurely kills the cookie exchange → infinite redirect.
+        log("  Navigating to dashboard to establish session...")
+
+        def _is_session_dead(url):
+            """Returns True only if portal is stuck at a genuine dead-session URL."""
+            u = url.lower()
+            return "sessionexpire" in u
+
+        def _is_mid_login(url):
+            """Returns True if portal is in the normal Angular mid-flow state (not a dead session)."""
+            u = url.lower()
+            return "password" in u or ("/login" in u and "sessionexpire" not in u)
+
+        def _recover_session():
+            """
+            Full session recovery when #/sessionExpire is detected.
+            Strategy:
+              1. Clear stale Angular session flags from storage.
+              2. Navigate to base portal URL (no hash) to let the server re-issue cookies.
+              3. Wait up to 30s for Angular to auto-auth from existing cookie.
+              4. Force navigate to dashboard.
+            Returns True if dashboard is reached.
+            """
+            log("  🔄 Session expired URL detected — attempting recovery...", "warn")
+
+            # Step 0: Clear any Angular-set 'sessionExpired' flags before navigating
+            try:
+                driver.execute_script("""
+                    try { sessionStorage.removeItem('sessionExpired'); } catch(e){}
+                    try { localStorage.removeItem('sessionExpired');   } catch(e){}
+                    window.dispatchEvent(new Event('focus'));
+                    document.dispatchEvent(new Event('visibilitychange'));
+                """)
+                time.sleep(1)
+            except Exception:
+                pass
+
+            # Step 1: Go to the base portal URL (no hash) — forces full cookie refresh
+            driver.get("https://eportal.incometax.gov.in/iec/foservices/")
+            time.sleep(PAGE_WAIT + 2)
+            _u = driver.current_url.lower()
+            log(f"  After base-URL nav: {driver.current_url}")
+
+            # Step 2: Wait up to 20s for Angular to auto-auth and reach dashboard
+            if "login" in _u or "sessionexpire" in _u:
+                log("  Portal shows login/expire after base nav — waiting for auto re-auth...", "warn")
+                for _ar in range(10):
+                    time.sleep(2)
+                    _u = driver.current_url.lower()
+                    if "dashboard" in _u and "sessionexpire" not in _u:
+                        log(f"  ✅ Auto re-auth succeeded: {driver.current_url}", "ok")
+                        return True
+                    if _ar == 5:
+                        # Nudge the Angular app: clear flags again mid-wait
+                        try:
+                            driver.execute_script("""
+                                try { sessionStorage.removeItem('sessionExpired'); } catch(e){}
+                                try { localStorage.removeItem('sessionExpired');   } catch(e){}
+                                window.dispatchEvent(new Event('focus'));
+                            """)
+                        except Exception:
+                            pass
+
+            # Step 3: Force navigate to dashboard via JS replace (bypasses Angular guard hash-check)
+            log("  Forcing dashboard via JS location.replace...", "warn")
+            try:
+                driver.execute_script(
+                    "window.location.replace('https://eportal.incometax.gov.in/iec/foservices/#/dashboard');"
+                )
+                time.sleep(PAGE_WAIT + 3)
+            except Exception:
+                driver.get("https://eportal.incometax.gov.in/iec/foservices/#/dashboard")
+                time.sleep(PAGE_WAIT + 3)
+
+            _uf = driver.current_url.lower()
+            if "dashboard" in _uf and "sessionexpire" not in _uf:
+                log(f"  ✅ Session recovered — dashboard: {driver.current_url}", "ok")
+                return True
+
+            log(f"  ⚠ Recovery failed — current URL: {driver.current_url}", "warn")
+            return False
+
+        # ── Dashboard wait loop ───────────────────────────────────────────
+        # Watch for dashboard arrival. Only act on #/sessionExpire (true dead session).
+        # #/login/password is a NORMAL mid-flow state — do NOT navigate away from it.
+        _dashboard_ready = False
+        _session_recovery_done = False
+
+        for _wait_i in range(40):          # up to 80 seconds
+            _cur2 = driver.current_url.lower()
+
+            if "dashboard" in _cur2 and not _is_session_dead(_cur2):
+                _dashboard_ready = True
+                log(f"  ✅ Dashboard loaded: {driver.current_url}", "ok")
+                break
+
+            if _is_session_dead(_cur2):
+                # True dead session → try recovery (only once)
+                if not _session_recovery_done:
+                    _session_recovery_done = True
+                    log(f"  Session redirected ({_wait_i+1}/40) — running recovery...", "warn")
+                    if _recover_session():
+                        _dashboard_ready = True
+                        break
+                else:
+                    # Second time hitting sessionExpire — recovery already failed; just try nav
+                    log(f"  Session redirected ({_wait_i+1}/40) — retrying nav...", "warn")
+                    driver.get("https://eportal.incometax.gov.in/iec/foservices/#/dashboard")
+
+            elif _is_mid_login(_cur2):
+                # Normal Angular mid-flow (#/login/password) — just wait, DO NOT navigate
+                if _wait_i % 5 == 0:
+                    log(f"  Still on login page ({_wait_i+1}/40) — waiting for portal…")
+
+            else:
+                # Some intermediate URL (e.g. /#/) — navigate to dashboard gently
+                if _wait_i % 5 == 0:
+                    log(f"  Intermediate URL ({_wait_i+1}/40): {driver.current_url}")
+                    driver.get("https://eportal.incometax.gov.in/iec/foservices/#/dashboard")
+
+            time.sleep(2)
+
+        if not _dashboard_ready:
+            log("  ⚠ Dashboard did not load after 80s — attempting final forced recovery...", "warn")
+            if not _session_recovery_done:
+                if _recover_session():
+                    _dashboard_ready = True
+            if not _dashboard_ready:
+                # Last resort: try clearing storage + full page reload
+                try:
+                    driver.execute_script("""
+                        try { sessionStorage.removeItem('sessionExpired'); } catch(e){}
+                        try { localStorage.removeItem('sessionExpired');   } catch(e){}
+                    """)
+                    driver.get("https://eportal.incometax.gov.in/iec/foservices/#/dashboard")
+                    time.sleep(PAGE_WAIT + 5)
+                    _cur_final = driver.current_url.lower()
+                    if "dashboard" in _cur_final and "sessionexpire" not in _cur_final:
+                        log(f"  ✅ Dashboard via final attempt: {driver.current_url}", "ok")
+                        _dashboard_ready = True
+                except Exception:
+                    pass
+            if not _dashboard_ready:
+                log(f"  ⚠ Still not on dashboard — URL: {driver.current_url}", "warn")
+                log("  ⚠ Proceeding anyway — AIS/TIS/26AS may still work if auth cookie is valid", "warn")
+
+        if _dashboard_ready:
+            # Extra wait for Angular to fully render widgets and auth tokens after dashboard load
+            time.sleep(SHORT_WAIT + 2)
 
         log("  ✅ Login successful!", "ok")
         prog(20)
 
-        # ════════════════════════════════════════════════════════════════
-        # STEP 2: DOWNLOAD TIS  (Taxpayer Information Summary)
-        # Path: e-File → Income Tax Returns → View AIS → TIS tab → Download
-        # ════════════════════════════════════════════════════════════════
-        log("\n📑 Downloading TIS (Taxpayer Information Summary)...")
+        # ── Start background popup watchdog ───────────────────────────
+        # Session is now established. The watchdog polls every 4s and
+        # dismisses any reload/logout popup the moment it appears —
+        # preventing session expiry during downloads, waits, navigation.
+        watchdog.start()
 
-        def _navigate_to_ais():
-            """Navigate to AIS/TIS page via e-File menu."""
-            log("  Nav: e-File → Income Tax Returns → View AIS")
-            _click([
-                "//a[normalize-space()='e-File']",
-                "//li//a[contains(text(),'e-File')]",
-                "//nav//a[contains(text(),'e-File')]",
-            ])
-            time.sleep(SHORT_WAIT)
-            _click([
-                "//a[contains(text(),'Income Tax Returns')]",
-                "//*[contains(@class,'dropdown')]//a[contains(text(),'Returns')]",
-            ])
-            time.sleep(SHORT_WAIT)
+        # ════════════════════════════════════════════════════════════════
+        # STEP 2: DOWNLOAD AIS + TIS
+        # FIX: The AIS link is directly on the dashboard navbar — NOT
+        # under e-File menu. Clicking it opens insight.gov.in in a NEW TAB.
+        # We must switch to that tab and use the modal popup approach.
+        # Direct URL (#/dashboard/ais-tis) kills Angular session online.
+        # ════════════════════════════════════════════════════════════════
+        log("\n📑 Downloading AIS + TIS (Annual Information Statement / Taxpayer Info Summary)...")
+
+        def _navigate_to_ais_tab():
+            """
+            Click the 'AIS' link directly on the IT portal dashboard navbar.
+            This opens insight.gov.in in a NEW TAB — we switch to it and wait
+            for the 'Download AIS/TIS' button to appear (JWT redirect takes ~10s).
+            Returns the AIS tab handle, or None on failure.
+            NEVER uses direct URL navigation — that kills Angular session.
+            """
+            # ── Pre-check: ensure we are actually on the dashboard ────────────
+            _cur_before_ais = driver.current_url.lower()
+            if "sessionexpire" in _cur_before_ais or ("dashboard" not in _cur_before_ais and "login" in _cur_before_ais):
+                log("  Session expired before AIS nav — recovering...", "warn")
+                if not _recover_session():
+                    log("  ⚠ Session recovery failed for AIS — cannot navigate", "warn")
+                    return None
+                # Extra wait after recovery
+                time.sleep(SHORT_WAIT + 2)
+
+            original_handles = set(driver.window_handles)
+            log("  Step 1: clicking 'AIS' link on dashboard navbar...")
             clicked = _click([
-                "//a[contains(text(),'View AIS')]",
-                "//a[contains(text(),'AIS')]",
-                "//a[contains(text(),'Annual Information')]",
+                "//a[normalize-space()='AIS']",
+                "//li/a[normalize-space()='AIS']",
+                "//nav//a[normalize-space()='AIS']",
+                "//button[normalize-space()='AIS']",
+                "//*[normalize-space()='AIS']",
+                "//a[contains(normalize-space(),'Annual Information Statement')]",
+                "//*[contains(@class,'ais')]//a",
             ])
             if not clicked:
-                log("  AIS menu not found — trying direct URL...", "warn")
-                driver.get("https://www.incometax.gov.in/iec/foportal/pages/ais-tis-taxpayer-information-summary")
-                time.sleep(PAGE_WAIT)
-                return True
-            time.sleep(PAGE_WAIT)
+                # JS full-page scan as last resort (no direct URL)
+                try:
+                    result = driver.execute_script("""
+                        var tags = ['a','button','span','li','div'];
+                        for(var tag of tags){
+                            var els = document.querySelectorAll(tag);
+                            for(var el of els){
+                                var t = (el.innerText||el.textContent||'').trim();
+                                if(t === 'AIS' && el.offsetParent !== null){
+                                    el.scrollIntoView({block:'center'});
+                                    el.click(); return 'clicked exact: AIS';
+                                }
+                            }
+                        }
+                        for(var tag of tags){
+                            var els = document.querySelectorAll(tag);
+                            for(var el of els){
+                                var t = (el.innerText||el.textContent||'').trim();
+                                if(t.includes('Annual Information Statement') && el.offsetParent !== null){
+                                    el.scrollIntoView({block:'center'});
+                                    el.click(); return 'clicked partial: ' + t;
+                                }
+                            }
+                        }
+                        return 'not found';
+                    """)
+                    log(f"  JS scan result: {result}")
+                    clicked = result and "not found" not in str(result)
+                except Exception as _je:
+                    log(f"  JS AIS scan error: {_je}", "warn")
+
+            if not clicked:
+                log("  ⚠ AIS link not found on dashboard — cannot navigate to AIS", "warn")
+                return None
+
+            # Dismiss any popup that fires on AIS click
+            time.sleep(2)
+            _dismiss_popup()
+
+            # Wait for the new AIS tab (insight.gov.in) to open
+            log("  Waiting for AIS tab to open (insight.gov.in)...")
+            ais_handle = None
+            for _ in range(25):
+                new_handles = set(driver.window_handles) - original_handles
+                if new_handles:
+                    ais_handle = list(new_handles)[0]
+                    break
+                _dismiss_popup()
+                time.sleep(1)
+
+            if ais_handle:
+                driver.switch_to.window(ais_handle)
+                log(f"  Switched to AIS tab: {driver.current_url}")
+                # Fire focus/visibility events so the AIS Angular app initialises
+                try:
+                    driver.execute_script("""
+                        Object.defineProperty(document,'visibilityState',{get:()=>'visible',configurable:true});
+                        Object.defineProperty(document,'hidden',{get:()=>false,configurable:true});
+                        document.dispatchEvent(new Event('visibilitychange'));
+                        window.dispatchEvent(new Event('focus'));
+                        window.dispatchEvent(new Event('pageshow'));
+                    """)
+                except Exception:
+                    pass
+            else:
+                log(f"  AIS on same tab: {driver.current_url}")
+
+            # Wait for JWT redirect to complete (up to 30s)
+            log("  Waiting for AIS JWT redirect to complete...")
+            for _jwt_i in range(15):
+                _ju = (driver.current_url or "").lower()
+                if "access?param" not in _ju and "insight.gov.in" in _ju:
+                    log(f"  JWT complete — AIS dashboard: {driver.current_url}")
+                    break
+                time.sleep(2)
+
+            # Poll for 'Download AIS/TIS' button (up to 90s)
+            log("  Polling for 'Download AIS/TIS' button (up to 90s)...")
+            _dl_btn_found = False
+            _dl_deadline = time.time() + 90
+            while time.time() < _dl_deadline:
+                try:
+                    _btns = driver.find_elements(By.XPATH,
+                        "//*[contains(normalize-space(),'Download AIS') or "
+                        "contains(normalize-space(),'Download AIS/TIS')]")
+                    _visible = [b for b in _btns if b.is_displayed()]
+                    if _visible:
+                        log(f"  'Download AIS/TIS' button visible ✓ — page loaded")
+                        _dl_btn_found = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(3)
+            if not _dl_btn_found:
+                log("  ⚠ 'Download AIS/TIS' button did not appear within 90s", "warn")
+
+            return ais_handle
+
+        def _open_ais_download_popup():
+            """Open the Download AIS/TIS popup and wait for 3 Download buttons."""
+            log("  Opening 'Download AIS/TIS (F.Y.)' popup...")
+            opened = _click([
+                "//button[contains(normalize-space(),'Download AIS/TIS (F.Y.')]",
+                "//a[contains(normalize-space(),'Download AIS/TIS (F.Y.')]",
+                "//button[contains(normalize-space(),'Download AIS/TIS (FY')]",
+                "//button[contains(normalize-space(),'Download AIS/TIS')]",
+                "//a[contains(normalize-space(),'Download AIS/TIS')]",
+                "//button[contains(normalize-space(),'Download AIS')]",
+                "//*[contains(normalize-space(),'Download AIS/TIS')]",
+            ])
+            if not opened:
+                log("  ⚠ 'Download AIS/TIS' button not found", "warn")
+                return False
+            # Wait for popup with exactly 3 Download buttons
+            log("  Waiting for popup with 3 Download buttons...")
+            for _at in range(25):
+                try:
+                    _eb = driver.find_elements(By.XPATH, "//button[normalize-space()='Download']")
+                    _vb = [b for b in _eb if b.is_displayed()]
+                    log(f"  Attempt {_at+1}: {len(_vb)} 'Download' button(s) visible")
+                    if len(_vb) >= 3:
+                        log("  Popup loaded — 3 Download buttons visible ✓")
+                        time.sleep(0.3)
+                        return True
+                except Exception:
+                    pass
+                time.sleep(1)
+            log("  ⚠ Popup did not show 3 buttons — proceeding anyway", "warn")
             return True
 
-        _navigate_to_ais()
-        log(f"  AIS page URL: {driver.current_url}")
+        def _click_popup_dl_btn(target):
+            """
+            Click Download button for 'ais' (index 0) or 'tis' (index 2) in the popup modal.
+            Uses JS modal-scoped approach identical to it_suite.py.
+            """
+            log(f"  Modal-scoped click for {target.upper()} PDF Download button...")
+            try:
+                result = driver.execute_script("""
+                    var target = arguments[0];
+                    var modalSels = ['[role="dialog"]','.modal','.dialog','.popup',
+                        '.cdk-overlay-pane','.cdk-dialog-container',
+                        '[class*="modal"]','[class*="dialog"]','[class*="popup"]',
+                        '[class*="overlay-container"]','[class*="download"]'];
+                    var modal = null;
+                    for(var sel of modalSels){
+                        var els = document.querySelectorAll(sel);
+                        for(var el of els){
+                            var btns = el.querySelectorAll('button');
+                            var dl = Array.from(btns).filter(function(b){
+                                return (b.innerText||b.textContent||'').trim()==='Download'
+                                       && b.offsetParent!==null;
+                            });
+                            if(dl.length>=3){ modal=el; break; }
+                        }
+                        if(modal) break;
+                    }
+                    if(!modal) return 'modal_not_found';
+                    var rows = modal.querySelectorAll('tr,li,.row,[class*="row"],[class*="item"],[class*="list"]');
+                    if(rows.length===0) rows=Array.from(modal.children);
+                    var aisKw=['annual information','ais'];
+                    var tisKw=['taxpayer information summary','tis'];
+                    var skipKw=['json','utility'];
+                    for(var row of rows){
+                        var txt=(row.innerText||row.textContent||'').toLowerCase();
+                        var btn=row.querySelector('button');
+                        if(!btn||(btn.innerText||btn.textContent||'').trim()!=='Download') continue;
+                        if(!btn.offsetParent) continue;
+                        if(target==='ais'){
+                            var isAis=aisKw.some(function(k){return txt.includes(k);});
+                            var isJson=skipKw.some(function(k){return txt.includes(k);});
+                            var isTis=tisKw.some(function(k){return txt.includes(k);});
+                            if(isAis&&!isJson&&!isTis){btn.scrollIntoView({block:'center'});btn.click();return 'clicked_ais_by_text';}
+                        } else {
+                            var isTisRow=tisKw.some(function(k){return txt.includes(k);});
+                            var isJsonRow=skipKw.some(function(k){return txt.includes(k);});
+                            if(isTisRow&&!isJsonRow){btn.scrollIntoView({block:'center'});btn.click();return 'clicked_tis_by_text';}
+                        }
+                    }
+                    var allDl=Array.from(modal.querySelectorAll('button')).filter(function(b){
+                        return (b.innerText||b.textContent||'').trim()==='Download'&&b.offsetParent!==null;
+                    });
+                    var idx=(target==='ais')?0:2;
+                    if(allDl.length>idx){allDl[idx].scrollIntoView({block:'center'});allDl[idx].click();
+                        return 'clicked_by_index_'+idx+' (total='+allDl.length+')';}
+                    return 'not_found (modal buttons='+allDl.length+')';
+                """, target)
+                log(f"  Modal click result: {result}")
+                return result and "not_found" not in str(result) and "modal_not_found" not in str(result)
+            except Exception as _e:
+                log(f"  Modal click error: {_e}", "warn")
+                return False
 
-        # Show screenshot so user can see AIS page
+        def _is_popup_still_open():
+            try:
+                btns = driver.find_elements(By.XPATH, "//button[normalize-space()='Download']")
+                return len([b for b in btns if b.is_displayed()]) >= 3
+            except Exception:
+                return False
+
+        # ── Navigate to AIS (opens insight.gov.in in new tab) ─────────────
+        _it_tab = driver.window_handles[0]  # remember IT portal tab
+        _ais_tab_handle = _navigate_to_ais_tab()
+
+        log(f"  AIS page URL: {driver.current_url}")
         img = _sshot_b64()
         show_captcha(img)
         time.sleep(2)
         clear_captcha()
 
-        # ── Download TIS ───────────────────────────────────────────────────
-        before_tis = set(dl_dir.iterdir())
-        _click([
-            "//a[contains(text(),'Taxpayer Information Summary')]",
-            "//button[contains(text(),'Taxpayer Information')]",
-            "//a[normalize-space()='TIS']",
-            "//span[contains(text(),'TIS')]",
-        ])
-        time.sleep(SHORT_WAIT)
+        # ── Open the Download AIS/TIS popup ───────────────────────────────
+        _popup_ok = _open_ais_download_popup()
 
-        tis_clicked = _click([
-            "//button[contains(text(),'Download') and contains(text(),'TIS')]",
-            "//*[contains(@class,'tis')]//button[contains(text(),'Download')]",
-            "//*[contains(@class,'tis')]//a[contains(text(),'Download')]",
-            "//button[@id='downloadTIS']",
-            "(//button[contains(text(),'Download PDF')])[1]",
-            "(//a[contains(text(),'Download PDF')])[1]",
-            "(//button[contains(text(),'Download')])[1]",
-        ])
-        if tis_clicked:
-            _click(["//button[normalize-space()='OK']", "//button[normalize-space()='Confirm']"])
-            new_f = _wait_new_file({".pdf"}, before_tis, timeout=60)
-            if new_f:
-                tis_name = f"TIS_{pan}_AY{AY_LABEL.replace('-','_')}.pdf"
-                dest = out_dir / tis_name
-                _shutil.copy2(str(new_f), str(dest))
-                sz = dest.stat().st_size // 1024
-                downloaded.append({"name": tis_name, "size": f"{sz} KB"})
-                log(f"  ✅ TIS saved: {tis_name} ({sz} KB)", "ok")
-                with jobs_lock:
-                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
-            else:
-                log("  ⚠ TIS PDF not downloaded within 60s", "warn")
-                save_fail_shot("TIS — PDF not downloaded")
-        else:
-            log("  ⚠ TIS Download button not found", "warn")
-            save_fail_shot("TIS — Download button not found")
-
-        prog(40)
-
-        # ── Download AIS ───────────────────────────────────────────────────
+        # ── Download AIS PDF (popup button index 0) ────────────────────────
         log("\n📊 Downloading AIS (Annual Information Statement)...")
         before_ais = set(dl_dir.iterdir())
-
-        _click([
-            "//a[contains(text(),'Annual Information Statement')]",
-            "//button[contains(text(),'Annual Information')]",
-            "//a[normalize-space()='AIS']",
-            "//span[contains(text(),'AIS')]",
-        ])
-        time.sleep(SHORT_WAIT)
-
-        ais_clicked = _click([
-            "//button[contains(text(),'Download') and contains(text(),'AIS')]",
-            "//*[contains(@class,'ais')]//button[contains(text(),'Download')]",
-            "//*[contains(@class,'ais')]//a[contains(text(),'Download')]",
-            "//button[@id='downloadAIS']",
-            "(//button[contains(text(),'Download PDF')])[2]",
-            "(//a[contains(text(),'Download PDF')])[2]",
-            "(//button[contains(text(),'Download')])[2]",
-            "(//button[contains(text(),'Download')])[1]",
-        ])
+        ais_clicked = _click_popup_dl_btn("ais")
         if ais_clicked:
-            _click(["//button[normalize-space()='OK']", "//button[normalize-space()='Confirm']"])
-            new_f = _wait_new_file({".pdf"}, before_ais, timeout=90)
+            time.sleep(SHORT_WAIT)
+            log("  Waiting for AIS PDF download...")
+            new_f = _wait_new_file({".pdf"}, before_ais, timeout=120)
             if new_f:
                 ais_name = f"AIS_{pan}_AY{AY_LABEL.replace('-','_')}.pdf"
                 dest = out_dir / ais_name
@@ -5742,48 +6629,191 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
                 with jobs_lock:
                     if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
             else:
-                log("  ⚠ AIS PDF not downloaded within 90s", "warn")
+                log("  ⚠ AIS PDF not downloaded within 120s", "warn")
                 save_fail_shot("AIS — PDF not downloaded")
         else:
-            log("  ⚠ AIS Download button not found", "warn")
+            log("  ⚠ AIS Download button not found in popup", "warn")
             save_fail_shot("AIS — Download button not found")
+
+        before_after_ais = set(dl_dir.iterdir())
+        time.sleep(SHORT_WAIT)
+
+        # ── Download TIS PDF (popup button index 2) ────────────────────────
+        log("\n📑 Downloading TIS (Taxpayer Information Summary)...")
+        popup_still_open = _is_popup_still_open()
+        log(f"  Popup still open after AIS? {popup_still_open}")
+        if not popup_still_open:
+            log("  Popup closed after AIS — reopening for TIS...")
+            _open_ais_download_popup()
+
+        before_tis = set(dl_dir.iterdir())
+        tis_clicked = _click_popup_dl_btn("tis")
+        if tis_clicked:
+            time.sleep(SHORT_WAIT)
+            log("  Waiting for TIS PDF download...")
+            new_f = _wait_new_file({".pdf"}, before_after_ais, timeout=120)
+            if new_f:
+                tis_name = f"TIS_{pan}_AY{AY_LABEL.replace('-','_')}.pdf"
+                dest = out_dir / tis_name
+                _shutil.copy2(str(new_f), str(dest))
+                sz = dest.stat().st_size // 1024
+                downloaded.append({"name": tis_name, "size": f"{sz} KB"})
+                log(f"  ✅ TIS saved: {tis_name} ({sz} KB)", "ok")
+                with jobs_lock:
+                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+            else:
+                log("  ⚠ TIS PDF not downloaded within 120s", "warn")
+                save_fail_shot("TIS — PDF not downloaded")
+        else:
+            log("  ⚠ TIS Download button not found in popup", "warn")
+            save_fail_shot("TIS — Download button not found")
 
         prog(60)
 
         # ════════════════════════════════════════════════════════════════
         # STEP 3: DOWNLOAD FORM 26AS
-        # Path: e-File → Income Tax Returns → View Form 26AS
-        #       → Confirm TRACES redirect → Select AY → Export as PDF
+        # FIX: After AIS/TIS we are on insight.gov.in tab — must switch
+        # back to IT portal tab first. Then use e-File menu (no direct URL).
+        # TRACES opens in a new tab — we switch to it and handle download.
         # ════════════════════════════════════════════════════════════════
         log("\n📄 Downloading Form 26AS...")
 
-        # Navigate back to dashboard first
-        driver.get(IT_PORTAL)
-        time.sleep(PAGE_WAIT)
+        # ── Switch back to IT portal tab (close AIS insight.gov.in tab) ──
+        log("  Switching back to IT portal tab...")
+        try:
+            for _h in list(driver.window_handles):
+                try:
+                    driver.switch_to.window(_h)
+                    _hurl = (driver.current_url or "").lower()
+                    if "eportal.incometax" in _hurl or "incometax.gov" in _hurl:
+                        log(f"  Switched to IT portal tab: {driver.current_url}")
+                        break
+                except Exception:
+                    continue
+            else:
+                # If none matched, close all extra tabs and use first handle
+                _all_h = driver.window_handles
+                driver.switch_to.window(_all_h[0])
+                for _eh in _all_h[1:]:
+                    try:
+                        driver.switch_to.window(_eh)
+                        driver.close()
+                    except Exception:
+                        pass
+                driver.switch_to.window(_all_h[0])
+                log(f"  Switched to first tab: {driver.current_url}")
+        except Exception as _sw_err:
+            log(f"  Tab switch warning: {_sw_err}", "warn")
 
+        time.sleep(SHORT_WAIT)
+        _dismiss_popup()
+
+        # ── Verify IT portal session is still alive on dashboard ──────────
+        _26as_pre_url = driver.current_url.lower()
+        if _is_session_dead(_26as_pre_url) or "dashboard" not in _26as_pre_url:
+            log("  ⚠ Not on dashboard — navigating back...", "warn")
+            _26as_recovered = False
+            if "sessionexpire" in _26as_pre_url:
+                log("  Session expired before 26AS — running session recovery...", "warn")
+                _26as_recovered = _recover_session()
+            if not _26as_recovered:
+                driver.get("https://eportal.incometax.gov.in/iec/foservices/#/dashboard")
+                for _26_w in range(20):
+                    time.sleep(2)
+                    _26as_pre_url = driver.current_url.lower()
+                    if "dashboard" in _26as_pre_url and not _is_session_dead(_26as_pre_url):
+                        log("  ✅ Dashboard restored for 26AS", "ok")
+                        _26as_recovered = True
+                        break
+                    if "sessionexpire" in _26as_pre_url and _26_w == 5:
+                        if _recover_session():
+                            _26as_recovered = True
+                            break
+            if not _26as_recovered:
+                log("  ⚠ Could not restore dashboard — 26AS may fail", "warn")
+        time.sleep(SHORT_WAIT)
+        _dismiss_popup()
+
+        # ── Navigate via e-File menu (NO direct URL fallback) ─────────────
         log("  Nav: e-File → Income Tax Returns → View Form 26AS")
-        _click([
+        _before_26as_handles = set(driver.window_handles)
+
+        # Step 1: Click e-File
+        from selenium.webdriver.common.action_chains import ActionChains as _AC
+        efile_clicked = _click([
             "//a[normalize-space()='e-File']",
-            "//li//a[contains(text(),'e-File')]",
-            "//nav//a[contains(text(),'e-File')]",
+            "//span[normalize-space()='e-File']",
+            "//li[normalize-space()='e-File']",
+            "//button[normalize-space()='e-File']",
+            "//*[normalize-space()='e-File']",
+            "//nav//*[contains(normalize-space(),'e-File')]",
         ])
+        if not efile_clicked:
+            try:
+                driver.execute_script("""
+                    var tags=['a','span','li','button','div'];
+                    for(var tag of tags){ var els=document.querySelectorAll(tag);
+                    for(var el of els){ var t=(el.innerText||el.textContent||'').trim();
+                    if(t==='e-File'){el.click();return;} }}
+                """)
+                log("  e-File clicked via JS ✓")
+            except Exception as _eje:
+                log(f"  e-File click failed: {_eje}", "warn")
         time.sleep(SHORT_WAIT)
-        _click([
-            "//a[contains(text(),'Income Tax Returns')]",
-            "//*[contains(@class,'dropdown')]//a[contains(text(),'Returns')]",
-        ])
-        time.sleep(SHORT_WAIT)
+
+        # Step 2: Hover over Income Tax Returns
+        try:
+            _itr_el = None
+            for _xp in [
+                "//*[normalize-space()='Income Tax Returns']",
+                "//*[contains(normalize-space(),'Income Tax Returns')]",
+                "//a[contains(normalize-space(),'Income Tax Return')]",
+            ]:
+                try:
+                    _itr_el = WebDriverWait(driver, 5).until(
+                        EC.visibility_of_element_located((By.XPATH, _xp)))
+                    if _itr_el.is_displayed():
+                        break
+                except Exception:
+                    continue
+            if _itr_el:
+                _AC(driver).move_to_element(_itr_el).perform()
+                time.sleep(2)
+                log("  Hovered 'Income Tax Returns' ✓")
+        except Exception as _hov_e:
+            log(f"  Hover warning: {_hov_e}", "warn")
+
+        # Step 3: Click View Form 26AS
         f26_clicked = _click([
-            "//a[contains(text(),'Form 26AS')]",
-            "//a[contains(text(),'26AS')]",
-            "//a[contains(text(),'View Tax Credit')]",
+            "//*[normalize-space()='View Form 26AS']",
+            "//a[normalize-space()='View Form 26AS']",
+            "//span[normalize-space()='View Form 26AS']",
+            "//*[contains(normalize-space(),'View Form 26AS')]",
+            "//a[contains(normalize-space(),'26AS')]",
+            "//*[contains(normalize-space(),'26AS')]",
+            "//a[contains(normalize-space(),'View Tax Credit')]",
         ])
         if not f26_clicked:
-            log("  26AS menu not found — trying direct URL...", "warn")
-            driver.get("https://www.incometax.gov.in/iec/foportal/pages/form-26AS-tax-credit-statement")
+            # JS scan — still no direct URL
+            try:
+                _r26 = driver.execute_script("""
+                    var tags=['a','button','span','li','div','p'];
+                    for(var tag of tags){ var els=document.querySelectorAll(tag);
+                    for(var el of els){ var t=(el.innerText||el.textContent||'').trim();
+                    if((t==='View Form 26AS'||t.includes('26AS'))&&el.offsetParent!==null){
+                        el.scrollIntoView({block:'center'}); el.click();
+                        return 'clicked: '+t; } }}
+                    return 'not found';
+                """)
+                log(f"  JS 26AS scan: {_r26}")
+                if _r26 and "not found" not in str(_r26):
+                    f26_clicked = True
+            except Exception as _j26e:
+                log(f"  JS 26AS scan error: {_j26e}", "warn")
+        log(f"  'View Form 26AS' clicked: {f26_clicked}")
         time.sleep(PAGE_WAIT)
 
-        # Confirm redirect to TRACES if popup appears
+        # Confirm any redirect popup
         _click([
             "//button[normalize-space()='Confirm']",
             "//button[normalize-space()='OK']",
@@ -5792,13 +6822,17 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
             "//button[contains(text(),'Continue')]",
         ])
         time.sleep(PAGE_WAIT + 2)
-        log(f"  After nav URL: {driver.current_url}")
+        log(f"  After 26AS nav URL: {driver.current_url}")
 
-        # Handle TRACES window (may open in new tab)
-        handles = driver.window_handles
-        if len(handles) > 1:
-            driver.switch_to.window(handles[-1])
+        # Handle TRACES window (opens in new tab — same as local run)
+        _new_26as_handles = set(driver.window_handles) - _before_26as_handles
+        if _new_26as_handles:
+            driver.switch_to.window(list(_new_26as_handles)[0])
             log(f"  Switched to TRACES window: {driver.current_url}")
+            time.sleep(PAGE_WAIT)
+        elif len(driver.window_handles) > 1:
+            driver.switch_to.window(driver.window_handles[-1])
+            log(f"  Switched to last window: {driver.current_url}")
             time.sleep(PAGE_WAIT)
 
         # ── On TRACES: Select AY ───────────────────────────────────────────
@@ -5875,10 +6909,15 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
 
         prog(100)
         n = len([d for d in downloaded if not d["name"].endswith(".zip")])
-        log(f"✅ Complete! {n} file(s) downloaded from IT Portal.", "ok")
+        if n > 0:
+            log(f"✅ Complete! {n} file(s) downloaded from IT Portal.", "ok")
+            _final_status = "done"
+        else:
+            log("⚠ Completed but 0 PDF files were downloaded — login may have failed or portal blocked.", "warn")
+            _final_status = "done_empty"
 
         with jobs_lock:
-            jobs[job_id]["status"] = "done"
+            jobs[job_id]["status"] = _final_status
             jobs[job_id]["files"]  = downloaded
 
     except Exception as exc:
@@ -5890,6 +6929,9 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
             jobs[job_id]["status"] = "error"
             jobs[job_id]["error"]  = str(exc)
     finally:
+        # Stop watchdog FIRST so it doesn't access a closed driver
+        try: watchdog.stop()
+        except: pass
         if driver:
             try: driver.quit()
             except: pass
@@ -6149,31 +7191,44 @@ def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
 
             # Collect downloaded files into main output
             sub_job = jobs.get(sub_job_id,{})
-            if sub_job.get("status") == "done":
-                co_files = sub_job.get("files",[])
+            co_files = sub_job.get("files",[])
+            # Real PDFs = non-ZIP files; status "done" (not "done_empty") + ≥1 PDF = true success
+            real_files = [f for f in co_files if not f["name"].endswith(".zip")]
+            download_ok = (sub_job.get("status") == "done") and len(real_files) > 0
+            if download_ok:
+                # dl_dir used by _it_auto_download is <out_dir>/it_downloads
+                sub_out_base = Path(sub_job.get("out_dir", str(client_dir)))
+                sub_dl_dir   = sub_out_base / "it_downloads"
                 for f in co_files:
-                    fp = client_dir / f["name"]
-                    if not fp.exists():
-                        # try sub output dir
-                        sub_out = Path(sub_job.get("out_dir",""))
-                        candidate = sub_out / f["name"]
-                        if candidate.exists():
-                            try: shutil.copy2(str(candidate), str(fp))
-                            except: pass
-                    if fp.exists():
-                        dest_name = f"{pan}_{f['name']}" if not f["name"].startswith(pan) else f["name"]
+                    fname = f["name"]
+                    # Search in client_dir, then it_downloads subdir, then sub_out root
+                    candidate = None
+                    for search_dir in [client_dir, sub_dl_dir, sub_out_base]:
+                        c = search_dir / fname
+                        if c.exists():
+                            candidate = c
+                            break
+                    if candidate:
+                        dest_name = f"{pan}_{fname}" if not fname.startswith(pan) else fname
                         dest = out_path / dest_name
-                        try: shutil.copy2(str(fp), str(dest))
+                        try: shutil.copy2(str(candidate), str(dest))
                         except: pass
                         sz = dest.stat().st_size // 1024 if dest.exists() else 0
                         all_files.append({"name": dest_name, "size": f"{sz} KB"})
                         log(f"  ✓ {dest_name} ({sz} KB)", "ok")
-                log(f"  ✅ {name}: {len(co_files)} file(s) downloaded", "ok")
+                    else:
+                        log(f"  ⚠ File not found anywhere: {fname}", "warn")
+                log(f"  ✅ {name}: {len(real_files)} PDF(s) downloaded", "ok")
             else:
                 log(f"  ⚠ {name}: download may have failed — check failure screenshots", "warn")
 
             # Run IT Recon if requested
-            if mode in ("all","recon"):
+            # Only skip recon when mode is purely "pdfs"/"26as"/"ais_tis" with no downloads.
+            # When mode is "recon" (offline), always run. When mode is "all", only run if
+            # downloads succeeded OR if user explicitly chose recon-only mode.
+            _recon_mode_only = (mode == "recon")
+            _should_recon = _recon_mode_only or (mode == "all" and download_ok)
+            if mode in ("all","recon") and _should_recon:
                 engine_path = _find_engine("it_recon_engine.py")
                 if engine_path:
                     log(f"  Running IT Recon for {name}...")
