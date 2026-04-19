@@ -4561,6 +4561,19 @@ def _auto_download(job_id, gstin, client_name,
         "//button[contains(text(),'Generate JSON')]",
     ]
 
+    # GSTR-3B: after clicking tile DOWNLOAD, a page appears with a
+    # "View Filed Return" / "DOWNLOAD" button that triggers the PDF.
+    VIEW_FILED_RETURN_XP = [
+        "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'VIEW FILED RETURN')]",
+        "//a[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'VIEW FILED RETURN')]",
+        "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'VIEW RETURN')]",
+        "//a[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'VIEW RETURN')]",
+        "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'DOWNLOAD')]",
+        "//a[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'DOWNLOAD') and not(contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'GENERATE'))]",
+        "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PDF')]",
+        "//a[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PDF')]",
+    ]
+
     returns_set = set()
     if returns in ("all","gstr1"):  returns_set.add("GSTR1")
     if returns in ("all","gstr1a"): returns_set.add("GSTR1A")
@@ -4807,8 +4820,29 @@ def _auto_download(job_id, gstin, client_name,
 
             # ── GSTR-3B direct PDF download ────────────────────────────
             elif action == "direct_3b":
+                # After _click_tile_download navigates to the GSTR-3B page,
+                # we must click the "View Filed Return" / "Download" button
+                # to actually trigger the browser PDF download.
+                time.sleep(1.5)   # let Angular page finish rendering
                 snap = _snap_dl_dir({".pdf"})
-                new_f = _fast_wait_file({".pdf"}, snap, timeout=30)
+                btn_clicked = _try_click(VIEW_FILED_RETURN_XP, timeout=10)
+                if btn_clicked:
+                    log(f"  ✓ GSTR-3B view/download button clicked — waiting for PDF...")
+                else:
+                    # Fallback: try JS click on any visible button/link with PDF/download/view text
+                    log(f"  ⚠ VIEW_FILED_RETURN button not found via XPath — trying JS fallback...", "warn")
+                    driver.execute_script("""
+                        var keywords = ['VIEW FILED RETURN','VIEW RETURN','DOWNLOAD','PDF'];
+                        var els = document.querySelectorAll('button,a');
+                        for (var i=0; i<els.length; i++) {
+                            var t = (els[i].innerText || els[i].textContent || '').toUpperCase().trim();
+                            for (var j=0; j<keywords.length; j++) {
+                                if (t.includes(keywords[j])) { els[i].click(); break; }
+                            }
+                        }
+                    """)
+                    save_failure_screenshot(f"GSTR3B {month_name} {year} — VIEW button not found, tried JS fallback")
+                new_f = _fast_wait_file({".pdf"}, snap, timeout=60)
                 if new_f:
                     dest = dl_dir / save_name
                     if str(new_f) != str(dest):
@@ -4817,7 +4851,7 @@ def _auto_download(job_id, gstin, client_name,
                     _save_file(dest, save_name, key, "GSTR3B")
                     return "OK"
                 else:
-                    save_failure_screenshot(f"GSTR3B {month_name} {year} — PDF not received in 30s")
+                    save_failure_screenshot(f"GSTR3B {month_name} {year} — PDF not received in 60s")
                     return "NOT_FOUND"
 
             # ── Collect generate link (Phase 4) ────────────────────────
