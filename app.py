@@ -5008,18 +5008,15 @@ def _auto_download(job_id, gstin, client_name,
 
         def _run_phase(phase_label, rtype_list, action, retry_waits=(0,30,60)):
             """
-            Run one phase: for each return in rtype_list, loop all 12 months.
-            Retries T1 → T2 → T3 on failure.
-            NOTE: This script runs ONE browser sequentially = same as opening
-                  12 tabs manually. Each month is processed one after another
-                  for the same return type before moving to the next return.
+            Sequential fallback phase runner.
+            Used only for GENERATE and COLLECT phases (GSTR-1, 2A).
+            Direct downloads (2B, 3B) use _run_phase_multitab instead.
             """
             if not rtype_list:
                 return
             log(f"\n{'═'*55}")
             log(f"  {phase_label}")
             log(f"  Returns : {rtype_list}  |  Action: {action}")
-            log(f"  Months  : 12 (April → March) — same as 12 tabs in manual method")
             log(f"  Retry   : T1 (immediate) → T2 (30s wait) → T3 (60s wait)")
             log(f"{'═'*55}")
             for rtype in rtype_list:
@@ -5049,6 +5046,212 @@ def _auto_download(job_id, gstin, client_name,
                     status = "✅" if result in ("OK","TRIGGERED") else "❌"
                     log(f"    {status} {rtype} {month_name} {year}: {result}")
 
+        def _run_phase_multitab(phase_label, rtype, action, batch_size=6):
+            """
+            TRUE MULTI-TAB SIMULTANEOUS DOWNLOAD — mirrors the manual 12-tab method.
+
+            For direct downloads (GSTR-2B, GSTR-3B):
+              1. Open N tabs (batch of 6 at a time)
+              2. Navigate EACH tab to correct month → select FY/Quarter/Period → Search
+              3. Click DOWNLOAD on ALL tabs quickly (one after another)
+              4. All files download SIMULTANEOUSLY in background
+              5. Watch folder for all files to arrive
+              6. Rename and save each file
+              7. Repeat for next batch
+
+            Batch size = 6 months at a time (avoids portal overload / Not Found)
+            """
+            log(f"\n{'═'*55}")
+            log(f"  {phase_label}")
+            log(f"  Return  : {rtype}  |  Action: {action}")
+            log(f"  Method  : MULTI-TAB SIMULTANEOUS (batches of {batch_size})")
+            log(f"  Total   : {len(MONTHS_LIST)} months → {len(MONTHS_LIST)} tabs opened in {-(-len(MONTHS_LIST)//batch_size)} batches")
+            log(f"{'═'*55}")
+
+            extensions = {".pdf"} if action == "direct_3b" else {".xlsx",".zip",".json"}
+            main_window = driver.current_window_handle
+            failed_months = []
+
+            for batch_start in range(0, len(MONTHS_LIST), batch_size):
+                batch = MONTHS_LIST[batch_start : batch_start + batch_size]
+                batch_num = batch_start // batch_size + 1
+                total_batches = -(-len(MONTHS_LIST) // batch_size)
+                log(f"\n  ── Batch {batch_num}/{total_batches}: {[m[0] for m in batch]} ──")
+
+                # ── Step 1: Open one tab per month in this batch ──────────
+                tab_map = {}  # tab_handle → (month_name, month_num, year, save_name)
+                for month_name, month_num, year in batch:
+                    save_name = f"{rtype}_{month_name}_{year}.pdf" if action == "direct_3b" \
+                                else f"{rtype}_{month_name}_{year}.xlsx"
+                    if (dl_dir / save_name).exists() or (out_dir / save_name).exists():
+                        log(f"    ✓ {rtype} {month_name} already downloaded — skip")
+                        triggered[f"{month_name}_{year}_{rtype}"] = "OK"
+                        continue
+                    driver.execute_script("window.open('about:blank');")
+                    time.sleep(0.3)
+                    new_tab = driver.window_handles[-1]
+                    tab_map[new_tab] = (month_name, month_num, year, save_name)
+
+                if not tab_map:
+                    log(f"    All months in batch {batch_num} already downloaded ✓")
+                    continue
+
+                log(f"    Opened {len(tab_map)} tabs for batch {batch_num}")
+
+                # ── Step 2: Navigate each tab to correct month ────────────
+                log(f"    Navigating each tab to Returns Dashboard...")
+                for tab, (month_name, month_num, year, save_name) in tab_map.items():
+                    try:
+                        driver.switch_to.window(tab)
+                        current_month[0] = month_name
+                        # Navigate to dashboard
+                        driver.get("https://return.gst.gov.in/returns/auth/dashboard")
+                        WebDriverWait(driver, 15).until(
+                            lambda d: "dashboard" in d.current_url or "login" in d.current_url
+                        )
+                        if "login" in driver.current_url:
+                            log(f"    ⚠ Session lost on tab {month_name} — re-login needed", "warn")
+                            driver.switch_to.window(main_window)
+                            _do_login()
+                            driver.switch_to.window(tab)
+                            driver.get("https://return.gst.gov.in/returns/auth/dashboard")
+                            WebDriverWait(driver, 15).until(lambda d: "dashboard" in d.current_url)
+                        # Select month and search
+                        _select_and_search(month_name)
+                        log(f"    ✓ Tab ready: {month_name}")
+                    except Exception as e:
+                        log(f"    ⚠ Tab setup failed {month_name}: {e}", "warn")
+
+                # ── Step 3: Click DOWNLOAD on ALL tabs quickly ────────────
+                log(f"    Clicking DOWNLOAD on all {len(tab_map)} tabs simultaneously...")
+                snap_before = _snap_dl_dir(extensions)
+                click_results = {}
+
+                for tab, (month_name, month_num, year, save_name) in tab_map.items():
+                    try:
+                        driver.switch_to.window(tab)
+                        current_tile[0] = rtype
+                        # Wait for tiles to be visible
+                        try:
+                            WebDriverWait(driver, 10).until(
+                                lambda d: len(d.find_elements(By.XPATH,
+                                    "//*[(self::button or self::a) and "
+                                    "contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD')]")) > 0
+                            )
+                        except: pass
+                        clicked = _click_tile_download(rtype)
+                        click_results[tab] = clicked
+                        if clicked:
+                            log(f"    ✓ DOWNLOAD clicked: {month_name}")
+                        else:
+                            log(f"    ⚠ DOWNLOAD not found: {month_name}", "warn")
+                        time.sleep(0.2)  # tiny gap between tabs to avoid portal overload
+                    except Exception as e:
+                        log(f"    ⚠ Click failed {month_name}: {e}", "warn")
+                        click_results[tab] = False
+
+                # For GSTR-2B: click GENERATE EXCEL in each tab after tile click
+                if action == "direct_2b":
+                    log(f"    Clicking GENERATE EXCEL on all tabs...")
+                    for tab, (month_name, month_num, year, save_name) in tab_map.items():
+                        if not click_results.get(tab): continue
+                        try:
+                            driver.switch_to.window(tab)
+                            time.sleep(0.5)
+                            _try_click(GENERATE_EXCEL_XP, timeout=6)
+                            log(f"    ✓ GENERATE EXCEL clicked: {month_name}")
+                            time.sleep(0.2)
+                        except Exception as e:
+                            log(f"    ⚠ Generate click failed {month_name}: {e}", "warn")
+
+                # ── Step 4: Wait for ALL files to arrive simultaneously ───
+                log(f"    ⏳ Waiting for all {len(tab_map)} files to download simultaneously...")
+                pending = {tab: data for tab, data in tab_map.items() if click_results.get(tab)}
+                deadline = time.time() + 90
+                saved_in_batch = {}
+
+                while pending and time.time() < deadline:
+                    time.sleep(1)
+                    for f in dl_dir.iterdir():
+                        if f.suffix.lower() not in extensions: continue
+                        if f.name.endswith((".crdownload",".tmp",".part")): continue
+                        prev = snap_before.get(str(f))
+                        if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 500:
+                            if str(f) not in saved_in_batch:
+                                saved_in_batch[str(f)] = f
+                    # Match downloaded files to months (by count or filename hints)
+                    unmatched_files = [f for fk, f in saved_in_batch.items()
+                                       if fk not in [v for v in triggered.values()]]
+                    if len(saved_in_batch) >= len(pending):
+                        break  # All files arrived
+
+                # ── Step 5: Match files to months and save ────────────────
+                driver.switch_to.window(main_window)
+                sorted_files = sorted(saved_in_batch.values(), key=lambda f: f.stat().st_mtime)
+                sorted_months = [(tab, data) for tab, data in tab_map.items() if click_results.get(tab)]
+
+                for i, (tab, (month_name, month_num, year, save_name)) in enumerate(sorted_months):
+                    key = f"{month_name}_{year}"
+                    if i < len(sorted_files):
+                        src_f = sorted_files[i]
+                        dest = dl_dir / save_name
+                        try:
+                            if str(src_f) != str(dest):
+                                src_f.rename(dest)
+                        except:
+                            try: _shutil.copy2(str(src_f), str(dest))
+                            except: pass
+                        if dest.exists() and dest.stat().st_size > 500:
+                            _save_file(dest, save_name, key, rtype)
+                            triggered[f"{key}_{rtype}"] = "OK"
+                            log(f"    ✅ {rtype} {month_name}: saved ✓", "ok")
+                        else:
+                            log(f"    ⚠ {rtype} {month_name}: file empty or missing", "warn")
+                            failed_months.append((month_name, month_num, year))
+                            triggered[f"{key}_{rtype}"] = "NOT_FOUND"
+                    else:
+                        log(f"    ⚠ {rtype} {month_name}: no file received", "warn")
+                        failed_months.append((month_name, month_num, year))
+                        triggered[f"{key}_{rtype}"] = "NOT_FOUND"
+
+                # ── Step 6: Mark un-clicked months as failed ──────────────
+                for tab, (month_name, month_num, year, save_name) in tab_map.items():
+                    if not click_results.get(tab):
+                        failed_months.append((month_name, month_num, year))
+                        triggered[f"{month_name}_{year}_{rtype}"] = "TILE_FAIL"
+
+                # ── Step 7: Close all batch tabs ──────────────────────────
+                for tab in list(tab_map.keys()):
+                    try:
+                        driver.switch_to.window(tab)
+                        driver.close()
+                    except: pass
+                driver.switch_to.window(main_window)
+                log(f"    Batch {batch_num} complete — {len(saved_in_batch)} files downloaded")
+                prog(15 + int(batch_num / total_batches * 55))
+
+            # ── Retry failed months sequentially (T1→T2→T3) ──────────────
+            if failed_months:
+                log(f"\n  ── Retrying {len(failed_months)} failed months (T1→T2→T3) ──")
+                for month_name, month_num, year in failed_months:
+                    key = f"{month_name}_{year}"
+                    result = "FAIL"
+                    for attempt, wait in enumerate((0,30,60), 1):
+                        if wait > 0:
+                            log(f"    [T{attempt}] Waiting {wait}s before retry {rtype} {month_name}...")
+                            time.sleep(wait)
+                        try:
+                            result = _do_month_return(month_name, month_num, year, rtype, action)
+                            if result == "OK":
+                                log(f"    [T{attempt}] ✓ Retry success: {rtype} {month_name}", "ok")
+                                break
+                            log(f"    [T{attempt}] ✗ {result}: {rtype} {month_name}", "warn")
+                        except Exception as e:
+                            log(f"    [T{attempt}] ✗ Error: {e}", "warn")
+                            result = f"ERR:{e}"
+                    triggered[f"{key}_{rtype}"] = result
+                    log(f"    {'✅' if result=='OK' else '❌'} {rtype} {month_name}: {result}")
+
         # ── PHASE 1: Trigger GENERATE — GSTR-1, GSTR-1A, GSTR-2A ─────────
         _generate_types = [r for r in ("GSTR1","GSTR1A","GSTR2A") if r in returns_set]
         _direct_2b      = "GSTR2B" in returns_set
@@ -5063,19 +5266,19 @@ def _auto_download(job_id, gstin, client_name,
             log("\n  ✅ Phase 1 complete — portal generating files in background (~15-20 min)")
             log("  ▶ Moving to Phase 2+3 (instant downloads) to keep session alive...")
 
-        # ── PHASE 2: GSTR-2B — INSTANT download all 12 months ─────────────
+        # ── PHASE 2: GSTR-2B — SIMULTANEOUS multi-tab download ────────────
         if _direct_2b:
-            _run_phase(
-                "PHASE 2 — GSTR-2B Direct Download (INSTANT — no generate wait needed)",
-                ["GSTR2B"], "direct_2b"
+            _run_phase_multitab(
+                "PHASE 2 — GSTR-2B Simultaneous Download (6 tabs per batch)",
+                "GSTR2B", "direct_2b", batch_size=6
             )
             prog(55)
 
-        # ── PHASE 3: GSTR-3B — INSTANT download all 12 months ─────────────
+        # ── PHASE 3: GSTR-3B — SIMULTANEOUS multi-tab download ────────────
         if _direct_3b:
-            _run_phase(
-                "PHASE 3 — GSTR-3B Direct Download (INSTANT PDF — no generate wait needed)",
-                ["GSTR3B"], "direct_3b"
+            _run_phase_multitab(
+                "PHASE 3 — GSTR-3B Simultaneous Download (6 tabs per batch)",
+                "GSTR3B", "direct_3b", batch_size=6
             )
             prog(70)
 
