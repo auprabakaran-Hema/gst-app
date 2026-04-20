@@ -4180,17 +4180,62 @@ def _auto_download(job_id, gstin, client_name,
                 "Please click 'Start Download' again to retry."
             ) from _sess_err
         log(f"  Post-login URL: {driver.current_url}")
-        if "accessdenied" in cur or ("login" in cur and "fowelcome" not in cur):
+        # ── Fix: error/notfound after login is recoverable — navigate directly ──
+        if "error/notfound" in cur:
+            log("  ⚠ Post-login landed on error/notfound — navigating to dashboard directly...", "warn")
+            try:
+                driver.get("https://return.gst.gov.in/returns/auth/dashboard")
+                WebDriverWait(driver, 15).until(
+                    lambda d: "dashboard" in d.current_url or "login" in d.current_url
+                )
+                cur = driver.current_url
+                log(f"  Recovered to: {cur}")
+            except: pass
+        if "accessdenied" in cur or ("login" in cur and "fowelcome" not in cur and "error" not in cur):
             raise RuntimeError("Login failed — wrong username/password/CAPTCHA. Please try again.")
         log("  ✅ Login successful!", "ok")
         return True
 
+    # Direct dashboard URL — used as fallback when menu nav fails
+    _DASHBOARD_URL = "https://return.gst.gov.in/returns/auth/dashboard"
+
+    def _recover_from_error_page():
+        """If stuck on error/notfound, navigate directly to dashboard URL."""
+        cur = driver.current_url
+        if "error/notfound" in cur or "error" in cur:
+            log("  ⚠ Stuck on error page — using direct URL to recover...", "warn")
+            try:
+                driver.get(_DASHBOARD_URL)
+                WebDriverWait(driver, 15).until(
+                    lambda d: "dashboard" in d.current_url or "login" in d.current_url
+                )
+                time.sleep(2)
+                if "login" in driver.current_url:
+                    log("  Session expired — re-logging in...", "warn")
+                    _do_login()
+                    driver.get(_DASHBOARD_URL)
+                    time.sleep(3)
+                log(f"  Recovered: {driver.current_url}", "ok")
+                return True
+            except Exception as e:
+                log(f"  Recovery failed: {e}", "warn")
+        return False
+
     def _go_to_dashboard():
-        """Navigate to Returns Dashboard by clicking Services→Returns→Returns Dashboard.
-        Never uses direct URLs — always follows menu clicks to avoid Access Denied."""
+        """Navigate to Returns Dashboard.
+        Strategy: menu click first, fallback to direct URL if stuck on error page."""
         cur = driver.current_url
         if "return.gst.gov.in" in cur and "dashboard" in cur:
             return True
+
+        # If on error page — use direct URL immediately, don't waste time on menu
+        if "error/notfound" in cur or ("error" in cur and "gst.gov.in" in cur):
+            log("  ⚠ On error page — using direct URL navigation...", "warn")
+            _recover_from_error_page()
+            cur = driver.current_url
+            if "return.gst.gov.in" in cur and "dashboard" in cur:
+                log("  ✅ Returns Dashboard loaded via direct URL ✓", "ok")
+                return True
 
         if _is_session_lost():
             log("  ⚠ Session lost — re-logging in...", "warn")
@@ -4201,7 +4246,27 @@ def _auto_download(job_id, gstin, client_name,
         for attempt in range(3):
             log(f"  Nav attempt {attempt+1} from: {driver.current_url}")
 
-            # Step 1: Click Services (also hover to open dropdown)
+            # ── If on error page, go direct immediately ────────────
+            if "error" in driver.current_url:
+                log(f"  Error page detected on attempt {attempt+1} — direct URL fallback")
+                try:
+                    driver.get(_DASHBOARD_URL)
+                    WebDriverWait(driver, 15).until(
+                        lambda d: "dashboard" in d.current_url or "login" in d.current_url
+                    )
+                    time.sleep(2)
+                    if "login" in driver.current_url:
+                        _do_login()
+                        driver.get(_DASHBOARD_URL)
+                        time.sleep(3)
+                except: pass
+                final = driver.current_url
+                if "return.gst.gov.in" in final and "dashboard" in final:
+                    log("  ✅ Returns Dashboard loaded via direct URL ✓", "ok")
+                    return True
+                continue
+
+            # Step 1: Click Services
             try:
                 from selenium.webdriver.common.action_chains import ActionChains
                 svc_el = WebDriverWait(driver, 10).until(
@@ -4215,7 +4280,7 @@ def _auto_download(job_id, gstin, client_name,
                 ])
             time.sleep(1)
 
-            # Step 2: Click Returns in dropdown (hover first to keep dropdown open)
+            # Step 2: Click Returns in dropdown
             try:
                 ret_el = WebDriverWait(driver, 8).until(
                     EC.element_to_be_clickable((By.XPATH, "//a[normalize-space(text())='Returns']")))
@@ -4229,12 +4294,11 @@ def _auto_download(job_id, gstin, client_name,
                 ])
             time.sleep(1)
 
-            # Step 3: Click Returns Dashboard — XPath first, then full page scan
+            # Step 3: Click Returns Dashboard
             clicked = _try_click([
                 "//a[contains(normalize-space(text()),'Returns Dashboard')]",
             ])
             if not clicked:
-                # Scan ALL links on page (same as local script "scan" approach)
                 for el in driver.find_elements(By.TAG_NAME, "a"):
                     try:
                         if "Returns Dashboard" in (el.text or "") and el.is_displayed():
@@ -4243,9 +4307,9 @@ def _auto_download(job_id, gstin, client_name,
                             clicked = True
                             break
                     except: continue
-            # Smart wait: wait for URL to change to dashboard or timeout after 8s
+
             try:
-                WebDriverWait(driver, 8).until(
+                WebDriverWait(driver, 10).until(
                     lambda d: "return.gst.gov.in" in d.current_url and "dashboard" in d.current_url
                 )
             except: pass
@@ -4263,7 +4327,27 @@ def _auto_download(job_id, gstin, client_name,
                 log("  ✅ Returns Dashboard loaded", "ok")
                 return True
 
-            # Still on wrong page — log what's visible to help diagnose
+            # ── Still failed — try direct URL as last resort ───────
+            if attempt == 2:
+                log("  Menu nav failed 3 times — trying direct URL as last resort...", "warn")
+                try:
+                    driver.get(_DASHBOARD_URL)
+                    WebDriverWait(driver, 15).until(
+                        lambda d: "dashboard" in d.current_url or "login" in d.current_url
+                    )
+                    time.sleep(2)
+                    if "login" in driver.current_url:
+                        _do_login()
+                        driver.get(_DASHBOARD_URL)
+                        time.sleep(3)
+                    final = driver.current_url
+                    if "return.gst.gov.in" in final and "dashboard" in final:
+                        log("  ✅ Returns Dashboard loaded via direct URL ✓", "ok")
+                        return True
+                except Exception as e:
+                    log(f"  Direct URL fallback failed: {e}", "warn")
+
+            # Log visible links to help diagnose
             try:
                 links = [(a.text.strip(), a.get_attribute("href") or "")
                          for a in driver.find_elements(By.TAG_NAME, "a")
@@ -4844,12 +4928,17 @@ def _auto_download(job_id, gstin, client_name,
             """
             Run one phase: for each return in rtype_list, loop all 12 months.
             Retries T1 → T2 → T3 on failure.
+            NOTE: This script runs ONE browser sequentially = same as opening
+                  12 tabs manually. Each month is processed one after another
+                  for the same return type before moving to the next return.
             """
             if not rtype_list:
                 return
             log(f"\n{'═'*55}")
             log(f"  {phase_label}")
-            log(f"  Returns: {rtype_list}  |  Action: {action}  |  Retry: T1→T2→T3")
+            log(f"  Returns : {rtype_list}  |  Action: {action}")
+            log(f"  Months  : 12 (April → March) — same as 12 tabs in manual method")
+            log(f"  Retry   : T1 (immediate) → T2 (30s wait) → T3 (60s wait)")
             log(f"{'═'*55}")
             for rtype in rtype_list:
                 log(f"\n  ── {rtype} — all 12 months ──")
