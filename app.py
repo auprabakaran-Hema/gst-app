@@ -4355,145 +4355,71 @@ def _auto_download(job_id, gstin, client_name,
         log(f"  Tiles loaded ✓")
 
     def _click_tile_download(tile_name):
-        """Find tile and click its DOWNLOAD (or VIEW for GSTR-3B) button."""
-        # GSTR-3B tiles on the GST portal have a "VIEW" button, NOT "DOWNLOAD".
-        # Other returns (1, 1A, 2B, 2A) have "DOWNLOAD" buttons.
-        # Searching for "DOWNLOAD" inside the GSTR-3B tile finds nothing, then
-        # Strategy 2 accidentally clicks the nearest DOWNLOAD button (GSTR-2B).
-        # Fix: for GSTR3B use VIEW-priority button keywords; for others use DOWNLOAD.
-        is_3b = tile_name.upper().replace("-","") == "GSTR3B"
-        btn_label = "VIEW/DOWNLOAD" if is_3b else "DOWNLOAD"
-        log(f"  Finding {tile_name} tile {btn_label} button...")
-        time.sleep(0.8)
+        """Find tile and click its DOWNLOAD button"""
+        log(f"  Finding {tile_name} tile DOWNLOAD button...")
+        time.sleep(0.5)
 
         name_variants = {
-            "GSTR1":  ["GSTR-1","GSTR1","GSTR 1"],
-            "GSTR1A": ["GSTR-1A","GSTR1A","GSTR 1A"],
-            "GSTR2B": ["GSTR-2B","GSTR2B","GSTR 2B"],
-            "GSTR2A": ["GSTR-2A","GSTR2A","GSTR 2A"],
-            "GSTR3B": ["GSTR-3B","GSTR3B","GSTR 3B"],
+            "GSTR1":  ["GSTR1","GSTR-1","GSTR 1","gstr1","Gstr1"],
+            "GSTR1A": ["GSTR1A","GSTR-1A","GSTR 1A","gstr1a"],
+            "GSTR2B": ["GSTR2B","GSTR-2B","GSTR 2B","gstr2b"],
+            "GSTR2A": ["GSTR2A","GSTR-2A","GSTR 2A","gstr2a"],
+            "GSTR3B": ["GSTR3B","GSTR-3B","GSTR 3B","gstr3b"],
         }
         variants = name_variants.get(tile_name.upper().replace("-",""), [tile_name])
 
-        # Button keywords to look for inside the tile container.
-        # GSTR-3B: prioritise VIEW (the portal shows "VIEW" not "DOWNLOAD" for filed 3B).
-        # Others: look for DOWNLOAD only.
-        if is_3b:
-            btn_keywords = ["VIEW", "DOWNLOAD"]
-        else:
-            btn_keywords = ["DOWNLOAD"]
-
-        def _btn_xpath_for_keywords(keywords):
-            """Build XPath that matches button/a whose text contains any of the keywords."""
-            parts = " or ".join(
-                f"contains(translate(normalize-space(text()),"
-                f"'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'{kw}')"
-                for kw in keywords
-            )
-            return f".//*[({parts}) and (self::button or self::a) and not(contains(translate(normalize-space(text()),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'GENERATE'))]"
-
-        btn_xp = _btn_xpath_for_keywords(btn_keywords)
-
-        # Strategy 1: find an element whose text is EXACTLY the tile variant
-        #             → walk up to tile container → find btn inside.
+        # Strategy 1: find subtitle text → walk up to container → find DOWNLOAD button inside
         for variant in variants:
             try:
-                # Use normalize-space + exact match first, then contains as fallback
-                for xp_text in [
-                    f"//*[normalize-space(text())='{variant}']",
-                    f"//*[normalize-space(text())='{variant.upper()}']",
-                ]:
-                    subtitle_els = driver.find_elements(By.XPATH, xp_text)
-                    for subtitle_el in subtitle_els:
-                        if not subtitle_el.is_displayed(): continue
-                        parent = subtitle_el
-                        for level in range(10):
-                            try:
-                                parent = driver.execute_script("return arguments[0].parentElement;", parent)
-                                if parent is None: break
-                                # Also verify the container text does NOT contain other GSTR names
-                                # that would indicate we've walked too far up
-                                ptext = (driver.execute_script(
-                                    "return arguments[0].innerText;", parent) or "").upper()
-                                # Stop if container spans multiple tiles (contains 2+ GSTR names)
-                                gstr_count = sum(1 for g in ["GSTR-1 ","GSTR-1A","GSTR-2B","GSTR-2A","GSTR-3B"]
-                                                 if g in ptext.replace("GSTR1A","GSTR-1A")
-                                                              .replace("GSTR2B","GSTR-2B")
-                                                              .replace("GSTR2A","GSTR-2A")
-                                                              .replace("GSTR3B","GSTR-3B")
-                                                              .replace("GSTR1 ","GSTR-1 "))
-                                if gstr_count > 1:
-                                    break   # walked too far — container has multiple tiles
-                                btns = parent.find_elements(By.XPATH, btn_xp)
-                                for btn in btns:
-                                    if btn.is_displayed():
-                                        driver.execute_script(
-                                            "arguments[0].scrollIntoView({block:'center'});", btn)
-                                        time.sleep(0.4)
-                                        driver.execute_script("arguments[0].click();", btn)
-                                        log(f"  ✅ {tile_name} {btn.text.strip()} clicked "
-                                            f"(strategy 1, level {level})", "ok")
-                                        return True
-                            except: break
+                subtitle_els = driver.find_elements(By.XPATH,
+                    f"//*[normalize-space(text())='{variant}' or "
+                    f"contains(normalize-space(text()),'{variant}')]")
+                for subtitle_el in subtitle_els:
+                    if not subtitle_el.is_displayed(): continue
+                    parent = subtitle_el
+                    for level in range(8):
+                        try:
+                            parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                            if parent is None: break
+                            btns = parent.find_elements(By.XPATH,
+                                ".//*[contains(translate(normalize-space(.),'download','DOWNLOAD'),'DOWNLOAD') "
+                                "and (self::button or self::a)]")
+                            for btn in btns:
+                                if btn.is_displayed():
+                                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                                    time.sleep(0.4)
+                                    driver.execute_script("arguments[0].click();", btn)
+                                    log(f"  ✅ {tile_name} DOWNLOAD clicked (strategy 1, level {level})", "ok")
+                                    return True
+                        except: break
             except: continue
 
-        # Strategy 2: JS — iterate ALL tiles on page, find the one whose text matches
-        #             the tile name EXACTLY, then click its VIEW/DOWNLOAD button.
-        #             This avoids the "nearest button" ambiguity entirely.
+        # Strategy 2: scan all DOWNLOAD buttons, find the one near the tile title
         try:
-            js_result = driver.execute_script("""
-                var tileName = arguments[0];
-                var btnKeywords = arguments[1];   // e.g. ["VIEW","DOWNLOAD"]
-                var tileVariants = arguments[2];  // e.g. ["GSTR-3B","GSTR3B","GSTR 3B"]
-
-                // Find all elements whose text is one of the tile variants
-                var allEls = document.querySelectorAll('*');
-                for (var i = 0; i < allEls.length; i++) {
-                    var el = allEls[i];
-                    if (!el.offsetParent) continue;   // not visible
-                    var t = (el.innerText || el.textContent || '').trim().toUpperCase();
-                    var matched = false;
-                    for (var v = 0; v < tileVariants.length; v++) {
-                        if (t === tileVariants[v].toUpperCase()) { matched = true; break; }
-                    }
-                    if (!matched) continue;
-
-                    // Walk up to tile container (stop before container has 2+ tile names)
-                    var container = el;
-                    for (var lvl = 0; lvl < 12; lvl++) {
-                        if (!container.parentElement) break;
-                        container = container.parentElement;
-                        var ct = (container.innerText || '').toUpperCase();
-                        // count distinct tile names
-                        var gstrs = ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A','GSTR-3B'];
-                        var cnt = 0;
-                        for (var g=0;g<gstrs.length;g++) { if(ct.includes(gstrs[g])) cnt++; }
-                        if (cnt > 1) break;  // too far
-
-                        // Look for btn/a with keyword text inside container
-                        var btns = container.querySelectorAll('button,a');
-                        for (var b = 0; b < btns.length; b++) {
-                            var bt = (btns[b].innerText || btns[b].textContent || '').trim().toUpperCase();
-                            for (var k = 0; k < btnKeywords.length; k++) {
-                                if (bt.includes(btnKeywords[k]) && !bt.includes('GENERATE')) {
-                                    btns[b].scrollIntoView({block:'center'});
-                                    btns[b].click();
-                                    return bt;   // return button text for logging
-                                }
-                            }
-                        }
-                    }
-                }
-                return null;
-            """, tile_name, btn_keywords, variants)
-
-            if js_result:
-                log(f"  ✅ {tile_name} '{js_result}' clicked (strategy 2 JS)", "ok")
-                return True
+            all_dl_btns = driver.find_elements(By.XPATH,
+                "//*[contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD') "
+                "and (self::button or self::a) and not(contains(text(),'GENERATE'))]")
+            for btn in all_dl_btns:
+                if not btn.is_displayed(): continue
+                # Check if any ancestor contains the tile name
+                try:
+                    parent = btn
+                    for _ in range(10):
+                        parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                        if parent is None: break
+                        ptext = (driver.execute_script("return arguments[0].innerText;", parent) or "").upper()
+                        tile_key = tile_name.upper().replace("-","")
+                        if tile_key in ptext.replace("-","").replace(" ",""):
+                            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                            time.sleep(0.4)
+                            driver.execute_script("arguments[0].click();", btn)
+                            log(f"  ✅ {tile_name} DOWNLOAD clicked (strategy 2)", "ok")
+                            return True
+                except: continue
         except Exception as e:
-            log(f"  Strategy 2 JS error: {e}", "warn")
+            log(f"  Strategy 2 error: {e}", "warn")
 
-        log(f"  ⚠ {tile_name} tile button not found on page", "warn")
+        log(f"  ⚠ {tile_name} DOWNLOAD tile not found — check page dump above", "warn")
         return False
 
     def _get_latest_file(extensions):
@@ -4685,11 +4611,6 @@ def _auto_download(job_id, gstin, client_name,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True,
-            # Critical: force PDFs to download as files instead of opening
-            # in Chrome's built-in PDF viewer (which would never land in dl_dir)
-            "plugins.always_open_pdf_externally": True,
-            "plugins.plugins_disabled": ["Chrome PDF Viewer"],
-            "download.open_pdf_in_system_reader": False,
         })
         opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
@@ -4849,15 +4770,9 @@ def _auto_download(job_id, gstin, client_name,
             current_tile[0] = rtype
             current_month[0] = month_name
 
-            tile_ok = _click_tile_download(rtype)
-            if not tile_ok:
+            if not _click_tile_download(rtype):
                 save_failure_screenshot(f"{rtype} {month_name} {year} — Tile Not Found")
                 return "TILE_FAIL"
-            # For GSTR-3B: log current URL immediately after tile click to confirm we're
-            # navigating to the right page (not GSTR-2B's Offline Download page)
-            if rtype == "GSTR3B":
-                time.sleep(0.8)
-                log(f"  GSTR-3B tile click → navigating to: {driver.current_url}", "info")
 
             # ── Generate trigger (GSTR-1, GSTR-1A, GSTR-2A) ──────────
             if action == "generate":
@@ -4891,126 +4806,18 @@ def _auto_download(job_id, gstin, client_name,
                     return "NOT_FOUND"
 
             # ── GSTR-3B direct PDF download ────────────────────────────
-            # GST Portal flow for GSTR-3B:
-            #   Returns Dashboard → click VIEW on GSTR-3B tile
-            #   → Portal opens GSTR-3B summary page (same tab or new tab)
-            #   → Page has a PRINT button (top-right icon or labelled button)
-            #   → Clicking PRINT triggers browser PDF download (because we set
-            #      plugins.always_open_pdf_externally = True in Chrome prefs)
             elif action == "direct_3b":
-                # Remember tabs before VIEW click (tile click already done above)
-                tabs_before = set(driver.window_handles)
-                tab_before_url = driver.current_url
-                log(f"  GSTR-3B: after tile VIEW click, URL={tab_before_url}")
-                log(f"  GSTR-3B: tabs open = {len(tabs_before)}")
-
-                # Wait for navigation — portal may open new tab or stay same tab
-                time.sleep(3)
-
-                # Switch to new tab if one opened
-                tabs_after = set(driver.window_handles)
-                new_tabs = tabs_after - tabs_before
-                if new_tabs:
-                    new_tab = list(new_tabs)[0]
-                    driver.switch_to.window(new_tab)
-                    log(f"  Switched to new tab: {driver.current_url}")
-                    time.sleep(2)
-
-                current_url = driver.current_url
-                log(f"  GSTR-3B detail page URL: {current_url}")
-
-                # Dump all visible button/link text so failures are diagnosable
-                try:
-                    all_btns = driver.find_elements(By.XPATH,
-                        "//*[self::button or self::a or @role='button']")
-                    btn_texts = [b.text.strip() for b in all_btns
-                                 if b.is_displayed() and b.text.strip()]
-                    log(f"  Visible buttons on page: {btn_texts[:20]}", "info")
-                except: pass
-
-                # Snap dl_dir BEFORE triggering PDF
                 snap = _snap_dl_dir({".pdf"})
-
-                # ── Try to click PRINT / PDF trigger ──────────────────────
-                # The GSTR-3B summary page typically shows a print icon (🖨) or
-                # button labelled PRINT / PDF near the top-right of the page.
-                PRINT_PDF_XP = [
-                    "//button[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PRINT')]",
-                    "//a[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PRINT')]",
-                    "//button[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PDF')]",
-                    "//a[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PDF')]",
-                    "//button[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'DOWNLOAD')]",
-                    "//a[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'DOWNLOAD') and not(contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'GENERATE'))]",
-                    # icon buttons via title/aria-label
-                    "//*[@title and contains(translate(@title,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PRINT')]",
-                    "//*[@title and contains(translate(@title,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PDF')]",
-                    "//*[@aria-label and contains(translate(@aria-label,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PRINT')]",
-                    "//*[@aria-label and contains(translate(@aria-label,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PDF')]",
-                    # img-based print icons (common on GST portal)
-                    "//img[contains(translate(@src,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PRINT')]",
-                    "//img[contains(translate(@alt,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PRINT')]",
-                    "//span[contains(translate(@class,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'PRINT')]",
-                ]
-                btn_clicked = _try_click(PRINT_PDF_XP, timeout=12)
-                if btn_clicked:
-                    log(f"  ✓ GSTR-3B PRINT/PDF button clicked — waiting for PDF...")
-                else:
-                    # JS fallback: broaden search to text, title, class, src
-                    log(f"  ⚠ PRINT/PDF/DOWNLOAD button not found via XPath", "warn")
-                    log(f"  ⚠ Trying JS fallback (searches text + title + class + src)...", "warn")
-                    js_clicked = driver.execute_script("""
-                        var kws = ['PRINT','PDF','DOWNLOAD'];
-                        var attrs = ['innerText','title','className','src','alt','ariaLabel'];
-                        var els = Array.from(document.querySelectorAll(
-                            'button,a,[role=button],img,span,i'));
-                        for (var i=0;i<els.length;i++){
-                            var combined = '';
-                            for(var a=0;a<attrs.length;a++){
-                                combined += ((els[i][attrs[a]]||'') + ' ').toUpperCase();
-                            }
-                            combined += ((els[i].getAttribute('aria-label')||'') +
-                                         (els[i].getAttribute('data-action')||'')).toUpperCase();
-                            for(var k=0;k<kws.length;k++){
-                                if(combined.includes(kws[k]) && !combined.includes('GENERATE')){
-                                    els[i].scrollIntoView({block:'center'});
-                                    els[i].click();
-                                    return kws[k] + ':' + combined.substring(0,60);
-                                }
-                            }
-                        }
-                        return null;
-                    """)
-                    if js_clicked:
-                        log(f"  ✓ JS fallback clicked: {js_clicked}")
-                    else:
-                        save_failure_screenshot(
-                            f"GSTR3B {month_name} {year} — No PRINT/PDF button found on detail page")
-                        log(f"  ⚠ No button found — check failure screenshot for page state", "warn")
-
-                # Wait up to 90s for PDF file to appear in dl_dir
-                new_f = _fast_wait_file({".pdf"}, snap, timeout=90)
+                new_f = _fast_wait_file({".pdf"}, snap, timeout=30)
                 if new_f:
                     dest = dl_dir / save_name
                     if str(new_f) != str(dest):
                         try: new_f.rename(dest)
                         except: _shutil.copy2(str(new_f), str(dest))
                     _save_file(dest, save_name, key, "GSTR3B")
-                    # If we switched to a new tab, close it and go back
-                    if new_tabs:
-                        try:
-                            driver.close()
-                            driver.switch_to.window(list(tabs_before)[0])
-                        except: pass
                     return "OK"
                 else:
-                    save_failure_screenshot(
-                        f"GSTR3B {month_name} {year} — PDF not received in 90s")
-                    # Close new tab if opened, go back to main tab
-                    if new_tabs:
-                        try:
-                            driver.close()
-                            driver.switch_to.window(list(tabs_before)[0])
-                        except: pass
+                    save_failure_screenshot(f"GSTR3B {month_name} {year} — PDF not received in 30s")
                     return "NOT_FOUND"
 
             # ── Collect generate link (Phase 4) ────────────────────────
@@ -5043,10 +4850,6 @@ def _auto_download(job_id, gstin, client_name,
             log(f"\n{'═'*55}")
             log(f"  {phase_label}")
             log(f"  Returns: {rtype_list}  |  Action: {action}  |  Retry: T1→T2→T3")
-            log(f"  Months to process: {len(MONTHS_LIST)} months × {len(rtype_list)} return(s) = {len(MONTHS_LIST)*len(rtype_list)} iterations")
-            try:
-                log(f"  Browser tabs open: {len(driver.window_handles)}", "info")
-            except: pass
             log(f"{'═'*55}")
             for rtype in rtype_list:
                 log(f"\n  ── {rtype} — all 12 months ──")
