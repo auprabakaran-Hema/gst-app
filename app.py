@@ -4439,25 +4439,97 @@ def _auto_download(job_id, gstin, client_name,
         log(f"  Tiles loaded ✓")
 
     def _click_tile_download(tile_name):
-        """Find tile and click its DOWNLOAD button"""
+        """Find tile and click its DOWNLOAD button.
+
+        GSTR-3B special case:
+          Portal renders 'VIEW GSTR3B' + 'DOWNLOAD' buttons inside the same tile.
+          Strategy 1 was finding 'GSTR3B' text inside 'VIEW GSTR3B' button,
+          walking UP the DOM too high, and accidentally clicking GSTR-2B's DOWNLOAD.
+          Fix: use 'VIEW GSTR3B' as anchor → walk up max 4 levels → find DOWNLOAD
+          inside that SAME small container (not a wide ancestor).
+        """
         log(f"  Finding {tile_name} tile DOWNLOAD button...")
         time.sleep(0.5)
 
+        # ── GSTR-3B: special anchor-based detection ──────────────────────
+        if tile_name.upper().replace("-","") == "GSTR3B":
+            try:
+                # Find "VIEW GSTR3B" button — unique to GSTR-3B tile
+                view_btns = driver.find_elements(By.XPATH,
+                    "//*[contains(normalize-space(text()),'VIEW GSTR3B') or "
+                    "contains(normalize-space(text()),'View GSTR3B') or "
+                    "contains(normalize-space(text()),'VIEWGSTR3B')]")
+                for vb in view_btns:
+                    if not vb.is_displayed(): continue
+                    # Walk up MAX 4 levels — stay within the tile container
+                    parent = vb
+                    for level in range(4):
+                        try:
+                            parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                            if parent is None: break
+                            # Find DOWNLOAD buttons strictly INSIDE this container
+                            btns = parent.find_elements(By.XPATH,
+                                ".//*[(self::button or self::a) and "
+                                "contains(translate(normalize-space(.),'download','DOWNLOAD'),'DOWNLOAD') and "
+                                "not(contains(normalize-space(.),'GENERATE')) and "
+                                "not(contains(normalize-space(.),'VIEW'))]")
+                            for btn in btns:
+                                if btn.is_displayed():
+                                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                                    time.sleep(0.4)
+                                    driver.execute_script("arguments[0].click();", btn)
+                                    log(f"  ✅ GSTR3B DOWNLOAD clicked via VIEW GSTR3B anchor (level {level})", "ok")
+                                    return True
+                        except: break
+            except Exception as e:
+                log(f"  GSTR3B anchor search error: {e}", "warn")
+
+            # GSTR-3B fallback: find all tiles, identify GSTR-3B by position
+            # Portal button order: [VIEW,DL] [PREPARE] [VIEW,DL] [VIEW GSTR3B,DL] [VIEW,DL]
+            # GSTR-3B DOWNLOAD is the 3rd DOWNLOAD button on the page (0-indexed: index 2)
+            try:
+                all_dl = [b for b in driver.find_elements(By.XPATH,
+                    "//*[(self::button or self::a) and "
+                    "contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD') and "
+                    "not(contains(normalize-space(text()),'GENERATE'))]")
+                    if b.is_displayed()]
+                log(f"  GSTR3B fallback: found {len(all_dl)} DOWNLOAD buttons on page")
+                # GSTR-3B is 3rd DOWNLOAD (after GSTR-1 DL, GSTR-2B DL, then GSTR-3B DL)
+                if len(all_dl) >= 3:
+                    btn = all_dl[2]  # index 2 = 3rd DOWNLOAD = GSTR-3B
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                    time.sleep(0.4)
+                    driver.execute_script("arguments[0].click();", btn)
+                    log(f"  ✅ GSTR3B DOWNLOAD clicked via position fallback (3rd DL button)", "ok")
+                    return True
+            except Exception as e:
+                log(f"  GSTR3B position fallback error: {e}", "warn")
+
+            log(f"  ⚠ GSTR3B DOWNLOAD tile not found", "warn")
+            return False
+
+        # ── All other tiles: original strategy ───────────────────────────
         name_variants = {
-            "GSTR1":  ["GSTR1","GSTR-1","GSTR 1","gstr1","Gstr1"],
-            "GSTR1A": ["GSTR1A","GSTR-1A","GSTR 1A","gstr1a"],
-            "GSTR2B": ["GSTR2B","GSTR-2B","GSTR 2B","gstr2b"],
-            "GSTR2A": ["GSTR2A","GSTR-2A","GSTR 2A","gstr2a"],
-            "GSTR3B": ["GSTR3B","GSTR-3B","GSTR 3B","gstr3b"],
+            "GSTR1":  ["GSTR1","GSTR-1","GSTR 1"],
+            "GSTR1A": ["GSTR1A","GSTR-1A","GSTR 1A"],
+            "GSTR2B": ["GSTR2B","GSTR-2B","GSTR 2B"],
+            "GSTR2A": ["GSTR2A","GSTR-2A","GSTR 2A"],
         }
         variants = name_variants.get(tile_name.upper().replace("-",""), [tile_name])
 
-        # Strategy 1: find subtitle text → walk up to container → find DOWNLOAD button inside
+        # Strategy 1: find subtitle text → walk up to container → find DOWNLOAD inside
         for variant in variants:
             try:
+                # Only match subtitle/label text — exclude button text like "VIEW GSTR3B"
                 subtitle_els = driver.find_elements(By.XPATH,
-                    f"//*[normalize-space(text())='{variant}' or "
-                    f"contains(normalize-space(text()),'{variant}')]")
+                    f"//*[not(self::button) and not(self::a) and "
+                    f"(normalize-space(text())='{variant}' or "
+                    f"contains(normalize-space(text()),'{variant}'))]")
+                # Fallback: also check links/buttons if no subtitle found
+                if not subtitle_els:
+                    subtitle_els = driver.find_elements(By.XPATH,
+                        f"//*[normalize-space(text())='{variant}' or "
+                        f"contains(normalize-space(text()),'{variant}')]")
                 for subtitle_el in subtitle_els:
                     if not subtitle_el.is_displayed(): continue
                     parent = subtitle_el
@@ -4467,7 +4539,8 @@ def _auto_download(job_id, gstin, client_name,
                             if parent is None: break
                             btns = parent.find_elements(By.XPATH,
                                 ".//*[contains(translate(normalize-space(.),'download','DOWNLOAD'),'DOWNLOAD') "
-                                "and (self::button or self::a)]")
+                                "and (self::button or self::a) "
+                                "and not(contains(normalize-space(.),'GENERATE'))]")
                             for btn in btns:
                                 if btn.is_displayed():
                                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
@@ -4478,14 +4551,13 @@ def _auto_download(job_id, gstin, client_name,
                         except: break
             except: continue
 
-        # Strategy 2: scan all DOWNLOAD buttons, find the one near the tile title
+        # Strategy 2: scan all DOWNLOAD buttons, find the one near tile title
         try:
             all_dl_btns = driver.find_elements(By.XPATH,
                 "//*[contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD') "
                 "and (self::button or self::a) and not(contains(text(),'GENERATE'))]")
             for btn in all_dl_btns:
                 if not btn.is_displayed(): continue
-                # Check if any ancestor contains the tile name
                 try:
                     parent = btn
                     for _ in range(10):
@@ -4891,6 +4963,16 @@ def _auto_download(job_id, gstin, client_name,
 
             # ── GSTR-3B direct PDF download ────────────────────────────
             elif action == "direct_3b":
+                # Verify we landed on GSTR-3B page (not GSTR-2B by mistake)
+                time.sleep(1.5)
+                cur_url = driver.current_url
+                cur_body = ""
+                try: cur_body = driver.find_element(By.TAG_NAME, "body").text.lower()
+                except: pass
+                if "gstr2b" in cur_url.lower() or "offline download for gstr-2b" in cur_body:
+                    log(f"  ⚠ Landed on GSTR-2B page instead of GSTR-3B — wrong tile clicked!", "warn")
+                    save_failure_screenshot(f"GSTR3B {month_name} {year} — Wrong tile: landed on GSTR-2B page")
+                    return "WRONG_TILE"
                 snap = _snap_dl_dir({".pdf"})
                 new_f = _fast_wait_file({".pdf"}, snap, timeout=30)
                 if new_f:
