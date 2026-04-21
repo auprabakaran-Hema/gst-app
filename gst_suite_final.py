@@ -1,5 +1,5 @@
 """
-GST COMPLETE SUITE v5 — AY 2025-26
+GST COMPLETE SUITE v11 — AY 2025-26
 ====================================
 Based on ACTUAL portal screenshots + official GST documentation
 
@@ -13,37 +13,59 @@ RETURNS DASHBOARD:
   Select FY + Quarter + Period → SEARCH
   Tiles appear:
     GSTR-1  → Status: Filed → VIEW | DOWNLOAD → JSON only
-    GSTR-1A → PREPARE ONLINE
-    GSTR-2B → VIEW | DOWNLOAD → JSON + EXCEL (generates in ~20 mins)
-    GSTR-2A → VIEW | DOWNLOAD → JSON + EXCEL (generates in ~20 mins)
+    GSTR-1A → PREPARE ONLINE (only if supplier amended their GSTR-1)
+    GSTR-2B → VIEW | DOWNLOAD → Excel (INSTANT — no wait, same as GSTR-3B)
+    GSTR-2A → VIEW | DOWNLOAD → JSON + EXCEL (generates in ~15-20 mins — wait required)
     GSTR-3B → Status: Filed → VIEW GSTR3B | DOWNLOAD → PDF only
 
-DOWNLOAD FLOW FOR GSTR-2B / GSTR-2A:
-  Click DOWNLOAD on tile
-  → Click GENERATE EXCEL FILE TO DOWNLOAD
-  → Wait ~20 mins → link appears → click to download ZIP
-  → Unzip to get Excel
+DOWNLOAD TYPE CLASSIFICATION:
+  ⚡ DIRECT / INSTANT (No 20-min generate wait):
+      GSTR-2B → Click DOWNLOAD tile → Click GENERATE EXCEL → File ready INSTANTLY
+      GSTR-3B → Click DOWNLOAD tile → PDF downloads directly
 
-DOWNLOAD FLOW FOR GSTR-1:
-  Click DOWNLOAD on tile
-  → Click GENERATE JSON FILE TO DOWNLOAD (JSON only, no Excel)
-  → Wait ~20 mins → link appears → click to download ZIP
+  ⏳ GENERATE-FIRST (15-20 min wait required — then download link appears):
+      GSTR-1  → Click DOWNLOAD tile → Click GENERATE JSON → Wait → Collect link
+      GSTR-1A → Click DOWNLOAD tile → Click GENERATE JSON → Wait → Collect link
+      GSTR-2A → Click DOWNLOAD tile → Click GENERATE EXCEL → Wait → Collect link
 
-DOWNLOAD FLOW FOR GSTR-3B:
-  Click DOWNLOAD on tile → PDF downloads directly
+PHASED DOWNLOAD FLOW (Optimised — all 12 months, one session, no logout):
+  Phase 1 → Trigger GENERATE for GSTR-1 + GSTR-2A (all 12 months) — click & move on
+  Phase 2 → Direct download GSTR-2B (all 12 months) — INSTANT, keeps session alive
+  Phase 3 → Direct download GSTR-3B (all 12 months) — INSTANT, keeps session alive
+  Phase 4 → Collect DOWNLOAD LINK for GSTR-1 + GSTR-2A (now ready after ~20 min)
+  Total   → ~20 minutes for all 12 months × all 4 returns = 48 files
+
+FAST CASES (No generate at all — GSTR-2B + GSTR-3B both instant):
+  Option 15 → GSTR-2B + GSTR-3B only → 24 tabs → ~10 min
+  Option 4  → GSTR-2B only           → 12 tabs → ~5  min
+  Option 6  → GSTR-3B only           → 12 tabs → ~5  min
+
+RETRY LOGIC — T1 / T2 / T3 (per month per return):
+  T1 → immediate attempt
+  T2 → wait 30s → retry
+  T3 → wait 60s → retry
+  All 3 fail → logged, move to next month
+
+SESSION SAFETY:
+  Portal timeout = 20 mins idle
+  Phase 2 + Phase 3 (instant downloads) keep session alive during generate wait
+  Not Found page → auto F5 reload up to 3 times
+  Batch size = max 6 months per batch (avoids portal Not Found overload)
 
 ALL RESULTS SAVED TO:
   Downloads/GST_Automation/AY2025-26_YYYYMMDD_HHMM/ClientName/
     GSTR1_April_2024.zip
-    GSTR2B_April_2024.xlsx  (or .zip)
-    GSTR2A_April_2024.xlsx  (or .zip)
+    GSTR2B_April_2024.xlsx
+    GSTR2A_April_2024.xlsx
     GSTR3B_April_2024.pdf
   MASTER_REPORT_YYYYMMDD_HHMM.xlsx  ← summary of all clients
 """
 
-import os, sys, time, json, logging, zipfile
+import os, sys, time, json, logging, zipfile, base64
 from datetime import datetime
 from pathlib import Path
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+
 
 MISSING = []
 try:
@@ -61,7 +83,7 @@ except ImportError:
 try:
     from webdriver_manager.chrome import ChromeDriverManager
     CHROME_MGR = True
-except:
+except Exception:
     CHROME_MGR = False
 
 try:
@@ -78,12 +100,12 @@ except ImportError:
     MISSING.append("openpyxl")
 
 # -- Constants ----------------------------------------------
-PAGE_WAIT       = 8
-SHORT_WAIT      = 3
-ACTION_WAIT     = 2
-CLIENT_GAP      = 10
-FILE_GEN_WAIT   = 600  # seconds to wait for file generation (portal takes 30s-5 mins typically)
-FILE_GEN_RETRY  = 20   # number of retries × FILE_GEN_WAIT = total max wait
+PAGE_WAIT       = 4    # was 8  — halved; smart waits replace fixed sleeps
+SHORT_WAIT      = 1    # was 3
+ACTION_WAIT     = 1    # was 2
+CLIENT_GAP      = 5    # was 10
+FILE_GEN_WAIT   = 300  # was 600 — 5 min max per file (portal usually <90s)
+FILE_GEN_RETRY  = 10   # was 20
 FY_LABEL        = "2025-26"
 
 MONTHS = [
@@ -122,7 +144,7 @@ def clean_str(s):
 
 def clean_num(s):
     try: return float(str(s).replace(",","").replace("₹","").strip())
-    except: return 0.0
+    except Exception: return 0.0
 
 def get_latest_file(folder, extensions):
     """Return most recently modified file with given extensions."""
@@ -195,11 +217,17 @@ def make_driver(download_dir):
                 "safebrowsing.enabled":             True,
                 "credentials_enable_service":       False,
                 "profile.password_manager_enabled": False,
+                # Force PDFs to download as files instead of opening in browser viewer
+                # Without this GSTR-3B PDFs open in Edge/Chrome and never land on disk
+                "plugins.always_open_pdf_externally":  True,
+                "download.open_pdf_in_system_reader":  False,
             })
             opts.add_argument("--start-maximized")
             opts.add_argument("--disable-blink-features=AutomationControlled")
             opts.add_argument("--disable-save-password-bubble")
             opts.add_argument("--disable-features=msEdgeEnhancedSecurityMode")
+            # 'eager' stops waiting for images/analytics — cuts 2-5s per page load
+            opts.page_load_strategy = "eager"
             opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
             opts.add_experimental_option("useAutomationExtension", False)
             opts.add_argument(
@@ -224,11 +252,17 @@ def make_driver(download_dir):
             "download.directory_upgrade":       True,
             "credentials_enable_service":       False,
             "profile.password_manager_enabled": False,
+            # Force PDFs to download as files instead of opening in browser viewer
+            # Without this GSTR-3B PDFs open in Chrome and never land on disk
+            "plugins.always_open_pdf_externally":  True,
+            "download.open_pdf_in_system_reader":  False,
         })
         opts.add_argument("--start-maximized")
         opts.add_argument("--disable-blink-features=AutomationControlled")
         opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
+        # 'eager' stops waiting for images/analytics — cuts 2-5s per page load
+        opts.page_load_strategy = "eager"
         svc = ChromeService(ChromeDriverManager().install()) if CHROME_MGR else ChromeService()
         driver = webdriver.Chrome(service=svc, options=opts)
         driver.execute_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
@@ -250,29 +284,51 @@ def try_click(driver, xpaths, timeout=8, log=None):
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
             time.sleep(0.3)
             try: el.click()
-            except: driver.execute_script("arguments[0].click();", el)
+            except Exception: driver.execute_script("arguments[0].click();", el)
             if log: log.info(f"    Clicked: {xp[:60]}")
             return True
-        except: continue
+        except Exception: continue
     return False
 
 def human_type(driver, by, val, text, log=None):
+    """Type text into a form field. Waits for page/field to be ready, then uses
+    send_keys with JS fallback. The GST login page is Angular-rendered so the
+    field may not be interactable immediately even after the page 'loads'."""
     try:
+        # First wait for the element to exist (present in DOM)
+        el = WebDriverWait(driver, 15).until(EC.presence_of_element_located((by, val)))
+        # Then wait for it to be clickable (not disabled/hidden)
         el = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((by, val)))
-        driver.execute_script("arguments[0].scrollIntoView(true);", el)
-        time.sleep(0.3); el.click(); time.sleep(0.2)
-        el.clear(); time.sleep(0.2)
-        for ch in str(text): el.send_keys(ch); time.sleep(0.03)
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+        time.sleep(0.5)
+        # JS click to handle Angular-intercepted click events
+        driver.execute_script("arguments[0].click();", el)
         time.sleep(0.3)
-        if el.get_attribute("value") or "":
+        # Clear via JS to avoid Angular validation issues
+        driver.execute_script(
+            "arguments[0].value='';"
+            "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
+            el)
+        time.sleep(0.2)
+        # Type character by character
+        for ch in str(text):
+            el.send_keys(ch)
+            time.sleep(0.04)
+        time.sleep(0.4)
+        # Verify value was set
+        val_check = el.get_attribute("value") or ""
+        if val_check.strip():
             if log: log.info(f"    Typed via {val} ✓")
             return True
-        # JS fallback
+        # JS direct-set fallback (works even when send_keys is blocked)
         driver.execute_script(
             "arguments[0].value=arguments[1];"
             "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
-            "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
+            "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));"
+            "arguments[0].dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}));",
             el, text)
+        time.sleep(0.2)
+        if log: log.info(f"    Typed via {val} (JS fallback) ✓")
         return True
     except Exception as e:
         if log: log.warning(f"    Type failed {val}: {e}")
@@ -288,8 +344,283 @@ def select_by_text(driver, text, log=None):
                     s.select_by_visible_text(opt.text)
                     if log: log.info(f"    Dropdown selected: {opt.text} ✓")
                     return True
-        except: continue
+        except Exception: continue
     return False
+
+# ==========================================================
+# ── CDP PDF CAPTURE ────────────────────────────────────────
+# Bypasses window.print() dialog for GSTR-3B downloads
+# ==========================================================
+def _pdf_via_cdp(driver, save_path, log=None):
+    """
+    Capture the current page as a PDF using Chrome/Edge DevTools Protocol.
+
+    WHY THIS EXISTS:
+      The GST portal's GSTR-3B 'PRINT' button fires window.print(), which
+      opens the browser's NATIVE print dialog.  Selenium cannot interact with
+      native OS dialogs — so no PDF file ever lands on disk.
+
+      Page.printToPDF bypasses the dialog entirely: it captures the fully
+      rendered page as PDF bytes directly inside the ChromeDriver session.
+      Works with both ChromeDriver and EdgeDriver.
+
+    Returns True on success, False on failure.
+    """
+    try:
+        # Wait briefly for page content to fully render before capture
+        # (handles slow portal connections — checks for GSTR-3B content)
+        try:
+            for _ in range(6):   # up to 3s total
+                src = driver.page_source or ""
+                if "GSTR" in src and len(src) > 2000:
+                    break
+                time.sleep(0.5)
+        except Exception: pass
+
+        pdf_data = driver.execute_cdp_cmd("Page.printToPDF", {
+            "printBackground":     True,
+            "landscape":           False,
+            "scale":               0.92,
+            "paperWidth":          8.27,    # A4 width  in inches
+            "paperHeight":         11.69,   # A4 height in inches
+            "marginTop":           0.40,
+            "marginBottom":        0.40,
+            "marginLeft":          0.40,
+            "marginRight":         0.40,
+            "displayHeaderFooter": False,
+        })
+        pdf_bytes = base64.b64decode(pdf_data.get("data", ""))
+        if pdf_bytes and len(pdf_bytes) > 5000:
+            with open(str(save_path), "wb") as fh:
+                fh.write(pdf_bytes)
+            if log:
+                log.info(f"      ✅ PDF via CDP: {Path(save_path).name}"
+                         f" ({len(pdf_bytes)//1024} KB)")
+            return True
+        if log:
+            log.warning(f"      CDP printToPDF returned small/empty data"
+                        f" ({len(pdf_bytes)} bytes)")
+        return False
+    except Exception as exc:
+        if log:
+            log.warning(f"      CDP printToPDF error: {exc}")
+        return False
+
+
+# ==========================================================
+# ── NEW: SESSION KEEP-ALIVE ────────────────────────────────
+# Prevents 20-min GST portal timeout during GENERATE waits
+# ==========================================================
+def keep_session_alive(driver, log=None):
+    """
+    Ping the portal by scrolling the current page.
+    Call this every 5-7 mins during GENERATE wait phase
+    so session does not expire.
+    """
+    try:
+        driver.execute_script("window.scrollBy(0, 100);")
+        time.sleep(0.5)
+        driver.execute_script("window.scrollBy(0, -100);")
+        if log: log.info("    [KeepAlive] Session pinged ✓")
+        return True
+    except Exception as e:
+        if log: log.warning(f"    [KeepAlive] Failed: {e}")
+        return False
+
+
+# ==========================================================
+# ── NEW: NOT-FOUND PAGE HANDLER ───────────────────────────
+# Handles "Not Found" / blank page due to fast tab opening
+# ==========================================================
+def handle_not_found_page(driver, log=None, max_reload=3):
+    """
+    If portal shows 'Not Found' / blank / error page, reload.
+    Waits for full page load after each reload.
+    Returns True if page recovered, False if all reloads failed.
+    """
+    not_found_indicators = [
+        "not found", "404", "page not available",
+        "server error", "bad gateway", "service unavailable"
+    ]
+    for attempt in range(1, max_reload + 1):
+        try:
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            if any(ind in body for ind in not_found_indicators) or len(body.strip()) < 30:
+                if log: log.warning(f"    [NotFound] Attempt {attempt}/{max_reload} — reloading page...")
+                driver.refresh()
+                # Wait for full page load
+                WebDriverWait(driver, 20).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
+                )
+                time.sleep(PAGE_WAIT)
+                body = driver.find_element(By.TAG_NAME, "body").text.lower()
+                if not any(ind in body for ind in not_found_indicators) and len(body.strip()) > 30:
+                    if log: log.info(f"    [NotFound] Page recovered on attempt {attempt} ✓")
+                    return True
+            else:
+                return True  # Page is fine
+        except Exception as e:
+            if log: log.warning(f"    [NotFound] Reload error: {e}")
+            time.sleep(2)
+    if log: log.error("    [NotFound] Page did not recover after all reloads")
+    return False
+
+
+# ==========================================================
+# ── NEW: RETRY WRAPPER — T1 / T2 / T3 ────────────────────
+# Wraps any download action with 3 retries + backoff
+# Usage discussed: try 1 → wait 30s → try 2 → wait 1min → try 3
+# ==========================================================
+def retry_download(action_fn, label="download", log=None, max_retries=3):
+    """
+    Retry an action up to 3 times (T1, T2, T3).
+    action_fn: callable that returns True on success, False on failure.
+    Returns (success: bool, attempts_used: int)
+    """
+    wait_times = [0, 30, 60]   # T1: no wait, T2: 30s, T3: 60s
+    for attempt in range(1, max_retries + 1):
+        wait = wait_times[attempt - 1]
+        if wait > 0:
+            if log: log.info(f"    [Retry T{attempt}] Waiting {wait}s before retry for {label}...")
+            time.sleep(wait)
+        try:
+            if log: log.info(f"    [Retry T{attempt}] Attempting {label}...")
+            result = action_fn()
+            if result:
+                if log: log.info(f"    [Retry T{attempt}] ✓ Success: {label}")
+                return True, attempt
+            else:
+                if log: log.warning(f"    [Retry T{attempt}] ✗ Failed: {label}")
+        except Exception as e:
+            if log: log.warning(f"    [Retry T{attempt}] ✗ Error: {e}")
+    if log: log.error(f"    All {max_retries} retries exhausted for {label}. Try early morning 7-9 AM.")
+    return False, max_retries
+
+
+# ==========================================================
+# ── NEW: PHASED DOWNLOAD COORDINATOR ─────────────────────
+# Implements the exact flow we designed:
+#
+#  Phase 1: Click GENERATE on GSTR-1 & GSTR-2A (all months)
+#  Phase 2: Direct download GSTR-2B (keeps session alive)
+#  Phase 3: Direct download GSTR-3B (keeps session alive)
+#  Phase 4: Come back, click DOWNLOAD LINK for GSTR-1 & GSTR-2A
+#
+# This way session never times out and all downloads happen
+# in ~20 minutes total for 12 months.
+#
+# BATCH RULE: Open max 6 months per batch to avoid Not Found
+# ==========================================================
+def phased_download_coordinator(driver, client, client_dir, log, returns_todo,
+                                 navigate_to_month_fn, download_direct_fn,
+                                 generate_fn, collect_generated_fn,
+                                 batch_size=6):
+    """
+    Phased download flow:
+      Phase 1 → Trigger GENERATE for all months (GSTR-1, GSTR-2A) in batches
+      Phase 2 → Direct download GSTR-2B all months (session stays alive)
+      Phase 3 → Direct download GSTR-3B all months (session stays alive)
+      Phase 4 → Collect GENERATE links for GSTR-1, GSTR-2A (now ready)
+
+    Parameters:
+      navigate_to_month_fn(month_tuple) → navigates to returns dashboard for that month
+      download_direct_fn(rtype, month_tuple) → downloads a direct-download return (2B, 3B)
+      generate_fn(rtype, month_tuple) → clicks GENERATE button (1, 2A, 1A)
+      collect_generated_fn(rtype, month_tuple) → downloads the generated file link (1, 2A, 1A)
+      batch_size → max months to process before pausing (default 6)
+
+    Returns dict: {rtype: {month_name: "ok"|"failed"|"skipped"}}
+    """
+    results = {r: {} for r in returns_todo}
+
+    GENERATE_RETURNS = [r for r in ("GSTR1", "GSTR1A", "GSTR2A") if r in returns_todo]
+    DIRECT_RETURNS   = [r for r in ("GSTR2B", "GSTR3B") if r in returns_todo]
+
+    if log:
+        log.info("  ═══ PHASED DOWNLOAD START ═══")
+        log.info(f"  Generate-first returns : {GENERATE_RETURNS}")
+        log.info(f"  Direct download returns: {DIRECT_RETURNS}")
+        log.info(f"  Batch size             : {batch_size} months per batch")
+
+    # ── PHASE 1: Trigger GENERATE for all months ──────────────────
+    if GENERATE_RETURNS:
+        if log: log.info("\n  ── Phase 1: Triggering GENERATE for all months ──")
+        for batch_start in range(0, len(MONTHS), batch_size):
+            batch = MONTHS[batch_start : batch_start + batch_size]
+            if log: log.info(f"    Batch {batch_start//batch_size + 1}: {[m[0] for m in batch]}")
+            for month_tuple in batch:
+                month_name = month_tuple[0]
+                for rtype in GENERATE_RETURNS:
+                    try:
+                        navigate_to_month_fn(month_tuple)
+                        handle_not_found_page(driver, log)
+                        ok = generate_fn(rtype, month_tuple)
+                        results[rtype][month_name] = "generating" if ok else "gen_failed"
+                        if log: log.info(f"    Generate {rtype} {month_name}: {'triggered ✓' if ok else '✗ failed'}")
+                        time.sleep(SHORT_WAIT)
+                    except Exception as e:
+                        results[rtype][month_name] = "gen_error"
+                        if log: log.warning(f"    Generate {rtype} {month_name} error: {e}")
+            time.sleep(ACTION_WAIT)  # small gap between batches
+
+    # ── PHASE 2+3: Direct download 2B and 3B (keeps session alive) ─
+    if DIRECT_RETURNS:
+        if log: log.info("\n  ── Phase 2/3: Direct downloading (keeps session alive) ──")
+        for rtype in DIRECT_RETURNS:
+            if log: log.info(f"    Downloading {rtype} — all months...")
+            for batch_start in range(0, len(MONTHS), batch_size):
+                batch = MONTHS[batch_start : batch_start + batch_size]
+                for month_tuple in batch:
+                    month_name = month_tuple[0]
+                    def _do_direct(rt=rtype, mt=month_tuple):
+                        navigate_to_month_fn(mt)
+                        handle_not_found_page(driver, log)
+                        return download_direct_fn(rt, mt)
+                    ok, tries = retry_download(_do_direct, f"{rtype} {month_name}", log)
+                    results[rtype][month_name] = "ok" if ok else f"failed(T{tries})"
+                    keep_session_alive(driver, log)   # ping after each month
+                    time.sleep(SHORT_WAIT)
+
+    # ── PHASE 4: Collect generated files (GSTR-1, 2A now ready) ───
+    if GENERATE_RETURNS:
+        if log: log.info("\n  ── Phase 4: Collecting GENERATE download links ──")
+        # Check if enough time has passed — if not, wait with keep-alive pings
+        gen_wait_start = time.time()
+        gen_wait_max   = FILE_GEN_WAIT   # 5 mins max (portal usually <2 min)
+        for month_tuple in MONTHS:
+            month_name = month_tuple[0]
+            for rtype in GENERATE_RETURNS:
+                if results.get(rtype, {}).get(month_name) not in ("generating",):
+                    continue  # skip if generate was not triggered
+
+                def _do_collect(rt=rtype, mt=month_tuple):
+                    navigate_to_month_fn(mt)
+                    handle_not_found_page(driver, log)
+                    return collect_generated_fn(rt, mt)
+
+                # Keep pinging session while waiting
+                elapsed = time.time() - gen_wait_start
+                if elapsed < 60:
+                    if log: log.info(f"    Waiting for generate to complete... ({int(60-elapsed)}s remaining)")
+                    for _ in range(int(60 - elapsed) // 10):
+                        keep_session_alive(driver, log)
+                        time.sleep(10)
+
+                ok, tries = retry_download(_do_collect, f"{rtype} {month_name} link", log)
+                results[rtype][month_name] = "ok" if ok else f"failed(T{tries})"
+                keep_session_alive(driver, log)
+                time.sleep(SHORT_WAIT)
+
+    # ── Summary ───────────────────────────────────────────────────
+    if log:
+        log.info("\n  ═══ PHASED DOWNLOAD COMPLETE ═══")
+        for rtype, months_res in results.items():
+            ok_count   = sum(1 for v in months_res.values() if v == "ok")
+            fail_count = sum(1 for v in months_res.values() if "failed" in v)
+            log.info(f"    {rtype}: {ok_count} ok | {fail_count} failed")
+
+    return results
+
 
 def wait_for_download_link(driver, timeout_seconds, log):
     """
@@ -334,8 +665,8 @@ def wait_for_download_link(driver, timeout_seconds, log):
                     ])
                     if is_file_link or (is_download_text and len(href) > 40):
                         return el
-                except: continue
-        except: pass
+                except Exception: continue
+        except Exception: pass
         return None
 
     def page_still_processing():
@@ -349,7 +680,7 @@ def wait_for_download_link(driver, timeout_seconds, log):
                 "please wait",
                 "generating",
             ])
-        except:
+        except Exception:
             return False
 
     elapsed = 0
@@ -379,7 +710,7 @@ def wait_for_download_link(driver, timeout_seconds, log):
         try:
             driver.refresh()
             time.sleep(4)
-        except: pass
+        except Exception: pass
 
         link = find_real_download_link()
         if link:
@@ -411,15 +742,69 @@ def is_session_lost(driver):
                        "access denied"]:
             if phrase in body:
                 return True
-    except:
-        pass
+    except Exception:
+        pass  # page_source unavailable (e.g. driver closed) — treat as no session loss
     return False
+
+
+def show_access_denied_overlay(driver, username, log):
+    """
+    Inject a visible overlay banner into the browser on the Access Denied page.
+    The user sees a clear red banner with:
+      - What happened (Access Denied / Session Expired)
+      - Which client it's for
+      - What the script will do (re-login automatically)
+      - A "Re-Login Now" button that navigates to www.gst.gov.in
+    This fires in the browser window so the user knows exactly what is happening.
+    """
+    try:
+        driver.execute_script("""
+            // Remove any existing overlay first
+            var old = document.getElementById('_gst_relogin_overlay');
+            if (old) old.remove();
+
+            var overlay = document.createElement('div');
+            overlay.id = '_gst_relogin_overlay';
+            overlay.style.cssText = [
+                'position:fixed','top:0','left:0','width:100%','z-index:999999',
+                'background:#b91c1c','color:#fff','font-family:Arial,sans-serif',
+                'font-size:15px','padding:18px 24px','box-shadow:0 4px 16px rgba(0,0,0,0.5)',
+                'display:flex','align-items:center','gap:20px','flex-wrap:wrap'
+            ].join(';');
+
+            overlay.innerHTML = `
+              <span style="font-size:22px">🔒</span>
+              <div style="flex:1;min-width:250px">
+                <strong style="font-size:16px">ACCESS DENIED / SESSION EXPIRED</strong><br>
+                <span style="opacity:0.9">Client: <b>` + arguments[0] + `</b> &nbsp;|&nbsp;
+                Script is navigating back to GST Login page automatically...</span>
+              </div>
+              <button id="_gst_relogin_btn" style="
+                background:#fff;color:#b91c1c;border:none;border-radius:6px;
+                padding:10px 22px;font-size:14px;font-weight:bold;cursor:pointer;
+                white-space:nowrap;flex-shrink:0"
+                onclick="window.location.href='https://www.gst.gov.in'">
+                🔄 Re-Login Now
+              </button>
+              <button onclick="document.getElementById('_gst_relogin_overlay').remove()"
+                style="background:transparent;color:#fff;border:2px solid #fff;
+                border-radius:6px;padding:10px 14px;font-size:13px;cursor:pointer;
+                flex-shrink:0">
+                ✕ Dismiss
+              </button>
+            `;
+            document.body.insertBefore(overlay, document.body.firstChild);
+        """, username)
+        log.info("    ✅ Access Denied overlay shown in browser")
+    except Exception as e:
+        log.warning(f"    Could not show overlay: {e}")
 
 
 def relogin_if_needed(driver, log):
     """
     Full re-login from www.gst.gov.in when session is lost or Access Denied.
     Flow: www.gst.gov.in → LOGIN button → username + password + CAPTCHA → Submit
+    Also injects a visible overlay in the browser so the user can see what's happening.
     Returns True if re-login succeeded, False if failed.
     """
     if not is_session_lost(driver):
@@ -440,13 +825,18 @@ def relogin_if_needed(driver, log):
         CURRENT_CLIENT["username"] = username
         CURRENT_CLIENT["password"] = password
 
+    # ── Show overlay in the browser so user sees what's happening ────
+    show_access_denied_overlay(driver, username, log)
+
     print()
     print("  " + "="*56)
-    print("  ⚠  ACCESS DENIED / SESSION EXPIRED")
+    print("  🔒 ACCESS DENIED / SESSION EXPIRED")
     print("  " + "-"*56)
     print(f"  Client  : {username}")
     print("  Action  : Navigating to www.gst.gov.in → Login page")
-    print("  Please type the CAPTCHA in the browser when prompted.")
+    print("  The browser shows a RE-LOGIN banner — you can also")
+    print("  click 'Re-Login Now' in the browser to go there manually.")
+    print("  Please type the CAPTCHA when the login page appears.")
     print("  " + "="*56)
 
     # do_login navigates to www.gst.gov.in, clicks LOGIN, fills username +
@@ -484,6 +874,11 @@ def safe_go_to_dashboard(driver, log):
         print("!"*56)
         if relogin_if_needed(driver, log):
             result = go_to_returns_dashboard(driver, log)
+            if result:
+                log.info("  ✅ Re-login successful — resuming from where we left off")
+                print("\n" + "="*56)
+                print("  ✅ RE-LOGIN OK — Resuming download from current month")
+                print("="*56)
         else:
             result = False
 
@@ -491,16 +886,21 @@ def safe_go_to_dashboard(driver, log):
 
 
 # ==========================================================
-# GENERATE + DOWNLOAD IMMEDIATELY (for GSTR-2B)
-# GSTR-2B portal generates files instantly — click GENERATE
-# then poll for the download link right away (no 20-min wait).
+# GENERATE + INSTANT DOWNLOAD (GSTR-2B — same flow as GSTR-3B)
+# Portal flow:  tile DOWNLOAD  →  Generate page
+#               Click GENERATE EXCEL  →  file downloads INSTANTLY
+#               No link appears. No page polling. Pure folder watch.
 # ==========================================================
 def generate_then_download_immediate(driver, client_dir, save_name, log,
-                                      gen_xpaths=None, max_wait=90):
+                                      gen_xpaths=None, max_wait=60):
     """
-    Click GENERATE → poll every 5s for download link → click it.
-    Used for GSTR-2B which generates within seconds.
-    Returns True if downloaded.
+    GSTR-2B INSTANT DOWNLOAD — identical flow to GSTR-3B:
+      1. Click tile DOWNLOAD  →  lands on Generate page
+      2. Click GENERATE EXCEL →  file downloads INSTANTLY (no link, no polling page)
+      3. Poll folder every 0.5s until file appears  →  rename  →  done
+
+    No link scanning. No page polling. Pure file-system watch like GSTR-3B.
+    max_wait: max seconds to wait for the file after clicking Generate (default 60s).
     """
     if gen_xpaths is None:
         gen_xpaths = [
@@ -511,89 +911,52 @@ def generate_then_download_immediate(driver, client_dir, save_name, log,
             "//button[contains(text(),'Generate JSON')]",
         ]
 
-    time.sleep(SHORT_WAIT)
-    log.info(f"    Generate page: {driver.current_url}")
+    client_path = Path(client_dir)
 
-    gen_clicked = try_click(driver, gen_xpaths, timeout=10, log=log)
+    def _snap(exts):
+        """Snapshot current files in folder."""
+        return {str(f): f.stat().st_mtime
+                for f in client_path.iterdir()
+                if f.suffix.lower() in exts}
+
+    def _first_new(before, exts):
+        """Return first complete new file that appeared since snapshot."""
+        for f in client_path.iterdir():
+            if f.suffix.lower() not in exts: continue
+            if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+            prev = before.get(str(f))
+            if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 5000:
+                return f
+        return None
+
+    EXTS = {".xlsx", ".zip", ".json"}
+
+    # 1. Wait briefly for Generate page to render (replaces old sleep(SHORT_WAIT))
+    time.sleep(0.8)
+    log.info(f"    GSTR-2B generate page: {driver.current_url}")
+
+    # 2. Snapshot BEFORE clicking Generate
+    before = _snap(EXTS)
+
+    # 3. Click GENERATE EXCEL — triggers instant browser download
+    gen_clicked = try_click(driver, gen_xpaths, timeout=8, log=log)
     if gen_clicked:
-        log.info("    GENERATE clicked — polling for download link...")
+        log.info("    ✅ GENERATE EXCEL clicked — watching folder for instant file...")
     else:
-        log.warning("    GENERATE button not found — checking for existing link...")
-    time.sleep(3)
+        log.warning("    ⚠ GENERATE EXCEL button not found on page")
 
-    DOWNLOAD_XP = [
-        # GSTR-1 / GSTR-2A offlinedownload page
-        "//a[contains(text(),'Click here to download')]",
-        "//a[contains(text(),'click here to download')]",
-        "//a[contains(text(),'File 1')]",
-        "//a[contains(text(),'File 2')]",
-        # GSTR-2B portal: gstr2b.gst.gov.in — Angular table with download button/link
-        "//a[contains(@href,'.xlsx')]",
-        "//a[contains(@href,'.zip')]",
-        "//a[contains(@href,'gstr2b') and string-length(@href) > 40]",
-        "//a[contains(@href,'filedownload')]",
-        "//a[contains(@href,'download') and string-length(@href) > 50]",
-        "//button[contains(@class,'download') or contains(@class,'btn-download')]",
-        "//button[contains(text(),'Download') or contains(text(),'DOWNLOAD')]",
-        "//td//a[@href and string-length(@href) > 30]",
-        "//tr[contains(@class,'ng-star-inserted')]//a[@href]",
-        "//div[contains(@class,'download')]//a[@href]",
-        "//a[@href and string-length(@href) > 40 and not(contains(@href,'javascript')) and not(contains(@href,'#'))]",
-    ]
+    # 4. Fast-poll folder every 0.5s (same as GSTR-3B fast poll)
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        time.sleep(0.5)
+        new_f = _first_new(before, EXTS)
+        if new_f:
+            log.info(f"    ⚡ File received instantly: {new_f.name}")
+            time.sleep(0.5)   # let Chrome finish flushing
+            rename_latest(client_dir, save_name, [".xlsx", ".zip", ".json"], log)
+            return True
 
-    elapsed = 0
-    while elapsed < max_wait:
-        for xp in DOWNLOAD_XP:
-            try:
-                els = driver.find_elements(By.XPATH, xp)
-                for el in els:
-                    if el.is_displayed():
-                        href = el.get_attribute("href") or ""
-                        if len(href) > 20:
-                            txt = el.text.strip() or href[:50]
-                            log.info(f"    Download link found: '{txt}'")
-                            log.info(f"    Downloading: {save_name}")
-                            driver.execute_script(
-                                "arguments[0].scrollIntoView({block:'center'});", el)
-                            time.sleep(0.5)
-                            driver.execute_script("arguments[0].click();", el)
-                            time.sleep(10)
-                            rename_latest(client_dir, save_name,
-                                          [".xlsx", ".zip", ".json"], log)
-                            return True
-            except:
-                continue
-
-        elapsed += 5
-        time.sleep(5)
-
-        if elapsed % 20 == 0:
-            log.info(f"    Still waiting... ({elapsed}s) — refreshing")
-            try:
-                driver.refresh()
-                time.sleep(4)
-                # Log what's on page to diagnose GSTR-2B link location
-                try:
-                    url_now = driver.current_url
-                    body_txt = driver.find_element(By.TAG_NAME,"body").text
-                    log.info(f"    URL: {url_now}")
-                    log.info(f"    Page text sample: {body_txt[:300].replace(chr(10),' ')}")
-                    # Log all visible links
-                    links = driver.find_elements(By.TAG_NAME,"a")
-                    visible_links = [(el.text.strip()[:40], (el.get_attribute("href") or "")[:80])
-                                     for el in links if el.is_displayed() and el.get_attribute("href")]
-                    if visible_links:
-                        log.info(f"    Visible links ({len(visible_links)}): {visible_links[:5]}")
-                    # Log all buttons
-                    btns = driver.find_elements(By.TAG_NAME,"button")
-                    vis_btns = [b.text.strip()[:40] for b in btns if b.is_displayed() and b.text.strip()]
-                    if vis_btns:
-                        log.info(f"    Buttons: {vis_btns[:8]}")
-                except: pass
-            except:
-                pass
-
-    log.warning(f"    No download link found for {save_name} after {max_wait}s")
+    log.warning(f"    ⚠ GSTR-2B file not received within {max_wait}s for {save_name}")
     return False
 
 
@@ -611,7 +974,7 @@ def do_login(driver, username, password, log):
         # ── Navigate to portal & click LOGIN ──────────────────────
         log.info(f"    Opening www.gst.gov.in (attempt {attempt}/{MAX_ATTEMPTS})...")
         driver.get("https://www.gst.gov.in")
-        time.sleep(4)
+        time.sleep(2)  # was 4
 
         log.info("    Clicking LOGIN button...")
         try_click(driver, [
@@ -620,8 +983,27 @@ def do_login(driver, username, password, log):
             "//button[normalize-space()='LOGIN']",
             "//a[contains(@href,'login')]",
         ], timeout=8, log=log)
-        time.sleep(PAGE_WAIT)
+        # Wait for login page to fully load — GST portal uses Angular
+        # so the form fields take time to render after navigation.
+        log.info("    Waiting for login page to load...")
+        try:
+            WebDriverWait(driver, 20).until(
+                lambda d: "login" in d.current_url.lower() or
+                          "services.gst.gov.in" in d.current_url.lower()
+            )
+        except Exception: pass
+        time.sleep(2)  # Angular render time
         log.info(f"    Login page: {driver.current_url}")
+
+        # Wait for at least one text input to appear (Angular form ready)
+        try:
+            WebDriverWait(driver, 15).until(
+                lambda d: len(d.find_elements(By.CSS_SELECTOR,
+                    "input[type='text'], input[type='password'], input[id*='user'], input[name*='user']")) > 0
+            )
+        except Exception:
+            log.warning("    Username input not found yet — continuing anyway")
+        time.sleep(1)
 
         # ── Fill username ──────────────────────────────────────────
         log.info(f"    Filling username: {username}")
@@ -632,10 +1014,30 @@ def do_login(driver, username, password, log):
             (By.ID,   "user_name"),
             (By.NAME, "user_name"),
             (By.CSS_SELECTOR, "input[placeholder*='sername']"),
-            (By.CSS_SELECTOR, "input[type='text']:not([readonly])"),
+            (By.CSS_SELECTOR, "input[placeholder*='Username']"),
+            (By.XPATH, "//input[@type='text' and not(@readonly) and not(@disabled)]"),
+            (By.CSS_SELECTOR, "input[type='text']:not([readonly]):not([disabled])"),
         ]:
             if human_type(driver, by, val, username, log):
                 filled = True; break
+        if not filled:
+            # Last resort: JS direct inject into first text input
+            try:
+                driver.execute_script("""
+                    var inputs = document.querySelectorAll('input[type=text]');
+                    for(var i=0;i<inputs.length;i++){
+                        if(!inputs[i].readOnly && !inputs[i].disabled){
+                            inputs[i].value = arguments[0];
+                            inputs[i].dispatchEvent(new Event('input',{bubbles:true}));
+                            inputs[i].dispatchEvent(new Event('change',{bubbles:true}));
+                            break;
+                        }
+                    }
+                """, username)
+                log.info("    Username filled via JS last resort")
+                filled = True
+            except Exception as je:
+                log.error(f"    JS last resort also failed: {je}")
         if not filled:
             log.error("    Cannot fill username field!"); return False
 
@@ -684,7 +1086,13 @@ def do_login(driver, username, password, log):
             "//button[contains(text(),'Login')]",
         ], timeout=8, log=log)
 
-        time.sleep(PAGE_WAIT + 2)
+        # Smart wait: poll for dashboard/home after login (max 6s)
+        try:
+            from selenium.webdriver.support.ui import WebDriverWait
+            WebDriverWait(driver, 6).until(
+                lambda d: "login" not in d.current_url.lower() or "fowelcome" in d.current_url.lower()
+            )
+        except Exception: time.sleep(3)
 
         # ── OTP if needed ──────────────────────────────────────────
         try:
@@ -692,16 +1100,31 @@ def do_login(driver, username, password, log):
             if "otp" in body and ("enter" in body or "verify" in body):
                 print("\n  OTP REQUIRED — Enter OTP in browser then press ENTER here")
                 input("  >> Press ENTER after OTP entered: ")
-                time.sleep(PAGE_WAIT)
-        except: pass
+                time.sleep(2)
+        except Exception: pass
 
         # ── Check result ───────────────────────────────────────────
         cur = driver.current_url.lower()
         log.info(f"    Post-login URL: {driver.current_url}")
 
+        # ── Fix: error/notfound after login → navigate to portal home ──
+        # Do NOT use direct URL to return.gst.gov.in — causes Access Denied.
+        # Instead go to www.gst.gov.in (home) and let caller use menu nav.
+        if "error/notfound" in cur or "error/notfound" in driver.current_url:
+            log.warning("    Post-login landed on error/notfound — navigating to portal home...")
+            try:
+                driver.get("https://www.gst.gov.in")
+                WebDriverWait(driver, 15).until(
+                    lambda d: "gst.gov.in" in d.current_url
+                    and "error" not in d.current_url.lower()
+                )
+                cur = driver.current_url.lower()
+                log.info(f"    Recovered to portal home: {driver.current_url}")
+            except Exception: pass
+
         login_failed = (
             "accessdenied" in cur or
-            ("login" in cur and "fowelcome" not in cur)
+            ("login" in cur and "fowelcome" not in cur and "error" not in cur)
         )
 
         if not login_failed:
@@ -751,33 +1174,61 @@ def do_login(driver, username, password, log):
 def go_to_returns_dashboard(driver, log):
     """
     Navigate: Services --> Returns --> Returns Dashboard
-    Always follows the proper menu path after login.
-    Returns False immediately if session is lost — caller must handle re-login.
+    ─────────────────────────────────────────────────────
+    CRITICAL RULE: NEVER use driver.get() to jump directly to
+    return.gst.gov.in — the GST portal returns "Access Denied"
+    on direct URL navigation even when the user IS logged in.
+    ALWAYS follow the menu path: Services → Returns → Returns Dashboard.
+
+    The menu nav may land on services.gst.gov.in/services/auth/dashboard
+    (the services domain dashboard).  From there we do a SECOND menu walk
+    to reach return.gst.gov.in/returns/auth/dashboard.
+
+    Returns True  → we are on return.gst.gov.in/…/dashboard
+    Returns False → session is lost; caller must trigger re-login
     """
     cur = driver.current_url
 
-    # Already on dashboard — nothing to do
+    # ── Already on the correct Returns Dashboard ──────────────────────
     if "return.gst.gov.in" in cur and "dashboard" in cur:
-        log.info("    Already on Returns Dashboard +")
+        log.info("    Already on Returns Dashboard ✓")
         return True
 
-    # ── EARLY EXIT: session already lost — do NOT try Services navigation ──
-    # Caller (safe_go_to_dashboard) will trigger full re-login.
+    # ── Session already lost — caller handles re-login ────────────────
     if is_session_lost(driver):
-        log.warning("    Session/Access Denied detected at nav start — returning False for re-login")
+        log.warning("    Session/Access Denied at nav start — returning False for re-login")
         return False
 
-    log.info("    Navigating: Services --> Returns --> Returns Dashboard")
+    # ── e-Invoice portal redirect — navigate back to main services portal ─
+    # The GST portal sometimes redirects to einvoice.gst.gov.in after login.
+    # Menu clicks on that domain go to e-invoice navigation, not returns.
+    # Fix: navigate directly to services.gst.gov.in home first, then menu-walk.
+    if "einvoice.gst.gov.in" in cur:
+        log.warning("    ⚠ On e-Invoice portal — redirecting to services.gst.gov.in...")
+        try:
+            driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+            WebDriverWait(driver, 12).until(
+                lambda d: "services.gst.gov.in" in d.current_url
+                          or "gst.gov.in" in d.current_url
+            )
+            cur = driver.current_url
+            log.info(f"    Redirected to: {cur}")
+        except Exception as _e:
+            log.warning(f"    e-Invoice redirect failed: {_e}")
+            # Fallback: go to portal home
+            try:
+                driver.get("https://www.gst.gov.in")
+                time.sleep(2)
+            except Exception:
+                pass
 
-    # ── Step 0: If browser drifted off the portal, use browser Back / logo
-    # to get back — NEVER use a direct URL (direct URLs trigger Access Denied).
+    # ── If off the portal domain completely, press Back ───────────────
     if "gst.gov.in" not in cur:
-        log.info("    Not on GST portal — pressing Back to return to portal...")
+        log.info("    Not on GST portal — pressing Back...")
         try:
             driver.back()
-            time.sleep(PAGE_WAIT)
-        except: pass
-        # If still off-portal after Back, the session is likely gone
+            time.sleep(2)
+        except Exception: pass
         if "gst.gov.in" not in driver.current_url:
             log.warning("    Still off portal after Back — treating as session loss")
             return False
@@ -785,197 +1236,332 @@ def go_to_returns_dashboard(driver, log):
             log.warning("    Session lost after Back — returning False for re-login")
             return False
 
+    # ── Menu-nav helpers ──────────────────────────────────────────────
     def _click_services():
-        """Click Services in the top nav — try XPath then JS scan."""
-        for attempt in range(3):
-            clicked = try_click(driver, [
-                "//a[normalize-space(text())='Services']",
-                "//li[contains(@class,'nav')]//a[normalize-space()='Services']",
-                "//nav//a[normalize-space()='Services']",
-                "//ul[contains(@class,'nav')]//a[contains(text(),'Services')]",
-            ], timeout=6, log=log)
-            if clicked:
-                log.info("    Services menu clicked +"); return True
-            try:
-                driver.execute_script("""
-                    var links=document.querySelectorAll('a,li');
-                    for(var i=0;i<links.length;i++){
-                        var t=(links[i].innerText||links[i].textContent||'').trim();
-                        if(t==='Services'){
-                            links[i].dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
-                            links[i].click(); break;
-                        }
+        # JS-first: instant click without XPath timeout overhead
+        try:
+            driver.execute_script("""
+                var links=document.querySelectorAll('a,li');
+                for(var i=0;i<links.length;i++){
+                    var t=(links[i].innerText||links[i].textContent||'').trim();
+                    if(t==='Services'){
+                        links[i].dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+                        links[i].click(); break;
                     }
-                """)
-                time.sleep(1)
-            except: pass
-            time.sleep(1.5)
-        return False
+                }
+            """)
+            log.info("    Services menu clicked ✓")
+            return True
+        except Exception: pass
+        # XPath fallback (2s timeout — button is always present)
+        clicked = try_click(driver, [
+            "//a[normalize-space(text())='Services']",
+            "//li[contains(@class,'nav')]//a[normalize-space()='Services']",
+        ], timeout=2, log=log)
+        if clicked:
+            log.info("    Services menu clicked ✓")
+        return clicked
 
     def _click_returns_menu():
-        """Click Returns in the Services dropdown."""
-        for attempt in range(3):
-            clicked = try_click(driver, [
-                "//a[normalize-space(text())='Returns']",
-                "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
-                "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
-                "//ul[contains(@class,'open')]//a[contains(text(),'Returns')]",
-            ], timeout=6, log=log)
-            if clicked:
-                log.info("    Returns clicked +"); return True
-            try:
-                driver.execute_script("""
-                    var links=document.querySelectorAll('a');
-                    for(var i=0;i<links.length;i++){
-                        var t=(links[i].innerText||'').trim();
-                        if(t==='Returns'&&links[i].offsetParent!==null){links[i].click();break;}
-                    }
-                """)
-                time.sleep(1)
-            except: pass
-            time.sleep(1.5)
-        return False
+        """Click Returns in the Services dropdown — JS-first for speed."""
+        try:
+            driver.execute_script("""
+                var links=document.querySelectorAll('a');
+                for(var i=0;i<links.length;i++){
+                    var t=(links[i].innerText||'').trim();
+                    if(t==='Returns'&&links[i].offsetParent!==null){links[i].click();break;}
+                }
+            """)
+            log.info("    Returns clicked ✓")
+            return True
+        except Exception: pass
+        clicked = try_click(driver, [
+            "//a[normalize-space(text())='Returns']",
+            "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
+        ], timeout=2, log=log)
+        if clicked: log.info("    Returns clicked ✓")
+        return clicked
 
     def _click_dashboard_link():
-        """Click Returns Dashboard in the Returns submenu."""
-        for attempt in range(3):
-            clicked = try_click(driver, [
-                "//a[contains(normalize-space(text()),'Returns Dashboard')]",
-                "//li//a[contains(@href,'dashboard')]",
-            ], timeout=6, log=log)
-            if clicked:
-                log.info("    Returns Dashboard clicked +"); return True
-            try:
-                for el in driver.find_elements(By.TAG_NAME, "a"):
-                    try:
-                        if "Returns Dashboard" in (el.text or "") and el.is_displayed():
-                            driver.execute_script("arguments[0].click();", el)
-                            log.info("    Returns Dashboard clicked (scan) +")
-                            return True
-                    except: continue
-            except: pass
-            time.sleep(1.5)
-        return False
+        """Click Returns Dashboard link — JS-first for speed."""
+        try:
+            done = driver.execute_script("""
+                var links=document.querySelectorAll('a');
+                for(var i=0;i<links.length;i++){
+                    var t=(links[i].innerText||links[i].textContent||'').trim();
+                    if(t.includes('Returns Dashboard')&&links[i].offsetParent!==null){
+                        links[i].click(); return true;
+                    }
+                }
+                for(var i=0;i<links.length;i++){
+                    var h=links[i].href||'';
+                    if(h.includes('dashboard')&&links[i].offsetParent!==null){
+                        links[i].click(); return true;
+                    }
+                }
+                return false;
+            """)
+            if done:
+                log.info("    Returns Dashboard clicked ✓")
+                return True
+        except Exception: pass
+        clicked = try_click(driver, [
+            "//a[contains(normalize-space(text()),'Returns Dashboard')]",
+            "//li//a[contains(@href,'dashboard')]",
+        ], timeout=2, log=log)
+        if clicked: log.info("    Returns Dashboard clicked ✓")
+        return clicked
 
-    # ── Steps 1–3: Services → Returns → Returns Dashboard ────────────
-    # Attempt the full menu path up to 2 times before giving up.
-    # On failure we return False — caller (safe_go_to_dashboard) will
-    # trigger a full re-login; we never fall back to a direct URL.
-    for nav_attempt in range(1, 3):
-        log.info(f"    Step 1: Clicking Services menu (nav attempt {nav_attempt})...")
-        _click_services()
-        time.sleep(1.5)
+    def _is_on_returns_dashboard():
+        return ("return.gst.gov.in" in driver.current_url and
+                "dashboard" in driver.current_url)
 
-        log.info("    Step 2: Clicking Returns...")
-        _click_returns_menu()
-        time.sleep(1.5)
+    def _is_on_services_dashboard():
+        return ("services.gst.gov.in" in driver.current_url and
+                "dashboard" in driver.current_url)
 
-        log.info("    Step 3: Clicking Returns Dashboard...")
+    # ── Main nav loop — up to 3 full attempts ────────────────────────
+    for nav_attempt in range(1, 4):
+        log.info(f"    [Nav {nav_attempt}] Services → Returns → Returns Dashboard ...")
+
+        _click_services();     time.sleep(0.4)
+        _click_returns_menu(); time.sleep(0.4)
         _click_dashboard_link()
-        time.sleep(PAGE_WAIT)
 
-        final_url = driver.current_url
-        log.info(f"    URL after nav attempt {nav_attempt}: {final_url}")
+        # Wait up to 10s for the URL to settle on any dashboard
+        try:
+            WebDriverWait(driver, 10).until(
+                lambda d: "dashboard" in d.current_url.lower()
+                or "accessdenied" in d.current_url.lower()
+                or "login" in d.current_url.lower()
+            )
+        except Exception:
+            time.sleep(2)
 
-        # ── Success check ──────────────────────────────────────────
-        if "accessdenied" in final_url.lower():
-            log.warning(f"    Access Denied after nav attempt {nav_attempt} — returning False for re-login")
-            return False   # caller will relogin — never use direct URL here
+        cur2 = driver.current_url
+        log.info(f"    [Nav {nav_attempt}] URL: {cur2}")
 
-        if "dashboard" in final_url.lower() and "return.gst.gov.in" in final_url.lower():
-            log.info("    Returns Dashboard loaded OK +")
+        # Access Denied → tell caller to re-login
+        if "accessdenied" in cur2.lower():
+            log.warning(f"    [Nav {nav_attempt}] Access Denied — returning False for re-login")
+            show_access_denied_overlay(driver, CURRENT_CLIENT.get("username",""), log)
+            return False
+
+        # Session lost → tell caller to re-login
+        if is_session_lost(driver):
+            log.warning(f"    [Nav {nav_attempt}] Session lost — returning False for re-login")
+            show_access_denied_overlay(driver, CURRENT_CLIENT.get("username",""), log)
+            return False
+
+        # ✅ Already on the correct Returns Dashboard
+        if _is_on_returns_dashboard():
+            log.info("    ✅ Returns Dashboard loaded ✓")
             return True
 
-        log.warning(f"    Nav attempt {nav_attempt} did not land on dashboard — retrying menu path...")
-        time.sleep(2)
+        # Landed on services.gst.gov.in/services/auth/dashboard
+        # Session is confirmed active.  Try menu walk first (most reliable),
+        # fall back to direct URL only if menu walk itself fails.
+        if _is_on_services_dashboard():
+            log.info("    On services dashboard — running menu walk to returns domain...")
+            time.sleep(0.5)
+            _click_services();     time.sleep(0.4)
+            _click_returns_menu(); time.sleep(0.4)
+            _click_dashboard_link()
+            try:
+                WebDriverWait(driver, 10).until(
+                    lambda d: "dashboard" in d.current_url.lower()
+                    or "accessdenied" in d.current_url.lower()
+                )
+            except Exception:
+                time.sleep(2)
+            cur3 = driver.current_url
+            log.info(f"    [Nav {nav_attempt}] After 2nd menu walk: {cur3}")
+            if _is_on_returns_dashboard():
+                log.info("    ✅ Returns Dashboard loaded via 2nd menu walk ✓")
+                return True
+            # 2nd menu walk failed — try direct URL as last resort
+            if "accessdenied" not in cur3.lower() and not is_session_lost(driver):
+                log.warning("    2nd menu walk failed — trying direct URL as last resort...")
+                _DASHBOARD_URL = "https://return.gst.gov.in/returns/auth/dashboard"
+                try:
+                    driver.get(_DASHBOARD_URL)
+                    WebDriverWait(driver, 12).until(
+                        lambda d: "dashboard" in d.current_url.lower()
+                        or "accessdenied" in d.current_url.lower()
+                    )
+                except Exception:
+                    time.sleep(2)
+                if _is_on_returns_dashboard():
+                    log.info("    ✅ Returns Dashboard loaded via direct URL fallback ✓")
+                    return True
+            if "accessdenied" in driver.current_url.lower() or is_session_lost(driver):
+                log.warning("    Access Denied after services→returns nav — returning False")
+                show_access_denied_overlay(driver, CURRENT_CLIENT.get("username",""), log)
+                return False
+            log.warning("    Could not reach returns dashboard from services dashboard — retrying...")
+            time.sleep(1)
+            continue
 
-    # All nav attempts exhausted — signal failure; caller re-logs in
-    log.warning("    Could not reach Returns Dashboard via menu — returning False for re-login")
+        log.warning(f"    [Nav {nav_attempt}] Not on any dashboard — retrying...")
+        time.sleep(1)
+
+    log.error("    All nav attempts failed — could not reach Returns Dashboard")
     return False
 
 
 def select_and_search(driver, month_name, log):
+    """Select FY/Quarter/Period dropdowns then click SEARCH. Uses smart waits — no fixed sleeps."""
     log.info(f"    Setting: FY={FY_LABEL}  Quarter={QUARTER_MAP.get(month_name,'')}  Period={month_name}")
-    time.sleep(SHORT_WAIT)
 
-    all_sels = driver.find_elements(By.TAG_NAME, "select")
-    log.info(f"    Found {len(all_sels)} dropdowns")
-
-    # FY
-    for sel_el in all_sels:
-        try:
-            s = Select(sel_el)
-            opts = [o.text.strip() for o in s.options]
-            if any("-" in o and len(o) <= 9 for o in opts):
-                for opt in s.options:
-                    if FY_LABEL in opt.text:
-                        s.select_by_visible_text(opt.text)
-                        log.info(f"    FY: {opt.text} ✓")
-                        break
-                break
-        except: continue
-    time.sleep(1)
+    # Wait for dropdowns to appear (max 4s)
+    try:
+        WebDriverWait(driver, 4).until(
+            lambda d: len(d.find_elements(By.TAG_NAME, "select")) >= 1
+        )
+    except Exception: pass
 
     all_sels = driver.find_elements(By.TAG_NAME, "select")
 
-    # Quarter
+    # ── Fast JS dropdown setter ────────────────────────────────────────
+    # Set all 3 dropdowns (FY / Quarter / Period) in one JS call:
+    # find each select by its options, set value, fire 'change'.
+    # Falls back to Selenium Select per-dropdown if JS fails.
     qtr = QUARTER_MAP.get(month_name, "")
-    for sel_el in all_sels:
-        try:
-            s = Select(sel_el)
-            opts = [o.text.strip() for o in s.options]
-            if any("quarter" in o.lower() for o in opts):
-                for opt in s.options:
-                    if qtr[:9].lower() in opt.text.lower():
-                        s.select_by_visible_text(opt.text)
-                        log.info(f"    Quarter: {opt.text} ✓")
-                        break
-                break
-        except: continue
-    time.sleep(1)
-
-    all_sels = driver.find_elements(By.TAG_NAME, "select")
-
-    # Period/Month
     month_names_lower = ["january","february","march","april","may","june",
                          "july","august","september","october","november","december"]
-    for sel_el in all_sels:
-        try:
-            s = Select(sel_el)
-            opts = [o.text.strip() for o in s.options]
-            if any(m in " ".join(opts).lower() for m in month_names_lower):
-                for opt in s.options:
-                    if month_name.lower() in opt.text.lower():
-                        s.select_by_visible_text(opt.text)
-                        log.info(f"    Period: {opt.text} ✓")
-                        break
-                break
-        except: continue
-    time.sleep(1)
-
-    # SEARCH
-    clicked = try_click(driver, [
-        "//button[normalize-space()='SEARCH']",
-        "//button[normalize-space()='Search']",
-        "//button[contains(text(),'SEARCH')]",
-        "//input[@value='SEARCH']",
-    ], timeout=8, log=log)
-
-    if not clicked:
-        try:
-            driver.execute_script("""
-                var btns=document.querySelectorAll('button,input[type=submit]');
-                for(var i=0;i<btns.length;i++){
-                    if((btns[i].innerText||btns[i].value||'').toUpperCase().includes('SEARCH')){
-                        btns[i].click(); break;
+    js_result = None
+    try:
+        js_result = driver.execute_script("""
+            var fy_label = arguments[0];
+            var qtr_prefix = arguments[1];
+            var period = arguments[2].toLowerCase();
+            var result = {fy:false, qtr:false, period:false};
+            var sels = document.querySelectorAll('select');
+            for(var i=0;i<sels.length;i++){
+                var opts = Array.from(sels[i].options).map(o=>o.text.trim());
+                var optsLow = opts.map(o=>o.toLowerCase());
+                // FY dropdown: has options like "2025-26"
+                if(!result.fy && opts.some(o=>o.includes('-') && o.length<=9)){
+                    for(var j=0;j<opts.length;j++){
+                        if(opts[j].includes(fy_label)){
+                            sels[i].value = sels[i].options[j].value;
+                            sels[i].dispatchEvent(new Event('change',{bubbles:true}));
+                            result.fy = opts[j]; break;
+                        }
                     }
                 }
-            """)
-            log.info("    SEARCH clicked via JS")
-        except: pass
+                // Quarter dropdown
+                else if(!result.qtr && optsLow.some(o=>o.includes('quarter'))){
+                    for(var j=0;j<optsLow.length;j++){
+                        if(optsLow[j].includes(qtr_prefix.toLowerCase())){
+                            sels[i].value = sels[i].options[j].value;
+                            sels[i].dispatchEvent(new Event('change',{bubbles:true}));
+                            result.qtr = opts[j]; break;
+                        }
+                    }
+                }
+                // Period dropdown: has month names
+                else if(!result.period && optsLow.some(o=>
+                    ['january','february','march','april','may','june',
+                     'july','august','september','october','november','december'
+                    ].some(m=>o.includes(m)))){
+                    for(var j=0;j<optsLow.length;j++){
+                        if(optsLow[j].includes(period)){
+                            sels[i].value = sels[i].options[j].value;
+                            sels[i].dispatchEvent(new Event('change',{bubbles:true}));
+                            result.period = opts[j]; break;
+                        }
+                    }
+                }
+            }
+            return result;
+        """, FY_LABEL, qtr[:9], month_name)
+    except Exception: pass
 
-    time.sleep(PAGE_WAIT)
-    log.info("    Tiles loaded after SEARCH ✓")
+    if js_result and js_result.get("fy") and js_result.get("period"):
+        log.info(f"    FY: {js_result['fy']} ✓  Quarter: {js_result.get('qtr','')} ✓  Period: {js_result['period']} ✓")
+    else:
+        # JS failed — fall back to Selenium Select per-dropdown
+        fy_changed = False
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any("-" in o and len(o) <= 9 for o in opts):
+                    current_val = sel_el.get_attribute("value") or ""
+                    if FY_LABEL in current_val:
+                        log.info(f"    FY: already {FY_LABEL} ✓")
+                        break
+                    for opt in s.options:
+                        if FY_LABEL in opt.text:
+                            s.select_by_visible_text(opt.text)
+                            log.info(f"    FY: {opt.text} ✓")
+                            fy_changed = True
+                            break
+                    break
+            except Exception: continue
+        if fy_changed:
+            try:
+                WebDriverWait(driver, 4).until(
+                    lambda d: len(d.find_elements(By.TAG_NAME, "select")) >= 2
+                )
+            except Exception:
+                time.sleep(1)
+        all_sels = driver.find_elements(By.TAG_NAME, "select")
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any("quarter" in o.lower() for o in opts):
+                    for opt in s.options:
+                        if qtr[:9].lower() in opt.text.lower():
+                            s.select_by_visible_text(opt.text)
+                            log.info(f"    Quarter: {opt.text} ✓"); break
+                    break
+            except Exception: continue
+        all_sels = driver.find_elements(By.TAG_NAME, "select")
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any(m in " ".join(opts).lower() for m in month_names_lower):
+                    for opt in s.options:
+                        if month_name.lower() in opt.text.lower():
+                            s.select_by_visible_text(opt.text)
+                            log.info(f"    Period: {opt.text} ✓"); break
+                    break
+            except Exception: continue
+
+    # SEARCH — try JS first (instant), then XPath (3s timeout)
+    search_done = False
+    try:
+        driver.execute_script("""
+            var btns=document.querySelectorAll('button,input[type=submit]');
+            for(var i=0;i<btns.length;i++){
+                var t=(btns[i].innerText||btns[i].value||'').toUpperCase();
+                if(t.includes('SEARCH')){btns[i].click();break;}
+            }
+        """)
+        search_done = True
+        log.info("    SEARCH clicked via JS ✓")
+    except Exception: pass
+
+    if not search_done:
+        try_click(driver, [
+            "//button[normalize-space()='SEARCH']",
+            "//button[normalize-space()='Search']",
+            "//button[contains(text(),'SEARCH')]",
+            "//input[@value='SEARCH']",
+        ], timeout=3, log=log)
+
+    # Smart wait: stop as soon as GSTR tiles appear (max 10s)
+    try:
+        WebDriverWait(driver, 10).until(
+            lambda d: any(t in d.find_element(By.TAG_NAME,"body").text
+                          for t in ["GSTR-1","GSTR-2","GSTR-3","GSTR1","GSTR2","GSTR3"])
+        )
+    except Exception: time.sleep(2)
+    log.info("    Tiles loaded ✓")
 
 
 # ==========================================================
@@ -986,64 +1572,202 @@ def select_and_search(driver, month_name, log):
 def click_tile_download(driver, tile_name, log):
     """
     Find the tile for tile_name and click its DOWNLOAD button.
-    
-    From actual portal screenshot (Image 2), tile subtitle texts are:
-      GSTR-1  tile subtitle = "GSTR1"   (no dash)
-      GSTR-2B tile subtitle = "GSTR2B"  (no dash)
-      GSTR-2A tile subtitle = "GSTR2A"  (no dash)  
-      GSTR-3B tile subtitle = "GSTR-3B" (with dash)
-    
-    Strategy: find the subtitle element, walk UP to tile container,
-    then find DOWNLOAD button INSIDE that container only.
-    This prevents clicking wrong tile's button.
+
+    ROOT FIX: GSTR-3B tile is BELOW THE FOLD on the portal page.
+    The script was finding only 1 DOWNLOAD button (GSTR-1's) because
+    it never scrolled down. Fix: scroll to bottom first so ALL tiles
+    are rendered and visible before searching.
+
+    GSTR-3B: use 'VIEW GSTR3B' as anchor (unique to that tile).
+    All others: find subtitle text → walk up DOM → DOWNLOAD inside.
     """
     log.info(f"    Finding {tile_name} tile DOWNLOAD button...")
-    time.sleep(SHORT_WAIT)
 
-    # Exact subtitle texts seen in portal screenshots
-    # Map input name → possible subtitle texts on page
+    # ── CRITICAL FIX: Scroll full page so all tiles are visible ──────
+    # GSTR-3B is below the fold — without scrolling, only 1 DOWNLOAD
+    # button (GSTR-1's) is visible and position fallback fails.
+    try:
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(0.5)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+    # ── GSTR-3B: click the DOWNLOAD button on the tile ──────────────
+    # IMPORTANT: GSTR-3B tile has TWO buttons:
+    #   1. "VIEW GSTR3B" — opens filed return summary (NOT what we want here)
+    #   2. "DOWNLOAD"    — navigates to the Offline Download / print page
+    # We must click "DOWNLOAD", NOT "VIEW GSTR3B".
+    # After DOWNLOAD is clicked, a page appears where we click PRINT/PDF
+    # to trigger the actual PDF file download.
+    if tile_name.upper().replace("-","") == "GSTR3B":
+        log.info("    GSTR3B: looking for DOWNLOAD button in GSTR-3B tile...")
+
+        # Strategy A: Find GSTR-3B tile via unique "GSTR-3B" text, walk up
+        # to tile container, find the DOWNLOAD button inside that container.
+        # This avoids accidentally clicking a different tile's button.
+        for variant in ["GSTR-3B", "GSTR3B", "GSTR 3B"]:
+            try:
+                # Find elements whose text is EXACTLY the variant (tile label)
+                label_els = driver.find_elements(By.XPATH,
+                    f"//*[normalize-space(text())='{variant}' or "
+                    f"normalize-space(text())='{variant.upper()}']")
+                for label_el in label_els:
+                    if not label_el.is_displayed():
+                        try: driver.execute_script("arguments[0].scrollIntoView({block:'center'});", label_el)
+                        except Exception: pass
+                    parent = label_el
+                    for level in range(8):
+                        try:
+                            parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                            if parent is None: break
+                            # Stop if container spans multiple tiles
+                            ptext = (driver.execute_script("return arguments[0].innerText;", parent) or "").upper()
+                            gstr_count = sum(1 for g in ["GSTR-1 ","GSTR-1A","GSTR-2B","GSTR-2A","GSTR-3B"]
+                                             if g in ptext)
+                            if gstr_count > 1: break
+                            # Find DOWNLOAD button (not VIEW, not GENERATE)
+                            btns = parent.find_elements(By.XPATH,
+                                ".//*[(self::button or self::a) and "
+                                "contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD') and "
+                                "not(contains(translate(normalize-space(text()),'generate','GENERATE'),'GENERATE')) and "
+                                "not(contains(translate(normalize-space(text()),'view','VIEW'),'VIEW GSTR'))]")
+                            for btn in btns:
+                                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                                time.sleep(0.3)
+                                driver.execute_script("arguments[0].click();", btn)
+                                log.info(f"    GSTR3B DOWNLOAD clicked (Strategy A, level {level}) ✓")
+                                return True
+                        except Exception: break
+            except Exception: continue
+
+        # Strategy B: JS — scan all tiles, find GSTR-3B tile, click its DOWNLOAD
+        try:
+            clicked_text = driver.execute_script("""
+                var variants = ['GSTR-3B','GSTR3B','GSTR 3B'];
+                var allEls = document.querySelectorAll('*');
+                for (var i=0; i<allEls.length; i++) {
+                    var el = allEls[i];
+                    var t = (el.innerText || el.textContent || '').trim().toUpperCase();
+                    var isLabel = false;
+                    for (var v=0; v<variants.length; v++) {
+                        if (t === variants[v].toUpperCase()) { isLabel=true; break; }
+                    }
+                    if (!isLabel) continue;
+                    // Walk up to tile container
+                    var container = el;
+                    for (var lvl=0; lvl<10; lvl++) {
+                        if (!container.parentElement) break;
+                        container = container.parentElement;
+                        var ct = (container.innerText || '').toUpperCase();
+                        // Count GSTR tiles in container
+                        var cnt = 0;
+                        ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A','GSTR-3B'].forEach(function(g){
+                            if(ct.includes(g)) cnt++;
+                        });
+                        if (cnt > 1) break;
+                        // Find DOWNLOAD button inside
+                        var btns = container.querySelectorAll('button,a');
+                        for (var b=0; b<btns.length; b++) {
+                            var bt = (btns[b].innerText||btns[b].textContent||'').trim().toUpperCase();
+                            if (bt.includes('DOWNLOAD') && !bt.includes('GENERATE') && !bt.includes('VIEW GSTR')) {
+                                btns[b].scrollIntoView({block:'center'});
+                                btns[b].click();
+                                return bt;
+                            }
+                        }
+                    }
+                }
+                return null;
+            """)
+            if clicked_text:
+                log.info(f"    GSTR3B DOWNLOAD clicked (Strategy B JS: '{clicked_text}') ✓")
+                return True
+        except Exception as e:
+            log.warning(f"    GSTR3B Strategy B JS error: {e}")
+
+        # Strategy C: anchor on the unique "VIEW GSTR3B" button then find
+        # the DOWNLOAD sibling inside the same tile container.
+        # Replaces fragile position-index (index varies by portal layout,
+        # causing wrong-tile clicks that land on the GSTR-2B page).
+        try:
+            clicked_text = driver.execute_script("""
+                var viewBtns = Array.from(
+                    document.querySelectorAll('button,a,[role=button]')
+                ).filter(function(b) {
+                    var t = (b.innerText || b.textContent || '')
+                        .trim().toUpperCase().replace(/\\s+/g, '');
+                    return t === 'VIEWGSTR3B' || t === 'VIEWGSTR-3B';
+                });
+                if (!viewBtns.length) return null;
+                var container = viewBtns[0];
+                for (var i = 0; i < 8; i++) {
+                    if (!container.parentElement) break;
+                    container = container.parentElement;
+                    var btns = Array.from(
+                        container.querySelectorAll('button,a')
+                    );
+                    for (var b = 0; b < btns.length; b++) {
+                        var t = (btns[b].innerText || btns[b].textContent || '')
+                            .trim().toUpperCase();
+                        if (t === 'DOWNLOAD' && !t.includes('GENERATE')) {
+                            btns[b].scrollIntoView({block:'center'});
+                            btns[b].click();
+                            return 'VIEW_ANCHOR:' + t;
+                        }
+                    }
+                }
+                return null;
+            """)
+            if clicked_text:
+                log.info(f"    GSTR3B DOWNLOAD clicked (Strategy C VIEW-anchor) ✓")
+                return True
+        except Exception as e:
+            log.warning(f"    GSTR3B Strategy C error: {e}")
+
+        log.warning(f"    GSTR3B DOWNLOAD button not found — check page state")
+        return False
+
+    # ── All other tiles: subtitle anchor strategy ─────────────────────
     name_variants = {
         "GSTR1":  ["GSTR1", "GSTR-1"],
         "GSTR1A": ["GSTR1A", "GSTR-1A"],
         "GSTR2B": ["GSTR2B", "GSTR-2B"],
         "GSTR2A": ["GSTR2A", "GSTR-2A"],
-        "GSTR3B": ["GSTR3B", "GSTR-3B"],
     }
     variants = name_variants.get(tile_name.upper().replace("-",""), [tile_name])
 
     for variant in variants:
         try:
-            # Find the subtitle text element
             subtitle_els = driver.find_elements(By.XPATH,
-                f"//*[normalize-space(text())='{variant}']"
-            )
+                f"//*[not(self::button) and not(self::a) and normalize-space(text())='{variant}']")
+            if not subtitle_els:
+                subtitle_els = driver.find_elements(By.XPATH,
+                    f"//*[normalize-space(text())='{variant}']")
             for subtitle_el in subtitle_els:
-                if not subtitle_el.is_displayed():
-                    continue
-                # Walk UP parent tree to find the tile container
-                # (the container that has both the title and the buttons)
+                # Scroll subtitle into view first
+                try: driver.execute_script("arguments[0].scrollIntoView({block:'center'});", subtitle_el)
+                except Exception: pass
+                time.sleep(0.2)
                 parent = subtitle_el
                 for level in range(6):
                     try:
-                        parent = driver.execute_script(
-                            "return arguments[0].parentElement;", parent)
-                        if parent is None:
-                            break
-                        # Check if this parent has a DOWNLOAD button
+                        parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                        if parent is None: break
                         btns = parent.find_elements(By.XPATH,
-                            ".//button[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD')] | "
-                            ".//a[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD')]"
-                        )
+                            ".//button[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD') "
+                            "and not(contains(text(),'GENERATE'))] | "
+                            ".//a[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD') "
+                            "and not(contains(text(),'GENERATE'))]")
                         for btn in btns:
-                            if btn.is_displayed():
-                                driver.execute_script(
-                                    "arguments[0].scrollIntoView({block:'center'});", btn)
-                                time.sleep(0.4)
-                                driver.execute_script("arguments[0].click();", btn)
-                                log.info(f"    {tile_name} ({variant}) DOWNLOAD clicked at level {level} ✓")
-                                return True
-                    except: break
-        except: continue
+                            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                            time.sleep(0.2)
+                            driver.execute_script("arguments[0].click();", btn)
+                            log.info(f"    {tile_name} ({variant}) DOWNLOAD clicked at level {level} ✓")
+                            return True
+                    except Exception: break
+        except Exception: continue
 
     log.warning(f"    {tile_name} tile DOWNLOAD button not found on page")
     return False
@@ -1058,11 +1782,11 @@ def click_tile_download(driver, tile_name, log):
 # ==========================================================
 def click_generate_only(driver, log):
     """
-    Phase 1: Just click GENERATE JSON button and move on immediately.
-    Do NOT wait for file — portal will generate in background.
+    Phase 1: Click GENERATE JSON button and move on immediately.
+    Do NOT wait for file — portal generates in background.
     Returns True if button was clicked.
     """
-    time.sleep(SHORT_WAIT)
+    time.sleep(0.5)  # was SHORT_WAIT=3
     log.info(f"    Generate page: {driver.current_url}")
     clicked = try_click(driver, [
         "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
@@ -1072,21 +1796,24 @@ def click_generate_only(driver, log):
     ], timeout=8, log=log)
     if clicked:
         log.info("    GENERATE JSON clicked — moving on (file generates in background)")
-        time.sleep(2)
+        time.sleep(0.5)  # was 2
     else:
         log.warning("    GENERATE JSON button not found")
     return clicked
 
 def download_ready_file(driver, client_dir, save_name, log):
     """
-    Phase 2: Come back to offlinedownload page and click
-    'Click here to download - File 1' link to download the ready ZIP.
+    Phase 2: Find 'Click here to download' link and download the ready ZIP.
+    Uses fast 0.5s file polling instead of fixed sleep(8).
     Returns True if downloaded successfully.
     """
-    time.sleep(SHORT_WAIT)
+    time.sleep(0.5)  # was SHORT_WAIT=3
     log.info(f"    Checking for download link on: {driver.current_url}")
 
-    # Look for "Click here to download" link — exact text from screenshot
+    client_path = Path(client_dir)
+    before = {str(f): f.stat().st_mtime for f in client_path.iterdir()
+              if f.suffix.lower() in {".zip", ".json", ".xlsx"}}
+
     for xp in [
         "//a[contains(text(),'Click here to download')]",
         "//a[contains(text(),'click here to download')]",
@@ -1104,13 +1831,23 @@ def download_ready_file(driver, client_dir, save_name, log):
                     txt  = el.text.strip()
                     log.info(f"    Found link: '{txt}' → {href[:60]}")
                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-                    time.sleep(0.5)
                     driver.execute_script("arguments[0].click();", el)
                     log.info(f"    Download clicked: {save_name} ✓")
-                    time.sleep(8)  # wait for browser to start download
-                    rename_latest(client_dir, save_name, [".zip",".json",".xlsx"], log)
+                    # Fast poll instead of fixed sleep(8)
+                    deadline = time.time() + 15
+                    while time.time() < deadline:
+                        time.sleep(0.5)
+                        for f in client_path.iterdir():
+                            if f.suffix.lower() not in {".zip", ".json", ".xlsx"}: continue
+                            if f.name.endswith((".crdownload", ".tmp")): continue
+                            prev = before.get(str(f))
+                            if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 5000:
+                                time.sleep(0.5)
+                                rename_latest(client_dir, save_name, [".zip", ".json", ".xlsx"], log)
+                                return True
+                    rename_latest(client_dir, save_name, [".zip", ".json", ".xlsx"], log)
                     return True
-        except: continue
+        except Exception: continue
 
     log.warning(f"    No download link found for {save_name} — file may not be ready yet")
     return False
@@ -1120,7 +1857,715 @@ def generate_and_download(driver, file_type, client_dir, save_name, log):
     return click_generate_only(driver, log)
 
 
-# Legacy function — replaced by phase1_trigger_all + phase2_download_all
+# ==========================================================
+# MULTI-TAB SIMULTANEOUS DOWNLOAD — GSTR-2B & GSTR-3B
+# Mirrors the manual "12 tabs" approach:
+#   Batch 1: Open 6 tabs → navigate each → click all → all download simultaneously
+#   Batch 2: Open next 6 tabs → same
+#   Failed months → retry T1→T2→T3 sequentially
+# ==========================================================
+def multitab_direct_download(driver, client_dir, rtype, log, batch_size=6):
+    """
+    TRUE MULTI-TAB SIMULTANEOUS DOWNLOAD — v2.
+
+    KEY FIX: Open new tabs using window.open() while ALREADY on
+    return.gst.gov.in/returns/auth/dashboard — the session cookies
+    are already set for that domain, so new tabs inherit them!
+
+    Previous attempts failed because tabs were opened from about:blank
+    then navigated directly → "Access Denied".
+
+    This approach:
+    1. Navigate main tab to dashboard (menu nav, first month only)
+    2. Open N tabs using window.open() FROM return.gst.gov.in
+    3. Each new tab is ALREADY authenticated (same domain cookies)
+    4. Navigate each tab to its month directly (cookies already there)
+    5. Click DOWNLOAD on all tabs simultaneously
+    6. All files download at the same time
+    7. Batch 2: same for remaining months
+    """
+    results     = {}
+    client_path = Path(client_dir)
+    extensions  = {".pdf"} if rtype == "GSTR3B" else {".xlsx", ".zip", ".json"}
+
+    EXCEL_GEN_XP = [
+        "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE EXCEL')]",
+        "//button[contains(text(),'Generate Excel')]",
+        "//a[contains(text(),'GENERATE EXCEL')]",
+    ]
+    def _snap(exts):
+        return {
+            str(f): f.stat().st_mtime
+            for f in client_path.iterdir()
+            if f.suffix.lower() in exts
+            and not f.name.endswith((".crdownload", ".tmp", ".part"))
+        }
+
+    def _wait_files(snap_before, count, timeout=90):
+        """Poll until `count` new complete files appear."""
+        deadline = time.time() + timeout
+        found = {}
+        while time.time() < deadline:
+            time.sleep(0.8)
+            for f in client_path.iterdir():
+                if f.suffix.lower() not in extensions: continue
+                if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                prev = snap_before.get(str(f))
+                if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 50000:
+                    found[str(f)] = f
+            if len(found) >= count:
+                break
+        return list(found.values())
+
+    def _fname_match(f, month_num, year):
+        stem = f.stem.lower()
+        patterns = [f"{month_num}{year}", f"{month_num}_{year}", f"{month_num}-{year}"]
+        return any(p in stem for p in patterns)
+
+    def _navigate_tab_to_month(tab, month_name, month_num, year, main_window):
+        """
+        Navigate a tab to the Returns Dashboard then select the month.
+        FAST PATH: tabs are now opened with DASHBOARD_URL so they load
+        in parallel. If the tab already landed on return.gst.gov.in/dashboard,
+        skip menu nav entirely (~16s saved per tab).
+        Returns the actual tab handle in use, or None on failure.
+        """
+        active_tab = tab
+        driver.switch_to.window(tab)
+        time.sleep(0.3)
+
+        cur = driver.current_url
+        log.info(f"    Tab {month_name}: starting URL {cur[:70]}")
+
+        # ── e-Invoice redirect on a tab — go back to services portal ─────
+        if "einvoice.gst.gov.in" in cur:
+            log.warning(f"    Tab {month_name}: on e-Invoice domain — redirecting...")
+            try:
+                driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+                WebDriverWait(driver, 10).until(
+                    lambda d: "services.gst.gov.in" in d.current_url
+                              or "gst.gov.in" in d.current_url
+                )
+            except Exception:
+                try:
+                    driver.get("https://www.gst.gov.in")
+                    time.sleep(2)
+                except Exception:
+                    pass
+            cur = driver.current_url
+
+        # ── FAST PATH: tab already on correct dashboard ───────────────
+        if "return.gst.gov.in" in cur and "dashboard" in cur and not is_session_lost(driver):
+            log.info(f"    Tab {month_name}: already on dashboard — fast path ✓")
+        else:
+            # Tab not on dashboard yet — wait briefly (it may still be loading)
+            try:
+                WebDriverWait(driver, 8).until(
+                    lambda d: ("return.gst.gov.in" in d.current_url and "dashboard" in d.current_url)
+                    or "login" in d.current_url or "accessdenied" in d.current_url
+                )
+            except Exception: pass
+            cur = driver.current_url
+
+            # If still not on dashboard — check session and fall back to menu nav
+            if not ("return.gst.gov.in" in cur and "dashboard" in cur):
+                # Session lost?
+                if is_session_lost(driver):
+                    log.warning(f"    Tab {month_name}: session lost — recovering via main tab")
+                    try: driver.close()
+                    except Exception: pass
+                    driver.switch_to.window(main_window)
+                    result = safe_go_to_dashboard(driver, log)
+                    if not result:
+                        log.warning(f"    Could not recover session for {month_name}")
+                        return None
+                    handles_before = set(driver.window_handles)
+                    driver.execute_script("window.open(arguments[0]);",
+                        "https://return.gst.gov.in/returns/auth/dashboard")
+                    time.sleep(0.8)
+                    new_handles = set(driver.window_handles) - handles_before
+                    if not new_handles:
+                        return None
+                    active_tab = list(new_handles)[0]
+                    driver.switch_to.window(active_tab)
+                    try:
+                        WebDriverWait(driver, 15).until(
+                            lambda d: "dashboard" in d.current_url or "login" in d.current_url
+                        )
+                    except Exception: pass
+                else:
+                    # On services dashboard or wrong page — use go_to_returns_dashboard
+                    ok = go_to_returns_dashboard(driver, log)
+                    if not ok:
+                        log.warning(f"    Tab {month_name}: could not reach Returns Dashboard")
+                        return None
+
+        # Final check
+        if not ("return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url):
+            log.warning(f"    Tab {month_name}: still not on returns dashboard — skipping")
+            return None
+
+        # Select FY / Quarter / Period and search
+        select_and_search(driver, month_name, log)
+
+        # Wait for tiles to appear
+        try:
+            WebDriverWait(driver, 12).until(
+                lambda d: any(t in d.find_element(By.TAG_NAME, "body").text
+                              for t in ["GSTR-1","GSTR-2","GSTR-3","GSTR1","GSTR2","GSTR3"])
+            )
+        except Exception:
+            pass
+
+        # Scroll to render all tiles (GSTR-3B is below the fold)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(0.6)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(0.2)
+        log.info(f"    ✓ Tab ready: {month_name} (handle: {active_tab[-6:]})")
+        return active_tab
+
+    total        = len(MONTHS)
+    total_batches = -(-total // batch_size)
+    ok_count     = 0
+
+    log.info(f"\n  ══ {rtype} — TRUE MULTI-TAB Download ══")
+    log.info(f"  Method: Open tabs FROM return.gst.gov.in (cookies transfer)")
+    log.info(f"  Batches: {total_batches} × {batch_size} months = {total} months total")
+    log.info(f"  Retry: T1(0s) → T2(30s) → T3(60s) per failed month")
+
+    # First: ensure we are on the dashboard (menu nav for first time)
+    safe_go_to_dashboard(driver, log)
+    main_window = driver.current_window_handle
+
+    for batch_idx in range(0, total, batch_size):
+        batch      = MONTHS[batch_idx : batch_idx + batch_size]
+        batch_num  = batch_idx // batch_size + 1
+        log.info(f"\n  ── Batch {batch_num}/{total_batches}: {[m[0] for m in batch]} ──")
+
+        # Skip already-downloaded months
+        pending = []
+        for mt in batch:
+            month_name, month_num, year = mt
+            save_name = (f"{rtype}_{month_name}_{year}.pdf" if rtype == "GSTR3B"
+                         else f"{rtype}_{month_name}_{year}.xlsx")
+            if (client_path / save_name).exists():
+                log.info(f"    ✓ {month_name} already done — skip")
+                results[f"{month_name}_{year}_{rtype}"] = "OK"
+                ok_count += 1
+            else:
+                pending.append((month_name, month_num, year, save_name))
+
+        if not pending:
+            log.info(f"    All months in batch {batch_num} already done ✓")
+            continue
+
+        # ── Step 1: Open blank tabs — navigate via menu, NEVER direct URL ──
+        # window.open(return.gst.gov.in) causes Access Denied even when logged in.
+        # Open blank tabs; the simultaneous poll + _navigate_tab_to_month will
+        # drive each tab to Returns Dashboard via Services → Returns → Dashboard.
+        cur_url = driver.current_url
+        if "gst.gov.in" not in cur_url:
+            log.info(f"    Main tab not on GST portal ({cur_url[:60]}) — navigating...")
+            safe_go_to_dashboard(driver, log)
+        log.info(f"    Main tab: {driver.current_url[:70]}")
+        main_window = driver.current_window_handle  # refresh main_window ref
+
+        tab_map = {}
+        for month_name, month_num, year, save_name in pending:
+            try:
+                # Open BLANK tab — no URL argument avoids Access Denied
+                driver.execute_script("window.open('');")
+                time.sleep(0.2)
+                new_tab = driver.window_handles[-1]
+                tab_map[new_tab] = (month_name, month_num, year, save_name)
+                log.info(f"    Opened blank tab for {month_name}")
+                driver.switch_to.window(main_window)
+            except Exception as e:
+                log.warning(f"    Could not open tab for {month_name}: {e}")
+
+        log.info(f"    Opened {len(tab_map)} blank tabs for batch {batch_num}")
+
+        # ══════════════════════════════════════════════════════════════
+        # Step 2: Navigate ALL blank tabs to Returns Dashboard via menu
+        # Each tab starts on about:blank — navigate each to www.gst.gov.in
+        # then use Services → Returns → Returns Dashboard menu path.
+        # Done sequentially (each takes ~8-12s) but all run the same safe path.
+        # ══════════════════════════════════════════════════════════════
+        nav_ok    = {}
+        tab_remap = {}
+
+        log.info(f"    Navigating {len(tab_map)} blank tabs to Returns Dashboard via menu...")
+        for tab, (month_name, month_num, year, save_name) in list(tab_map.items()):
+            try:
+                driver.switch_to.window(tab)
+                time.sleep(0.2)
+                cur = driver.current_url
+
+                # Navigate blank tab to portal home first
+                if "gst.gov.in" not in cur:
+                    try:
+                        driver.get("https://www.gst.gov.in")
+                        WebDriverWait(driver, 12).until(
+                            lambda d: "gst.gov.in" in d.current_url)
+                        time.sleep(0.5)
+                    except Exception as _e:
+                        log.warning(f"    Tab {month_name}: portal home nav failed: {_e}")
+
+                # Check session on this tab
+                if is_session_lost(driver):
+                    log.warning(f"    Tab {month_name}: session lost — skip (will retry later)")
+                    nav_ok[tab] = "denied"
+                    continue
+
+                # Navigate via menu to Returns Dashboard
+                ok = go_to_returns_dashboard(driver, log)
+                if ok:
+                    nav_ok[tab] = "ready"
+                    log.info(f"    Tab {month_name}: on Returns Dashboard ✓")
+                else:
+                    log.warning(f"    Tab {month_name}: menu nav failed")
+                    nav_ok[tab] = "denied"
+            except Exception as _ex:
+                log.warning(f"    Tab {month_name}: nav error: {_ex}")
+                nav_ok[tab] = "failed"
+
+        driver.switch_to.window(main_window)
+        ready_count = sum(1 for v in nav_ok.values() if v == "ready")
+        needs_fix   = {t: v for t, v in nav_ok.items() if v in ("denied", "einvoice")}
+        still_loading_tabs = [t for t in tab_map if t not in nav_ok]
+        log.info(f"    Nav done — {ready_count} ready, {len(needs_fix)} need recovery,"
+                 f" {len(still_loading_tabs)} not reached")
+
+        # ── Handle e-Invoice tabs ──────────────────────────────────────
+        for tab, reason in needs_fix.items():
+            month_name = tab_map[tab][0]
+            try:
+                driver.switch_to.window(tab)
+                if reason == "einvoice":
+                    log.warning(f"    Tab {month_name}: e-Invoice redirect — fixing...")
+                    driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+                    try:
+                        WebDriverWait(driver, 8).until(
+                            lambda d: "services.gst.gov.in" in d.current_url
+                        )
+                    except Exception:
+                        pass
+                # For denied/einvoice: recover via main tab
+                log.warning(f"    Tab {month_name}: {reason} — recovering via main tab")
+                try: driver.close()
+                except Exception: pass
+                driver.switch_to.window(main_window)
+                result = go_to_returns_dashboard(driver, log)
+                if not result:
+                    log.warning(f"    Could not recover for {month_name}")
+                    tab_map.pop(tab, None)
+                    continue
+                handles_before = set(driver.window_handles)
+                # Open blank tab then navigate via menu — NOT direct URL
+                driver.execute_script("window.open('');")
+                time.sleep(0.5)
+                new_handles = set(driver.window_handles) - handles_before
+                if new_handles:
+                    new_tab = list(new_handles)[0]
+                    driver.switch_to.window(new_tab)
+                    try:
+                        driver.get("https://www.gst.gov.in")
+                        WebDriverWait(driver, 12).until(lambda d: "gst.gov.in" in d.current_url)
+                        time.sleep(0.5)
+                    except Exception: pass
+                    ok2 = go_to_returns_dashboard(driver, log)
+                    if ok2:
+                        tab_remap[tab] = new_tab
+                        tab_map[new_tab] = tab_map.pop(tab)
+                        nav_ok[new_tab] = "ready"
+                        nav_ok.pop(tab, None)
+                        log.info(f"    Tab remapped: {tab[-6:]} → {new_tab[-6:]} ({month_name})")
+                    else:
+                        try: driver.close()
+                        except Exception: pass
+                        tab_map.pop(tab, None)
+                    driver.switch_to.window(main_window)
+                else:
+                    tab_map.pop(tab, None)
+            except Exception as e:
+                log.warning(f"    Recovery error {month_name}: {e}")
+                tab_map.pop(tab, None)
+
+        # Handle tabs that were still loading at poll timeout
+        for tab in still_loading_tabs:
+            if tab not in tab_map:
+                continue
+            month_name = tab_map[tab][0]
+            try:
+                driver.switch_to.window(tab)
+                cur = driver.current_url
+                if "return.gst.gov.in" in cur and "dashboard" in cur:
+                    nav_ok[tab] = "ready"
+                    log.info(f"    Tab {month_name}: loaded just in time ✓")
+                else:
+                    # Tab did not reach dashboard in time — navigate via menu
+                    log.info(f"    Tab {month_name}: navigating via menu (fallback)...")
+                    try:
+                        cur_f = driver.current_url
+                        if "gst.gov.in" not in cur_f:
+                            driver.get("https://www.gst.gov.in")
+                            WebDriverWait(driver, 12).until(lambda d: "gst.gov.in" in d.current_url)
+                            time.sleep(0.5)
+                    except Exception: pass
+                    ok_f = go_to_returns_dashboard(driver, log)
+                    nav_ok[tab] = "ready" if ok_f else "failed"
+                    if not ok_f:
+                        log.warning(f"    Tab {month_name}: menu fallback failed")
+            except Exception as e:
+                nav_ok[tab] = "failed"
+                log.warning(f"    Late-load fallback failed {month_name}: {e}")
+
+        driver.switch_to.window(main_window)
+
+        # ── Step 2b: select_and_search on all ready tabs (fast JS) ────────
+        # Each tab is already on dashboard — just set 3 dropdowns + click Search
+        # This is pure JS (no page nav) so ~1s per tab = ~6s for all 6
+        log.info(f"    Setting month/FY/quarter on all ready tabs...")
+        for tab, (month_name, month_num, year, save_name) in list(tab_map.items()):
+            if nav_ok.get(tab) != "ready":
+                continue
+            try:
+                driver.switch_to.window(tab)
+                select_and_search(driver, month_name, log)
+                # Wait for tiles to appear (smart wait, up to 10s)
+                try:
+                    WebDriverWait(driver, 10).until(
+                        lambda d: any(t in d.find_element(By.TAG_NAME, "body").text
+                                      for t in ["GSTR-1","GSTR-2","GSTR-3"])
+                    )
+                except Exception:
+                    pass
+                # Full scroll so GSTR-3B tile is visible
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(0.4)
+                driver.execute_script("window.scrollTo(0, 0);")
+                log.info(f"    ✓ Tab ready: {month_name}")
+            except Exception as e:
+                nav_ok[tab] = "failed"
+                log.warning(f"    select_and_search failed {month_name}: {e}")
+
+        driver.switch_to.window(main_window)
+        ready = sum(1 for t in tab_map if nav_ok.get(t) == "ready")
+        log.info(f"    Setup done: {ready}/{len(tab_map)} tabs ready ✓")
+        log.info(f"    ▶ Clicking all {ready} DOWNLOAD buttons simultaneously...")
+
+        # ── Step 3: Click DOWNLOAD on ALL tabs quickly ──────────────────
+        # NOTE: snap_before is taken AFTER all tile clicks so we don't miss
+        # any file that starts downloading during navigation.
+        # For GSTR-3B: snap is taken just before PRINT clicks in Step 4b.
+        click_ok = {}
+        log.info(f"    Clicking DOWNLOAD on all {len(tab_map)} tabs simultaneously...")
+
+        for tab, (month_name, month_num, year, save_name) in tab_map.items():
+            if nav_ok.get(tab) != "ready":
+                click_ok[tab] = False
+                continue
+            try:
+                driver.switch_to.window(tab)
+                clicked = click_tile_download(driver, rtype, log)
+                click_ok[tab] = clicked
+                if clicked:
+                    log.info(f"    ✓ Clicked: {month_name}")
+                else:
+                    log.warning(f"    ✗ Tile not found: {month_name}")
+                time.sleep(0.3)
+            except Exception as e:
+                log.warning(f"    Click error {month_name}: {e}")
+                click_ok[tab] = False
+
+        # Take snap AFTER all tile clicks — before generate/print triggers
+        # For GSTR-2B: snap here (files appear after GENERATE EXCEL click)
+        # For GSTR-3B: snap taken just before PRINT clicks below
+        if rtype != "GSTR3B":
+            snap_before = _snap(extensions)
+
+        # ── Step 4a: For GSTR-2B click GENERATE EXCEL on all tabs ──────
+        if rtype == "GSTR2B":
+            log.info(f"    Clicking GENERATE EXCEL on all GSTR-2B tabs...")
+            for tab, (month_name, month_num, year, save_name) in tab_map.items():
+                if not click_ok.get(tab): continue
+                try:
+                    driver.switch_to.window(tab)
+                    time.sleep(0.5)
+                    try_click(driver, EXCEL_GEN_XP, timeout=8, log=log)
+                    log.info(f"    ✓ Generate Excel: {month_name}")
+                    time.sleep(0.3)
+                except Exception as e:
+                    log.warning(f"    Generate click failed {month_name}: {e}")
+
+        # ── Step 4b: GSTR-3B — simultaneous navigation poll + CDP capture ─
+        #
+        # OLD PROBLEM (two bugs combined):
+        #   1. window.print() trap — PRINT button opens native dialog; Selenium
+        #      can never interact with it → 0 PDFs downloaded.
+        #   2. Sequential per-tab wait — each tab waited up to 35 s one by one
+        #      (6 tabs × 35 s = 3.5 min blocked) even though ALL tabs were
+        #      navigating simultaneously in the background.
+        #
+        # NEW APPROACH:
+        #   a. Global navigation poll — check ALL tabs in a tight round-robin
+        #      loop.  Total wait = time for the SLOWEST tab (not the sum).
+        #   b. CDP Page.printToPDF — captures the rendered view page as PDF
+        #      bytes directly inside the driver session, no print dialog needed.
+        #   c. CDP capture is fast (~1-2 s per tab), so 6 captures ≈ 10 s total.
+        if rtype == "GSTR3B":
+            # ── GSTR-3B: CDP capture from ALL tabs simultaneously ────────
+            #
+            # WHY NO NAVIGATION POLL:
+            #   GSTR-3B DOWNLOAD opens a print-preview OVERLAY on the same
+            #   page — the tab URL stays as "dashboard" forever.
+            #   Old code polled for URL change → always got 0/6 → fell into
+            #   sequential one-by-one retry (defeating the whole point).
+            #
+            # NEW APPROACH: after all tile clicks, give ALL tabs a short
+            #   single wait (2s) to let the print overlay render, then CDP
+            #   capture each tab in sequence (~1-2s each = ~10s for 6 tabs).
+            #   All tabs were CLICKED simultaneously — the renders happen in
+            #   parallel during that 2s wait, so CDP captures are instant.
+            #
+            log.info(f"    Waiting 1s for print overlays to start rendering...")
+            time.sleep(1)   # brief initial settle — each tab polls individually below
+
+            # ── CDP capture from each tab (~1-2 s per tab) ───────────────
+            for tab, (month_name, month_num, year, save_name) in tab_map.items():
+                if not click_ok.get(tab):
+                    results[f"{month_name}_{year}_{rtype}"] = "TILE_FAIL"
+                    continue
+                try:
+                    driver.switch_to.window(tab)
+                    time.sleep(0.1)   # brief settle after tab switch
+
+                    # Smart wait: poll for GSTR-3B content to appear (up to 4s)
+                    # This handles slow portal connections without fixed sleep
+                    page_ready = False
+                    for _pw in range(8):
+                        try:
+                            src = driver.page_source or ""
+                            if ("GSTR" in src or "3B" in src) and len(src) > 2000:
+                                page_ready = True
+                                break
+                        except Exception: pass
+                        time.sleep(0.5)
+                    if not page_ready:
+                        log.warning(f"    {month_name}: print page not ready — retrying tile click")
+                        click_tile_download(driver, rtype, log)
+                        time.sleep(1.5)
+
+                    save_path = client_path / save_name
+                    ok = _pdf_via_cdp(driver, save_path, log)
+                    if ok and save_path.exists() and save_path.stat().st_size > 5000:
+                        results[f"{month_name}_{year}_{rtype}"] = "OK"
+                        ok_count += 1
+                    else:
+                        log.warning(f"    ⚠ CDP failed/empty for {month_name} — retrying")
+                        # One retry: ensure we're on the right tab state
+                        click_tile_download(driver, rtype, log)
+                        time.sleep(1.5)
+                        ok = _pdf_via_cdp(driver, save_path, log)
+                        if ok and save_path.exists() and save_path.stat().st_size > 5000:
+                            results[f"{month_name}_{year}_{rtype}"] = "OK"
+                            ok_count += 1
+                            log.info(f"    ✓ {month_name} saved on retry")
+                        else:
+                            results[f"{month_name}_{year}_{rtype}"] = "NOT_FOUND"
+                except Exception as exc:
+                    log.warning(f"    CDP error {month_name}: {exc}")
+                    results[f"{month_name}_{year}_{rtype}"] = "NOT_FOUND"
+
+            # Close tabs and advance to next batch
+            tabs_to_close = set(tab_map.keys()) | set(tab_remap.values())
+            for tab in list(tabs_to_close):
+                try:
+                    if tab == main_window: continue
+                    driver.switch_to.window(tab)
+                    driver.close()
+                except Exception:
+                    pass
+            driver.switch_to.window(main_window)
+            log.info(f"    Batch {batch_num} complete ✓")
+            time.sleep(0.5)
+            continue   # ← skip Steps 5-7 (GSTR-2B file-wait logic) below
+
+        # ── Step 5: Wait for ALL files simultaneously ───────────────────
+        clicked_count = sum(1 for v in click_ok.values() if v)
+        log.info(f"    ⏳ Waiting for {clicked_count} files simultaneously...")
+        wait_timeout = 120 if rtype == "GSTR3B" else 90
+        new_files = _wait_files(snap_before, clicked_count, timeout=wait_timeout)
+        log.info(f"    {len(new_files)} file(s) received")
+
+        # ── Step 6: Match files to months and save ──────────────────────
+        driver.switch_to.window(main_window)
+        sorted_files   = sorted(new_files, key=lambda f: f.stat().st_mtime)
+        clicked_months = [(tab, d) for tab, d in tab_map.items() if click_ok.get(tab)]
+        used_files     = set()
+
+        for tab, (month_name, month_num, year, save_name) in clicked_months:
+            key = f"{month_name}_{year}_{rtype}"
+            matched = None
+            # Strategy A: filename contains MMYYYY
+            for f in sorted_files:
+                if str(f) not in used_files and _fname_match(f, month_num, year):
+                    matched = f; break
+            # Strategy B: mtime order
+            if not matched:
+                for f in sorted_files:
+                    if str(f) not in used_files:
+                        matched = f; break
+
+            if matched:
+                used_files.add(str(matched))
+                dest = client_path / save_name
+                try:
+                    if str(matched) != str(dest):
+                        matched.rename(dest)
+                except Exception:
+                    try:
+                        import shutil
+                        shutil.copy2(str(matched), str(dest))
+                        try: matched.unlink()   # remove portal-named source
+                        except Exception: pass
+                    except Exception as ce:
+                        log.warning(f"    Copy error {month_name}: {ce}")
+                if dest.exists() and dest.stat().st_size > 50000:
+                    sz = dest.stat().st_size // 1024
+                    log.info(f"    ✅ Saved: {save_name} ({sz} KB)")
+                    results[key] = "OK"
+                    ok_count += 1
+                else:
+                    log.warning(f"    ⚠ File empty/missing: {save_name}")
+                    results[key] = "NOT_FOUND"
+            else:
+                log.warning(f"    ⚠ No file for {month_name}")
+                results[key] = "NOT_FOUND"
+
+        # Mark un-clicked as failed
+        for tab, (month_name, month_num, year, save_name) in tab_map.items():
+            if not click_ok.get(tab):
+                results[f"{month_name}_{year}_{rtype}"] = "TILE_FAIL"
+
+        # ── Step 7: Close batch tabs (including any remapped recovery tabs) ─
+        tabs_to_close = set(tab_map.keys()) | set(tab_remap.values())
+        for tab in list(tabs_to_close):
+            try:
+                if tab == main_window: continue  # never close main window
+                driver.switch_to.window(tab)
+                driver.close()
+            except Exception:
+                pass
+        driver.switch_to.window(main_window)
+        log.info(f"    Batch {batch_num} complete ✓")
+        time.sleep(0.5)
+
+    # ── Retry any failed months sequentially (T1→T2→T3) ─────────────────
+    for month_name, month_num, year in MONTHS:
+        key = f"{month_name}_{year}_{rtype}"
+        if results.get(key) == "OK":
+            continue
+        if key not in results:
+            continue
+        save_name = (f"{rtype}_{month_name}_{year}.pdf" if rtype == "GSTR3B"
+                     else f"{rtype}_{month_name}_{year}.xlsx")
+        if (client_path / save_name).exists():
+            results[key] = "OK"
+            ok_count += 1
+            continue
+        log.info(f"\n  Retry (sequential): {rtype} {month_name}")
+        for attempt, wait in enumerate([0, 30, 60], 1):
+            if wait > 0:
+                log.info(f"    [T{attempt}] Waiting {wait}s...")
+                time.sleep(wait)
+            try:
+                safe_go_to_dashboard(driver, log)
+                select_and_search(driver, month_name, log)
+                if click_tile_download(driver, rtype, log):
+                    if rtype == "GSTR2B":
+                        snap = _snap(extensions)
+                        # JS-first GENERATE EXCEL click (faster than XPath timeout)
+                        gen_done = False
+                        try:
+                            driver.execute_script("""
+                                var btns=document.querySelectorAll('button,a');
+                                for(var i=0;i<btns.length;i++){
+                                    var t=(btns[i].innerText||'').toUpperCase();
+                                    if(t.includes('GENERATE')&&t.includes('EXCEL')){
+                                        btns[i].click(); break;
+                                    }
+                                }
+                            """)
+                            gen_done = True
+                        except Exception: pass
+                        if not gen_done:
+                            try_click(driver, EXCEL_GEN_XP, timeout=5, log=log)
+                        got = _wait_files(snap, 1, timeout=90)
+                        if got:
+                            src  = got[0]
+                            dest = client_path / save_name
+                            try:
+                                if str(src) != str(dest): src.rename(dest)
+                            except Exception:
+                                try:
+                                    import shutil
+                                    shutil.copy2(str(src), str(dest))
+                                except Exception:
+                                    pass
+                            if dest.exists() and dest.stat().st_size > 50000:
+                                sz = dest.stat().st_size // 1024
+                                log.info(f"    [T{attempt}] ✅ Saved: {save_name} ({sz} KB)")
+                                results[key] = "OK"
+                                ok_count += 1
+                                break
+                    elif rtype == "GSTR3B":
+                        # GSTR-3B tile DOWNLOAD opens a print overlay on the same
+                        # page — URL stays on dashboard forever. No wait needed.
+                        # Wait just long enough for the overlay to render (~2s).
+                        time.sleep(2)
+                        save_path = client_path / save_name
+                        if _pdf_via_cdp(driver, save_path, log):
+                            if save_path.exists() and save_path.stat().st_size > 50000:
+                                sz = save_path.stat().st_size // 1024
+                                log.info(f"    [T{attempt}] ✅ Saved: {save_name} ({sz} KB)")
+                                results[key] = "OK"
+                                ok_count += 1
+                                break
+                        log.warning(f"    [T{attempt}] CDP capture empty/failed for {month_name}")
+                log.warning(f"    [T{attempt}] ✗ {rtype} {month_name}")
+            except Exception as e:
+                log.warning(f"    [T{attempt}] Error: {e}")
+                results[key] = f"ERR:{e}"
+
+    # ── Clean up leftover portal-named files (avoid duplicates) ──────────
+    # Portal saves as e.g. GSTR3B_33ABLFM7918H1ZZ_042025.pdf
+    # After renaming to GSTR3B_April_2025.pdf, original may still remain
+    try:
+        import re as _re
+        expected_names = set()
+        for mn, mm, yr in MONTHS:
+            expected_names.add(f"{rtype}_{mn}_{yr}.pdf")
+            expected_names.add(f"{rtype}_{mn}_{yr}.xlsx")
+        for f in list(client_path.iterdir()):
+            if f.suffix.lower() not in extensions: continue
+            if f.name in expected_names: continue
+            if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+            # Portal-named: contains GSTIN (15 alphanum) or MMYYYY pattern
+            if _re.search(r'_\d{6}(?:\s*\(\d+\))?\.', f.name):
+                log.info(f"    Removing portal-named duplicate: {f.name}")
+                try: f.unlink()
+                except Exception: pass
+    except Exception as _ce:
+        log.warning(f"    Cleanup error: {_ce}")
+
+    fail_count = sum(1 for v in results.values() if v != "OK")
+    log.info(f"\n  {rtype} complete: {ok_count} OK | {fail_count} failed")
+    return results
+
+
 def download_month(driver, month_name, month_num, year, client_dir, log):
     return {"GSTR1":"SKIPPED","GSTR2B":"SKIPPED","GSTR2A":"SKIPPED","GSTR3B":"SKIPPED"}
 
@@ -1159,110 +2604,90 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
     MONTHLY_RETURNS = {"GSTR1", "GSTR1A", "GSTR2B", "GSTR2A", "GSTR3B"}
     months_to_run = MONTHS if (returns_todo & MONTHLY_RETURNS) else []
 
-    for month_name, month_num, year in months_to_run:
-        key = f"{month_name}_{year}"
-        log.info(f"\n  -- Phase 1 [{month_name} {year}] --")
+    # ── GSTR-2B & GSTR-3B: SIMULTANEOUS MULTI-TAB DOWNLOAD ──────────────
+    # These are instant/direct downloads — run all 12 months simultaneously
+    # using the multi-tab approach (6 tabs per batch)
+    direct_types = [r for r in ("GSTR2B","GSTR3B") if r in returns_todo]
+    if direct_types:
+        for rtype in direct_types:
+            log.info(f"\n  ══ {rtype} — Simultaneous Multi-Tab Download (6 tabs/batch) ══")
+            log.info(f"     Opening 12 tabs in 2 batches of 6 — all months download simultaneously")
+            mt_results = multitab_direct_download(driver, client_dir, rtype, log, batch_size=6)
+            triggered.update(mt_results)
 
-        # -- GSTR-3B: PDF downloads directly on DOWNLOAD click --
-        if "GSTR3B" in returns_todo:
-            try:
-                safe_go_to_dashboard(driver, log)
-                select_and_search(driver, month_name, log)
-                save_name = f"GSTR3B_{month_name}_{year}.pdf"
-                if click_tile_download(driver, "GSTR3B", log):
-                    time.sleep(PAGE_WAIT + 3)
-                    if rename_latest(client_dir, save_name, [".pdf"], log):
-                        triggered[f"{key}_GSTR3B"] = "OK"
-                    else:
-                        triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
-                else:
-                    triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
-            except Exception as e:
-                log.warning(f"    GSTR3B trigger failed [{month_name}]: {e}")
-                triggered[f"{key}_GSTR3B"] = f"ERR:{e}"
+    # ── GSTR-1, GSTR-1A, GSTR-2A: Sequential generate trigger ───────────
+    generate_types = [r for r in ("GSTR1","GSTR1A","GSTR2A") if r in returns_todo]
+    if generate_types:
+        for month_name, month_num, year in months_to_run:
+            key = f"{month_name}_{year}"
+            log.info(f"\n  -- Phase 1 Generate [{month_name} {year}] --")
 
-        # -- GSTR-1: trigger JSON generate ------------------
-        if "GSTR1" in returns_todo:
-            try:
-                safe_go_to_dashboard(driver, log)
-                select_and_search(driver, month_name, log)
-                if click_tile_download(driver, "GSTR1", log):
-                    time.sleep(PAGE_WAIT)
-                    if click_generate_only(driver, log):
-                        triggered[f"{key}_GSTR1"] = "TRIGGERED"
+            # -- GSTR-1: trigger JSON generate ------------------
+            if "GSTR1" in returns_todo:
+                try:
+                    safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    if click_tile_download(driver, "GSTR1", log):
+                        time.sleep(0.5)
+                        if click_generate_only(driver, log):
+                            triggered[f"{key}_GSTR1"] = "TRIGGERED"
+                        else:
+                            triggered[f"{key}_GSTR1"] = "GEN_FAIL"
                     else:
-                        triggered[f"{key}_GSTR1"] = "GEN_FAIL"
-                else:
-                    triggered[f"{key}_GSTR1"] = "TILE_FAIL"
-            except Exception as e:
-                log.warning(f"    GSTR1 trigger failed [{month_name}]: {e}")
-                triggered[f"{key}_GSTR1"] = f"ERR:{e}"
+                        triggered[f"{key}_GSTR1"] = "TILE_FAIL"
+                except Exception as e:
+                    log.warning(f"    GSTR1 trigger failed [{month_name}]: {e}")
+                    triggered[f"{key}_GSTR1"] = f"ERR:{e}"
 
-        # -- GSTR-1A: trigger JSON generate -----------------
-        if "GSTR1A" in returns_todo:
-            try:
-                safe_go_to_dashboard(driver, log)
-                select_and_search(driver, month_name, log)
-                if click_tile_download(driver, "GSTR1A", log):
-                    time.sleep(PAGE_WAIT)
-                    if click_generate_only(driver, log):
-                        triggered[f"{key}_GSTR1A"] = "TRIGGERED"
+            # -- GSTR-1A: trigger JSON generate -----------------
+            if "GSTR1A" in returns_todo:
+                try:
+                    safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    if click_tile_download(driver, "GSTR1A", log):
+                        time.sleep(0.5)
+                        if click_generate_only(driver, log):
+                            triggered[f"{key}_GSTR1A"] = "TRIGGERED"
+                        else:
+                            triggered[f"{key}_GSTR1A"] = "GEN_FAIL"
                     else:
-                        triggered[f"{key}_GSTR1A"] = "GEN_FAIL"
-                else:
-                    triggered[f"{key}_GSTR1A"] = "TILE_NOT_FOUND"
-            except Exception as e:
-                log.warning(f"    GSTR1A trigger failed [{month_name}]: {e}")
-                triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
+                        triggered[f"{key}_GSTR1A"] = "TILE_NOT_FOUND"
+                except Exception as e:
+                    log.warning(f"    GSTR1A trigger failed [{month_name}]: {e}")
+                    triggered[f"{key}_GSTR1A"] = f"ERR:{e}"
 
-        # -- GSTR-2B: single-level download (same as GSTR-3B) ----------
-        # Click DOWNLOAD on tile → portal may:
-        #   (a) download file directly  → rename immediately, OR
-        #   (b) show generate page      → auto-click GENERATE → poll for link
-        # Either way, this is handled in ONE step with no manual phase-2 needed.
-        if "GSTR2B" in returns_todo:
-            try:
-                safe_go_to_dashboard(driver, log)
-                select_and_search(driver, month_name, log)
-                save_name = f"GSTR2B_{month_name}_{year}.xlsx"
-                if click_tile_download(driver, "GSTR2B", log):
-                    time.sleep(PAGE_WAIT + 3)
-                    # Case (a): file already downloaded directly
-                    if rename_latest(client_dir, save_name, [".xlsx", ".zip", ".json"], log):
-                        log.info(f"    GSTR-2B [{month_name}] — direct download ✓")
-                        triggered[f"{key}_GSTR2B"] = "OK"
+            # -- GSTR-2A: trigger Excel generate ----------------
+            if "GSTR2A" in returns_todo:
+                try:
+                    safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    if click_tile_download(driver, "GSTR2A", log):
+                        time.sleep(0.5)
+                        # JS-first GENERATE click
+                        gen_clicked = False
+                        try:
+                            driver.execute_script("""
+                                var btns=document.querySelectorAll('button,a');
+                                for(var i=0;i<btns.length;i++){
+                                    var t=(btns[i].innerText||'').toUpperCase();
+                                    if(t.includes('GENERATE')){btns[i].click();break;}
+                                }
+                            """)
+                            gen_clicked = True
+                        except Exception: pass
+                        if not gen_clicked:
+                            gen_clicked = try_click(driver, EXCEL_GENERATE_XPATHS, timeout=5, log=log)
+                        if gen_clicked:
+                            log.info("    GSTR-2A GENERATE clicked — moving on")
+                            triggered[f"{key}_GSTR2A"] = "TRIGGERED"
+                            time.sleep(0.3)
+                        else:
+                            triggered[f"{key}_GSTR2A"] = "GEN_FAIL"
                     else:
-                        # Case (b): landed on generate page — click GENERATE and wait
-                        log.info(f"    GSTR-2B [{month_name}] — no direct file, trying generate page...")
-                        ok = generate_then_download_immediate(
-                            driver, client_dir, save_name, log,
-                            gen_xpaths=EXCEL_GENERATE_XPATHS, max_wait=120)
-                        triggered[f"{key}_GSTR2B"] = "OK" if ok else "NOT_FOUND"
-                else:
-                    triggered[f"{key}_GSTR2B"] = "TILE_FAIL"
-            except Exception as e:
-                log.warning(f"    GSTR2B trigger failed [{month_name}]: {e}")
-                triggered[f"{key}_GSTR2B"] = f"ERR:{e}"
-
-        # -- GSTR-2A: trigger Excel generate ----------------
-        if "GSTR2A" in returns_todo:
-            try:
-                safe_go_to_dashboard(driver, log)
-                select_and_search(driver, month_name, log)
-                if click_tile_download(driver, "GSTR2A", log):
-                    time.sleep(PAGE_WAIT)
-                    clicked = try_click(driver, EXCEL_GENERATE_XPATHS, timeout=8, log=log)
-                    if clicked:
-                        log.info("    GSTR-2A GENERATE clicked — moving on")
-                        triggered[f"{key}_GSTR2A"] = "TRIGGERED"
-                        time.sleep(2)
-                    else:
-                        triggered[f"{key}_GSTR2A"] = "GEN_FAIL"
-                else:
-                    triggered[f"{key}_GSTR2A"] = "TILE_FAIL"
-            except Exception as e:
-                log.warning(f"    GSTR2A trigger failed [{month_name}]: {e}")
-                triggered[f"{key}_GSTR2A"] = f"ERR:{e}"
+                        triggered[f"{key}_GSTR2A"] = "TILE_FAIL"
+                except Exception as e:
+                    log.warning(f"    GSTR2A trigger failed [{month_name}]: {e}")
+                    triggered[f"{key}_GSTR2A"] = f"ERR:{e}"
 
 
     # ======================================================
@@ -1338,12 +2763,12 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                         EC.visibility_of_element_located((By.XPATH, xp)))
                     if returns_menu.is_displayed():
                         break
-                except: continue
+                except Exception: continue
 
             if returns_menu:
                 actions = ActionChains(driver)
                 actions.move_to_element(returns_menu).perform()
-                time.sleep(2)   # allow submenu to fully open (as per user's confirmed code)
+                time.sleep(1)   # allow submenu to open
                 log.info("    [TAX] Hovered Returns ✓  submenu should be open")
             else:
                 log.warning("    [TAX] Returns element not found — trying JS mouseenter")
@@ -1381,12 +2806,12 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                         EC.element_to_be_clickable((By.XPATH, xp)))
                     tax_el.click()
                     log.info(f"    [TAX] Clicked: {tax_el.text.strip()} ✓")
-                    time.sleep(PAGE_WAIT + 1)
+                    time.sleep(2)
                     log.info(f"    [TAX] URL: {driver.current_url}")
                     if "comparison" in driver.current_url.lower():
                         return True
                     break
-                except: continue
+                except Exception: continue
 
             # -- Scan all links as fallback --------------------
             for el in driver.find_elements(By.TAG_NAME, "a"):
@@ -1394,10 +2819,10 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                     if "tax liabilities" in el.text.lower() and el.is_displayed():
                         el.click()
                         log.info(f"    [TAX] Scan click: {el.text.strip()}")
-                        time.sleep(PAGE_WAIT + 1)
+                        time.sleep(2)
                         if "comparison" in driver.current_url.lower():
                             return True
-                except: continue
+                except Exception: continue
 
             # -- Retry once more -------------------------------
             log.info("    [TAX] Retry from Services...")
@@ -1406,7 +2831,7 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                     svc_el = WebDriverWait(driver, 6).until(
                         EC.element_to_be_clickable((By.XPATH, "//a[normalize-space(text())='Services']")))
                     svc_el.click()
-                    time.sleep(1.2)
+                    time.sleep(0.5)
                     for xp in ["//a[normalize-space(text())='Returns']",
                                "//li//a[normalize-space()='Returns']"]:
                         try:
@@ -1415,16 +2840,16 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                             ActionChains(driver).move_to_element(ret_el).perform()
                             time.sleep(2)
                             break
-                        except: continue
+                        except Exception: continue
                     for el in driver.find_elements(By.TAG_NAME, "a"):
                         try:
                             if "tax liabilities" in el.text.lower() and el.is_displayed():
                                 el.click()
                                 log.info(f"    [TAX] Retry click: {el.text.strip()}")
-                                time.sleep(PAGE_WAIT + 1)
+                                time.sleep(2)
                                 if "comparison" in driver.current_url.lower():
                                     return True
-                        except: continue
+                        except Exception: continue
                 except Exception as _re:
                     log.warning(f"    [TAX] Retry error: {_re}")
 
@@ -1433,7 +2858,7 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                 vis=[e.text.strip() for e in driver.find_elements(By.TAG_NAME,"a")
                      if e.is_displayed() and e.text.strip()]
                 log.warning(f"    [TAX] Visible links: {vis[:20]}")
-            except: pass
+            except Exception: pass
             return False
 
         def download_tax_fy(fy_label, file_suffix):
@@ -1464,7 +2889,7 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                             log.info(f"    FY selected: {opt.text} ✓")
                             fy_set = True; break
                     if fy_set: break
-                except: continue
+                except Exception: continue
 
             if not fy_set:
                 try:
@@ -1504,7 +2929,7 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                         if((b.innerText||b.value||'').toUpperCase().includes('SEARCH')){b.click();break;}
                     }
                 """)
-            time.sleep(PAGE_WAIT + 4)
+            time.sleep(4)
             log.info(f"    After SEARCH — URL: {driver.current_url}")
 
             # -- 3. Find and click DOWNLOAD button ------------
@@ -1531,7 +2956,7 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                 log.info(f"    ALL buttons: {all_btns}")
                 vis_btns = [b.text.strip() for b in driver.find_elements(By.TAG_NAME,"button") if b.is_displayed() and b.text.strip()]
                 log.info(f"    VISIBLE buttons: {vis_btns}")
-            except: pass
+            except Exception: pass
 
             # Try xpaths at current position (bottom)
             dl_clicked = try_click(driver, DOWNLOAD_XPATHS, timeout=5, log=log)
@@ -1587,7 +3012,7 @@ def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
                 return False
 
             log.info("    Download button clicked ✓ — waiting 15s for file...")
-            time.sleep(15)
+            time.sleep(3)
             save_name = f"TaxLiability_{file_suffix}{save_ext}"
             if rename_latest(client_dir, save_name, [".xlsx",".xls",".csv"], log):
                 log.info(f"    ✓ Saved: {save_name}"); return True
@@ -1689,58 +3114,84 @@ def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
                         href = el.get_attribute("href") or ""
                         if len(href) > 20:   # ignore empty / anchor-only hrefs
                             return el
-            except:
+            except Exception:
                 continue
         return None
 
     def click_generate_and_wait(gen_xpaths, save_name, max_wait=120):
         """
-        Click GENERATE, then poll every 5 s (with page refresh every 30 s)
-        until the download link appears. Returns True if link clicked.
+        Click GENERATE, then fast-poll every 0.5s for 30s (instant downloads),
+        then slower 3s poll for download link. Returns True if downloaded.
         """
-        # Click GENERATE
         gen_clicked = try_click(driver, gen_xpaths, timeout=10, log=log)
         if gen_clicked:
-            log.info(f"    GENERATE clicked — waiting for download link...")
+            log.info(f"    GENERATE clicked — fast-polling for download...")
         else:
-            log.warning(f"    GENERATE button not found on page: {driver.current_url}")
-            # Link might already be there from a previous run — check anyway
-        time.sleep(3)
+            log.warning(f"    GENERATE button not found — checking for link: {driver.current_url}")
 
-        elapsed = 0
-        refresh_every = 30
+        client_path = Path(client_dir)
 
-        while elapsed < max_wait:
-            link = find_download_link()
-            if link:
-                txt  = link.text.strip() or link.get_attribute("href","")[:60]
-                log.info(f"    Download link found: '{txt}'")
-                log.info(f"    Downloading: {save_name}")
-                driver.execute_script(
-                    "arguments[0].scrollIntoView({block:'center'});", link)
-                time.sleep(0.5)
-                driver.execute_script("arguments[0].click();", link)
-                time.sleep(10)   # let browser start download
-                rename_latest(client_dir, save_name, [".zip",".json",".xlsx"], log)
+        def _snap():
+            exts = {".xlsx", ".zip", ".json"}
+            return {str(f): f.stat().st_mtime for f in client_path.iterdir()
+                    if f.suffix.lower() in exts}
+
+        def _check_new(before):
+            for f in client_path.iterdir():
+                if f.suffix.lower() not in {".xlsx", ".zip", ".json"}: continue
+                if f.name.endswith((".crdownload", ".tmp")): continue
+                prev = before.get(str(f))
+                if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 5000:
+                    return f
+            return None
+
+        before = _snap()
+
+        # Fast poll 30s for instant download
+        deadline_fast = time.time() + 30
+        while time.time() < deadline_fast:
+            time.sleep(0.5)
+            new_f = _check_new(before)
+            if new_f:
+                log.info(f"    ⚡ Instant download: {new_f.name}")
+                time.sleep(0.8)
+                rename_latest(client_dir, save_name, [".zip", ".json", ".xlsx"], log)
                 return True
 
-            # Refresh every 30 s to check if portal finished
-            if elapsed > 0 and elapsed % refresh_every == 0:
-                log.info(f"    Link not found — refreshing page (attempt {elapsed//refresh_every})...")
+        # Slower poll: link-based
+        elapsed = 0
+        before2 = _snap()
+        while elapsed < max_wait:
+            new_f = _check_new(before2)
+            if new_f:
+                log.info(f"    📥 File arrived: {new_f.name}")
+                time.sleep(0.8)
+                rename_latest(client_dir, save_name, [".zip", ".json", ".xlsx"], log)
+                return True
+
+            link = find_download_link()
+            if link:
+                txt = link.text.strip() or link.get_attribute("href")[:60]
+                log.info(f"    Download link: '{txt}'")
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", link)
+                driver.execute_script("arguments[0].click();", link)
+                time.sleep(4)
+                rename_latest(client_dir, save_name, [".zip", ".json", ".xlsx"], log)
+                return True
+
+            if elapsed > 0 and elapsed % 30 == 0:
+                log.info(f"    Link not found — refreshing ({elapsed}s)...")
                 try:
                     driver.refresh()
-                    time.sleep(4)
-                    # If the refresh landed on a login/denied page, re-login before continuing
+                    time.sleep(2)
                     if is_session_lost(driver):
-                        log.warning("    Session lost during polling — re-logging in...")
+                        log.warning("    Session lost — re-logging in...")
                         if not relogin_if_needed(driver, log):
-                            log.error("    Re-login failed — aborting wait for this file")
                             return False
-                except:
-                    pass
+                except Exception: pass
             else:
-                time.sleep(5)
-            elapsed += 5
+                time.sleep(3)
+            elapsed += 3
 
         log.warning(f"    Download link not found for {save_name}")
         return False
@@ -1781,7 +3232,7 @@ def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
                     dl_results[tkey] = "TILE_FAIL"
                     continue
 
-                time.sleep(PAGE_WAIT)
+                time.sleep(0.5)  # was PAGE_WAIT=8
 
                 if click_generate_and_wait(gen_xp, save_name):
                     dl_results[tkey] = "OK"
@@ -2179,7 +3630,7 @@ def extract_3b_pdf(pdf_path):
             with open(str(pdf_path),"rb") as f2:
                 r2 = PyPDF2.PdfReader(f2)
                 text = "\n".join(p.extract_text() or "" for p in r2.pages)
-        except: pass
+        except Exception: pass
     except Exception: pass
     if not text:
         return result
@@ -2188,7 +3639,7 @@ def extract_3b_pdf(pdf_path):
         """Convert string to float, handling L0/I0 portal artifacts."""
         try:
             return float(re.sub(r"[^\d.\-]","",str(s).replace("L","").replace("I","").replace(",","")))
-        except: return 0.0
+        except Exception: return 0.0
 
     def nums_on_line(line):
         """Extract all decimal numbers from a single PDF line."""
@@ -2866,7 +4317,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                                      round(tv,2), round(ig,2), round(cg,2), round(sg,2),
                                      itc_avail))
                         itc["igst"]+=ig; itc["cgst"]+=cg; itc["sgst"]+=sg
-                    except: continue
+                    except Exception: continue
                 log.info(f"    GSTR2B {month_name}: {len(rows)} records, ITC ₹{sum(itc.values()):,.0f}")
                 return itc, rows
             except Exception as e:
@@ -2899,7 +4350,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                             itc["igst"]+=ig; itc["cgst"]+=cg; itc["sgst"]+=sg
                         log.info(f"    GSTR2B {month_name}: {len(rows)} records (fallback)")
                         return itc, rows
-                except: pass
+                except Exception: pass
 
         if not zp.exists():
             log.info(f"    GSTR2B {month_name}: no file (xlsx or zip)")
@@ -3135,7 +4586,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                                         and _n and _n.lower() not in ("nan","none","")):
                                     gstin_name_map[_g] = _n
                                     _cust_files_loaded += 1
-                    except: pass
+                    except Exception: pass
             except Exception as _ce:
                 log.warning(f"    Customer Excel [{_cf.name}] error: {_ce}")
     if _cust_files_loaded:
@@ -3155,8 +4606,8 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                             if (len(g_v)==15 and g_v[:2].isdigit() and
                                     n_v and n_v.lower() not in ('nan','none','')):
                                 gstin_name_map[g_v] = n_v
-                except: pass
-        except: pass
+                except Exception: pass
+        except Exception: pass
 
     # Scan GSTR-2A ZIPs
     for zpath in list(cdir_path.glob("GSTR2A_*.zip")) + list(cdir_path.glob("*_R2A*.zip")):
@@ -3173,8 +4624,8 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                         g2 = ent.get("ctin","").strip(); nm2 = ent.get("trdnm","").strip()
                         if len(g2)==15 and nm2 and nm2.lower() not in ("nan","none",""):
                             gstin_name_map[g2] = nm2
-                except: pass
-        except: pass
+                except Exception: pass
+        except Exception: pass
 
     # Scan direct GSTR-2A xlsx files
     for xlf in (list(cdir_path.glob("*_R2A*.xlsx")) + list(cdir_path.glob("GSTR2A_*.xlsx"))):
@@ -3192,7 +4643,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             with zipfile.ZipFile(zpath) as z3: z3.extractall(ed_nb)
             for xlf in list(ed_nb.glob("*.xlsx")):
                 _scan_xl_for_names(xlf)
-        except: pass
+        except Exception: pass
 
     log.info(f"    GSTIN→name map: {len(gstin_name_map)} entries (from GSTR-2A/2B)")
 
@@ -3212,7 +4663,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                     g2 = p2.get("ctin","").strip()
                     if g2 and g2 not in gstin_name_map:
                         unknown_gstins.add(g2)
-        except: pass
+        except Exception: pass
     log.info(f"    Unknown GSTINs needing API lookup: {len(unknown_gstins)}")
 
     if unknown_gstins:
@@ -3236,7 +4687,7 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                             if name and name.lower() not in ("null","none",""):
                                 gstin_name_map[gstin_q] = name
                                 looked_up += 1
-                    except:
+                    except Exception:
                         # Try alternate public endpoint
                         req2 = urllib.request.Request(
                             f"https://sheet.gstincheck.co.in/check/39592d0c-5c45-4f20-b7d7-7a0ee92b4e38/{gstin_q}",
@@ -3248,9 +4699,9 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
                                 if name2:
                                     gstin_name_map[gstin_q] = name2
                                     looked_up += 1
-                        except: pass
+                        except Exception: pass
                     _t3.sleep(0.2)  # polite delay between API calls
-                except: pass
+                except Exception: pass
             log.info(f"    API lookup complete: {looked_up} names fetched")
         except Exception as e:
             log.warning(f"    API lookup failed: {e}")
@@ -6186,6 +7637,10 @@ def process_client(client, base_dir, log, returns_todo=None):
     try:
         driver = make_driver(cdir)
 
+        # Pre-initialize so finally/except blocks never see UnboundLocalError
+        dl_results      = {}
+        _client_ok_count = 0   # renamed to avoid clash with multitab ok_count scope
+
         # Store credentials globally so relogin_if_needed can use them
         CURRENT_CLIENT = {
             "username": client["username"],
@@ -6248,14 +7703,17 @@ def process_client(client, base_dir, log, returns_todo=None):
                     time.sleep(2)
                     if rt == "GSTR3B":
                         save = f"GSTR3B_{month_name}_{year}.pdf"
+                        save_path = Path(cdir) / save
                         if click_tile_download(driver, "GSTR3B", log):
-                            time.sleep(PAGE_WAIT + 3)
-                            ok = rename_latest(cdir, save, [".pdf"], log)
-                            if ok: triggered[f"{key}_GSTR3B"] = "OK"
+                            # Wait for print page to render then capture via CDP
+                            time.sleep(2)
+                            ok = _pdf_via_cdp(driver, save_path, log)
+                            if ok and save_path.exists() and save_path.stat().st_size > 5000:
+                                triggered[f"{key}_GSTR3B"] = "OK"
                     elif rt in ("GSTR1","GSTR1A"):
                         save = f"{rt}_{month_name}_{year}.zip"
                         if click_tile_download(driver, rt, log):
-                            time.sleep(PAGE_WAIT)
+                            time.sleep(2)
                             click_generate_only(driver, log)
                             # Poll for download
                             ok = poll_and_download(driver, cdir, save, log, max_wait=180)
@@ -6268,7 +7726,7 @@ def process_client(client, base_dir, log, returns_todo=None):
                     elif rt == "GSTR2A":
                         save = f"GSTR2A_{month_name}_{year}.zip"
                         if click_tile_download(driver, "GSTR2A", log):
-                            time.sleep(PAGE_WAIT)
+                            time.sleep(2)
                             ok = poll_and_download(driver, cdir, save, log, max_wait=180)
                             if ok: dl_results[f"{key}_GSTR2A"] = "OK"
                 except Exception as _re:
@@ -6307,7 +7765,7 @@ def process_client(client, base_dir, log, returns_todo=None):
         CURRENT_CLIENT = {}
         if driver:
             try: driver.quit()
-            except: pass
+            except Exception: pass
         log.info(f"  Client done. Waiting {CLIENT_GAP}s...")
         time.sleep(CLIENT_GAP)
 
@@ -6378,7 +7836,7 @@ def run_offline_reconciliation(log=None):
         idx = input("\n  Enter number to select (ENTER = most recent [1]): ").strip()
         try:
             selected_run = run_folders[int(idx)-1] if idx else run_folders[0]
-        except:
+        except (ValueError, IndexError):
             selected_run = run_folders[0]
 
     print(f"\n  Selected: {selected_run}")
@@ -6421,7 +7879,7 @@ def run_offline_reconciliation(log=None):
                                 g = (data.get("gstin","") or
                                      data.get("data",{}).get("gstin","") or "")
                                 if g: return g
-            except: pass
+            except Exception: pass
         for xl in list(d.glob("*_R2A*.xlsx")) + list(d.glob("*_R2B*.xlsx")) + \
                   list(d.glob("GSTR2B_*.xlsx")) + list(d.glob("GSTR1_*.zip")):
             parts = xl.stem.split("_")
@@ -6641,7 +8099,7 @@ def retry_from_master_excel(log=None):
             try:
                 idx = int(ns)-1
                 if 0<=idx<len(failed_items): items_to_retry.append(failed_items[idx])
-            except: pass
+            except Exception: pass
 
     if not items_to_retry:
         print("  Nothing selected."); return
@@ -6718,7 +8176,7 @@ def retry_from_master_excel(log=None):
                         if click_tile_download(driver_r, rtype, log):
                             if rtype in ("GSTR3B", "GSTR2B"):
                                 # Both GSTR-3B and GSTR-2B: single-level direct download
-                                time.sleep(PAGE_WAIT + 3)
+                                time.sleep(2)
                                 ok = rename_latest(cdir_r, save, [suf], log)
                                 if not ok and rtype == "GSTR2B":
                                     # Fallback: portal showed generate page
@@ -6735,7 +8193,7 @@ def retry_from_master_excel(log=None):
                                         driver_r, cdir_r, save, log,
                                         gen_xpaths=_GEN_XP, max_wait=120)
                             else:
-                                time.sleep(PAGE_WAIT)
+                                time.sleep(2)
                                 ok = generate_then_download_immediate(
                                     driver_r, cdir_r, save, log, max_wait=120)
                             print(f"      {'✓' if ok else '✗'} {save}")
@@ -6749,7 +8207,7 @@ def retry_from_master_excel(log=None):
         finally:
             if driver_r:
                 try: driver_r.quit()
-                except: pass
+                except Exception: pass
             CURRENT_CLIENT = {}
 
     print("\n  Retry complete. Run option 11 (Offline Recon) to rebuild reconciliation.")
@@ -6764,45 +8222,75 @@ def ask_returns_menu():
     ALL = {"GSTR1", "GSTR1A", "GSTR2B", "GSTR2A", "GSTR3B"}
 
     OPTIONS = [
-        ("1",  "ALL returns (GSTR-1 + GSTR-1A + GSTR-2B + GSTR-2A + GSTR-3B + Tax Liability)",
+        # ── FULL SUITE ─────────────────────────────────────────────
+        ("1",  "FULL SUITE — GSTR-1 + GSTR-1A + GSTR-2B + GSTR-2A + GSTR-3B + Tax Liability"
+               "  [Phased: Generate 1&2A → Download 2B&3B → Collect 1&2A links]",
                 ALL | {"TAX_LIABILITY"}),
-        ("2",  "GSTR-1  only  (JSON download)",
-                {"GSTR1"}),
-        ("3",  "GSTR-1A only  (JSON download)",
-                {"GSTR1A"}),
-        ("4",  "GSTR-2B only  (Excel download)",
+
+        # ── FAST CASES (Direct download only — no generate wait) ───
+        ("15", "⚡ FAST — GSTR-2B + GSTR-3B only  (Direct download, no generate, ~10 min)",
+                {"GSTR2B", "GSTR3B"}),
+        ("4",  "⚡ FAST — GSTR-2B only  (Excel, direct download, ~5 min)",
                 {"GSTR2B"}),
-        ("5",  "GSTR-2A only  (Excel download)",
-                {"GSTR2A"}),
-        ("6",  "GSTR-3B only  (PDF download — immediate)",
+        ("6",  "⚡ FAST — GSTR-3B only  (PDF, direct download, ~5 min)",
                 {"GSTR3B"}),
+
+        # ── GENERATE-FIRST CASES ──────────────────────────────────
+        ("2",  "GSTR-1  only  (JSON — generate first, then download)",
+                {"GSTR1"}),
+        ("3",  "GSTR-1A only  (JSON — generate first, only if available)",
+                {"GSTR1A"}),
+        ("5",  "GSTR-2A only  (Excel — generate first, then download)",
+                {"GSTR2A"}),
+
+        # ── COMBO CASES ───────────────────────────────────────────
         ("7",  "GSTR-1 + GSTR-3B",
                 {"GSTR1", "GSTR3B"}),
         ("8",  "GSTR-2B + GSTR-2A  (both purchase returns)",
                 {"GSTR2B", "GSTR2A"}),
         ("9",  "GSTR-1 + GSTR-2B + GSTR-2A  (no 3B)",
                 {"GSTR1", "GSTR2B", "GSTR2A"}),
+        ("13", "GSTR-1 + GSTR-2B + GSTR-3B  (NO GSTR-2A)"
+               "  [Phased: Generate 1 → Download 2B&3B → Collect 1]",
+                {"GSTR1", "GSTR2B", "GSTR3B"}),
+        ("14", "GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B  (NO GSTR-2A, 1A if available)"
+               "  [Phased flow]",
+                {"GSTR1", "GSTR1A", "GSTR2B", "GSTR3B"}),
         ("10", "Tax Liability & ITC Comparison only  (downloads 2024-25 + 2023-24)",
                 {"TAX_LIABILITY"}),
-        ("13", "GSTR-1 + GSTR-2B + GSTR-3B  (NO GSTR-2A)",
-                {"GSTR1", "GSTR2B", "GSTR3B"}),
-        ("14", "GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B  (NO GSTR-2A, 1A if available)",
-                {"GSTR1", "GSTR1A", "GSTR2B", "GSTR3B"}),
+
+        # ── UTILITY OPTIONS ───────────────────────────────────────
         ("11", "OFFLINE — Make Reconciliation Excel from already-downloaded files (no browser)",
                 "OFFLINE_RECON"),
-        ("12", "RETRY FAILED — Read Master Report Excel and re-download failed months",
+        ("12", "RETRY FAILED — Read Master Report Excel and re-download failed months (T1/T2/T3)",
                 "RETRY_FROM_MASTER"),
         ("C",  "Custom — type return names manually",
                 None),
     ]
 
-    print("\n" + "="*60)
-    print("  SELECT WHAT TO DO")
-    print("="*60)
+    print("\n" + "="*70)
+    print("  GST PORTAL DOWNLOAD — SELECT CASE")
+    print("="*70)
+    print("  FAST CASES (No generate needed — direct download):")
     for num, label, _ in OPTIONS:
-        marker = "★ " if num in ("11","12") else "  "
-        print(f"  [{num}]{marker}{label}")
-    print("="*60)
+        if num in ("15","4","6"):
+            print(f"  [{num}]  {label}")
+    print()
+    print("  FULL / COMBO CASES (Phased: Generate → Direct → Collect):")
+    for num, label, _ in OPTIONS:
+        if num not in ("15","4","6","11","12","C","10"):
+            print(f"  [{num}]  {label}")
+    print()
+    print("  UTILITIES:")
+    for num, label, _ in OPTIONS:
+        if num in ("10","11","12","C"):
+            print(f"  [{num}]  {label}")
+    print("="*70)
+    print("  PHASED FLOW: Phase1=Generate(1,2A) → Phase2=Download(2B) →")
+    print("               Phase3=Download(3B) → Phase4=Collect links(1,2A)")
+    print("  RETRY LOGIC: T1 → wait 30s → T2 → wait 60s → T3 → report fail")
+    print("  SESSION TIP: Downloading 2B & 3B keeps session alive during generate wait")
+    print("="*70)
 
     while True:
         choice = input("  Enter choice: ").strip().upper()
@@ -6833,15 +8321,20 @@ def ask_returns_menu():
 # MAIN
 # ==========================================================
 def main():
-    print("\n" + "="*60)
-    print("  GST COMPLETE SUITE v10 — AY 2025-26 (FINAL)")
+    print("\n" + "="*70)
+    print("  GST COMPLETE SUITE v11 — AY 2025-26 (FINAL)")
     print("  Downloads: GSTR-1 (JSON) + GSTR-1A (JSON)")
     print("             GSTR-2B (Excel) + GSTR-2A (Excel)")
     print("             GSTR-3B (PDF) + Tax Liability & ITC")
-    print("  Option 11: Make Excel from already-downloaded files")
-    print("  Option 13: GSTR-1 + GSTR-2B + GSTR-3B  (No GSTR-2A)")
-    print("  Option 14: GSTR-1 + GSTR-1A + GSTR-2B + GSTR-3B  (No GSTR-2A)")
-    print("="*60)
+    print()
+    print("  NEW IN v11:")
+    print("  • Option 15 : ⚡ FAST — GSTR-2B + GSTR-3B only (~10 min, no generate)")
+    print("  • Phased DL : Generate 1&2A → Download 2B&3B → Collect 1&2A links")
+    print("  • Retry T1/T2/T3: 3 retries per failed download with backoff")
+    print("  • Not-Found handler: auto page reload on portal errors")
+    print("  • Keep-alive: session ping during generate wait (no logout!)")
+    print("  • Batch control: max 6 months per batch to avoid portal overload")
+    print("="*70)
 
     if MISSING:
         print(f"\n  Missing packages: pip install {' '.join(MISSING)}")
