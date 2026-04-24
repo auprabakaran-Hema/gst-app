@@ -1,5 +1,5 @@
 """
-GST Reconciliation Web App — v7 with Phased Auto Download
+GST Reconciliation Web App — v8 with Phased Auto Download
 ===================================================
 • Fully free — no license, no restrictions
 • Scripts (gst_suite_final.py, gstr1_extract.py) never exposed to users
@@ -10,6 +10,7 @@ GST Reconciliation Web App — v7 with Phased Auto Download
 • NEW v7: Session keep-alive (Phase 2+3 prevent 20-min logout)
 • NEW v7: Not Found page auto-reload handler
 • NEW v7: Batch control (6 months per batch, avoids portal overload)
+• NEW v8: quicklinks/returns nav — hover + JS + fowelcome fallback (no premature re-login)
 • NEW v7: Case selector with tab/time estimates for each option
 • Render.com ready — binds to $PORT
 """
@@ -4259,39 +4260,117 @@ def _auto_download(job_id, gstin, client_name,
             """
             When dropdown doesn't open (portal navigates to quicklinks instead),
             try alternate strategies to reach the Returns Dashboard.
+
+            IMPORTANT: quicklinks/returns is NOT a session loss — the user IS logged in.
+            The portal just lands here instead of opening the dropdown.
+            We must navigate FROM quicklinks TO Returns Dashboard without re-login.
+
+            Only return False if session is genuinely lost (login page visible).
             """
+            from selenium.webdriver.common.action_chains import ActionChains as _ACfb
             cur_fb = driver.current_url
 
-            # Strategy A: on quicklinks/returns page — find Returns Dashboard link there
+            def _wait_for_dashboard(timeout=15):
+                try:
+                    WebDriverWait(driver, timeout).until(
+                        lambda d: "return.gst.gov.in" in d.current_url
+                        and "dashboard" in d.current_url)
+                    return True
+                except Exception:
+                    time.sleep(2)
+                return "return.gst.gov.in" in driver.current_url                        and "dashboard" in driver.current_url
+
+            # ── Strategy A: on quicklinks/returns page ────────────────────
+            # Portal lands here when Services → Returns is clicked.
+            # This is NOT a session loss. The page has a Returns Dashboard card.
             if "quicklinks" in cur_fb.lower():
-                log("  On quicklinks page — scanning for Returns Dashboard link...")
+                log("  On quicklinks page (session alive) — finding Returns Dashboard...")
+
+                # Try 1: Static XPath + href patterns
                 for xp in [
                     "//a[contains(normalize-space(text()),'Returns Dashboard')]",
+                    "//button[contains(normalize-space(text()),'Returns Dashboard')]",
                     "//a[contains(@href,'return.gst.gov.in') and contains(@href,'dashboard')]",
-                    "//*[contains(translate(normalize-space(text()),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'RETURNS DASHBOARD')]",
+                    "//a[contains(@href,'/returns/auth/dashboard')]",
+                    "//*[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz',"
+                    "'ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'RETURNS DASHBOARD')]",
                 ]:
                     try:
-                        els = driver.find_elements(By.XPATH, xp)
-                        for el in els:
+                        for el in driver.find_elements(By.XPATH, xp):
                             if el.is_displayed():
                                 driver.execute_script(
                                     "arguments[0].scrollIntoView({block:'center'});", el)
                                 time.sleep(0.2)
                                 el.click()
-                                try:
-                                    WebDriverWait(driver, 15).until(
-                                        lambda d: "return.gst.gov.in" in d.current_url
-                                        and "dashboard" in d.current_url
-                                    )
-                                    return True
-                                except Exception:
-                                    time.sleep(3)
-                                if "return.gst.gov.in" in driver.current_url:
+                                log("  Returns Dashboard clicked (XPath) ✓")
+                                if _wait_for_dashboard():
                                     return True
                     except Exception:
                         pass
 
-            # Strategy B: JS scan entire page for Returns Dashboard link
+                # Try 2: Hover cards — some portal profiles need mouseover
+                try:
+                    cards = driver.find_elements(By.XPATH,
+                        "//div[contains(@class,'card')] | //li[contains(@class,'card')]"
+                        " | //div[contains(@class,'tile')] | //li[contains(@class,'tile')]")
+                    for card in cards:
+                        try:
+                            txt = (card.text or "").lower()
+                            if "returns" in txt and "dashboard" in txt:
+                                _ACfb(driver).move_to_element(card).perform()
+                                time.sleep(0.3)
+                                card.click()
+                                log("  Returns Dashboard card clicked (hover) ✓")
+                                if _wait_for_dashboard():
+                                    return True
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+                # Try 3: JS scan — any visible element pointing to returns dashboard
+                try:
+                    clicked = driver.execute_script("""
+                        var els = document.querySelectorAll('a,button,div,li');
+                        for (var i=0; i<els.length; i++) {
+                            var t = (els[i].innerText||'').toLowerCase();
+                            var h = (els[i].href||'');
+                            if ((t.includes('returns dashboard') ||
+                                 (h.includes('return.gst.gov.in') && h.includes('dashboard')))
+                                && els[i].offsetParent !== null) {
+                                els[i].scrollIntoView({block:'center'});
+                                els[i].click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    """)
+                    if clicked:
+                        log("  Returns Dashboard clicked via JS scan on quicklinks ✓")
+                        if _wait_for_dashboard():
+                            return True
+                except Exception:
+                    pass
+
+                # Try 4: Navigate to fowelcome then retry (session alive — just need reset)
+                log("  Returns Dashboard not found on quicklinks — going to fowelcome first")
+                try:
+                    driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+                    WebDriverWait(driver, 12).until(
+                        lambda d: "gst.gov.in" in d.current_url)
+                    time.sleep(1)
+                    # Fall through to Strategy B which will scan fowelcome
+                    cur_fb = driver.current_url
+                except Exception as _fe:
+                    log(f"  fowelcome nav error: {_fe}", "warn")
+
+                # After fowelcome nav — check if session actually lost
+                if _is_session_lost():
+                    log("  Session lost confirmed on quicklinks — re-login needed", "warn")
+                    return False
+                # Session alive — fall through to B/C below
+
+            # ── Strategy B: JS scan entire page for Returns Dashboard link ─
             try:
                 found = driver.execute_script("""
                     var links = document.querySelectorAll('a');
@@ -4309,26 +4388,17 @@ def _auto_download(job_id, gstin, client_name,
                 """)
                 if found:
                     log("  Returns Dashboard clicked via page scan ✓")
-                    try:
-                        WebDriverWait(driver, 15).until(
-                            lambda d: "return.gst.gov.in" in d.current_url
-                            and "dashboard" in d.current_url
-                        )
-                        return True
-                    except Exception:
-                        time.sleep(3)
-                    if "return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url:
+                    if _wait_for_dashboard():
                         return True
             except Exception:
                 pass
 
-            # Strategy C: go to fowelcome and scan again
+            # ── Strategy C: go to fowelcome and scan again ────────────────
             try:
                 log("  Going to fowelcome as anchor...")
                 driver.get("https://services.gst.gov.in/services/auth/fowelcome")
                 WebDriverWait(driver, 10).until(
-                    lambda d: "services.gst.gov.in" in d.current_url
-                )
+                    lambda d: "services.gst.gov.in" in d.current_url)
                 time.sleep(1)
                 found2 = driver.execute_script("""
                     var links=document.querySelectorAll('a');
@@ -4341,15 +4411,7 @@ def _auto_download(job_id, gstin, client_name,
                     return false;
                 """)
                 if found2:
-                    try:
-                        WebDriverWait(driver, 15).until(
-                            lambda d: "return.gst.gov.in" in d.current_url
-                            and "dashboard" in d.current_url
-                        )
-                        return True
-                    except Exception:
-                        time.sleep(3)
-                    if "return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url:
+                    if _wait_for_dashboard():
                         return True
             except Exception:
                 pass
@@ -4401,11 +4463,16 @@ def _auto_download(job_id, gstin, client_name,
                     if _fallback_nav():
                         log("  ✅ Returns Dashboard loaded (fallback) ✓", "ok")
                         return True
-                    # All fallbacks failed — re-login immediately, no further retries
-                    log("  All fallback strategies failed — triggering re-login immediately", "warn")
-                    _show_access_denied_overlay(gstin or username)
-                    _do_login()
-                    return "return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url
+                    # Fallbacks failed — only re-login if session actually lost
+                    if _is_session_lost():
+                        log("  Session lost — triggering re-login", "warn")
+                        _show_access_denied_overlay(gstin or username)
+                        _do_login()
+                        return "return.gst.gov.in" in driver.current_url                                and "dashboard" in driver.current_url
+                    # Session alive — continue retry loop
+                    log("  Fallback failed but session alive — retrying nav loop...", "warn")
+                    time.sleep(1)
+                    continue
                 # Try XPath fallbacks
                 _try_click([
                     "//a[normalize-space(text())='Returns']",
@@ -4461,16 +4528,22 @@ def _auto_download(job_id, gstin, client_name,
                 log("  ✅ Returns Dashboard loaded", "ok")
                 return True
 
-            # If still stuck on quicklinks — run fallbacks and re-login immediately
+            # If still stuck on quicklinks — run fallbacks
+            # Only re-login if session is genuinely lost (not just nav issue)
             if "quicklinks" in final.lower():
-                log("  Still on quicklinks after nav — running fallbacks", "warn")
+                log("  Still on quicklinks (session may be alive) — running fallbacks", "warn")
                 if _fallback_nav():
                     log("  ✅ Returns Dashboard loaded (fallback) ✓", "ok")
                     return True
-                log("  All strategies failed — triggering re-login", "warn")
-                _show_access_denied_overlay(gstin or username)
-                _do_login()
-                return "return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url
+                if _is_session_lost():
+                    log("  Session confirmed lost — triggering re-login", "warn")
+                    _show_access_denied_overlay(gstin or username)
+                    _do_login()
+                    return "return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url
+                # Session alive — let outer loop retry
+                log("  Fallback failed but session alive — retrying nav loop...", "warn")
+                time.sleep(1)
+                continue
 
         raise RuntimeError(f"Could not reach Returns Dashboard. Last URL: {driver.current_url}")
 
