@@ -261,11 +261,12 @@ def parse_tis_pdf(pdf_path, log=None):
                 nums = [_n(v) for v in vals if _n(v) > 0]
                 if nums:
                     amount_v = nums[-1]  # last positive = processed/accepted
-                # Source = the full row text if GSTIN info is there
+                # Source = description text from this row (generic — no hardcoded names)
                 for v in vals:
-                    if "KASIREDDY" in v or "BENPA" in v or "GSTIN" not in v.upper():
-                        if v and len(v) > 5 and v not in (gstin_v,):
-                            source_v = v[:60]; break
+                    is_gstin = bool(re.search(r"\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d]\b", v))
+                    is_num   = bool(re.match(r"^[\d,\.\-\s]+$", v))
+                    if not is_gstin and not is_num and v and len(v) > 5 and v != gstin_v:
+                        source_v = v[:60]; break
                 if amount_v > 0 and gstin_v:
                     result["gst_turnover_detail"].append({
                         "gstin": gstin_v, "source": source_v,
@@ -339,7 +340,7 @@ def parse_tis_pdf(pdf_path, log=None):
                 cv = _clean(cell)
                 pan_m = re.search(r"\b([A-Z]{5}\d{4}[A-Z])\b", cv)
                 if pan_m: result["header"]["pan"] = pan_m.group(1)
-                if "KASIREDDY" in cv or ("ARUN" in cv and "KUMAR" in cv):
+                if pan_m and not result["header"].get("name"):
                     result["header"]["name"] = cv[:80]
                 fy_m = re.search(r"(\d{4}-\d{2,4})", cv)
                 if fy_m and "financial" not in cv.lower():
@@ -348,7 +349,138 @@ def parse_tis_pdf(pdf_path, log=None):
                     fm = re.search(r"(\d{4}-\d{2,4})", cv)
                     if fm: result["header"]["fy"] = fm.group(1)
 
+    # ── TEXT-MODE FALLBACK (when table extraction found no categories OR no purchase details) ───
+    # Handles TIS PDFs that render as plain text rather than real tables.
+    # Three passes identical to build_gst_it_comparison.py's TIS parser.
+    if not result["categories"] or not result["gst_purchase_detail"]:
+        if not result["categories"]:
+            _log("TIS table extraction got 0 categories — trying text-mode parse")
+        else:
+            _log("TIS categories found but 0 purchase details — running text-mode for details")
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                full_text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+            lines = [l.strip() for l in full_text.split("\n") if l.strip()]
+
+            PAN_RE_TIS  = re.compile(r'\b([A-Z]{5}[0-9]{4}[A-Z])\b')
+            NUM_RE_TIS  = re.compile(r'([\d,]+(?:\.\d+)?)')
+            GSTIN_RE_TIS= re.compile(r'\b(\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d])\b')
+            SKIP_WORDS  = {"GSTIN","INFORMATION","CATEGORY","SR","NO","PROCESSED",
+                           "ACCEPTED","TAXPAYER","REPORTED","DERIVED"}
+
+            def _extract_nums(line):
+                nums = []
+                for n in NUM_RE_TIS.findall(line):
+                    try:
+                        v = float(n.replace(",",""))
+                        if v > 100:   # skip serial numbers
+                            nums.append(v)
+                    except: pass
+                return nums
+
+            # Pass 1: look for summary category lines (no "purchase from" needed)
+            in_gst_pur = False
+            for line in lines:
+                ll = line.lower()
+                # Header markers
+                if any(k in ll for k in ["gst purchases","gst purchase"]):
+                    in_gst_pur = True
+                    cat = CATEGORY_MAP.get("gst purchases")
+                    nums = _extract_nums(line)
+                    if cat and nums and cat not in result["categories"]:
+                        result["categories"][cat] = {
+                            "processed": nums[0],
+                            "accepted":  nums[-1],
+                        }
+                if any(k in ll for k in ["gst turnover"]):
+                    cat = CATEGORY_MAP.get("gst turnover")
+                    nums = _extract_nums(line)
+                    if cat and nums and cat not in result["categories"]:
+                        result["categories"][cat] = {
+                            "processed": nums[0],
+                            "accepted":  nums[-1],
+                        }
+                for k, mapped in CATEGORY_MAP.items():
+                    if k in ll and mapped not in result["categories"]:
+                        nums = _extract_nums(line)
+                        if nums:
+                            result["categories"][mapped] = {
+                                "processed": nums[0],
+                                "accepted":  nums[-1],
+                            }
+
+            # Pass 2: look for "purchase from" detail lines → gst_purchase_detail
+            for line in lines:
+                if "purchase from" not in line.lower(): continue
+                pan_m2 = PAN_RE_TIS.search(line)
+                if not pan_m2: continue
+                pan_v  = pan_m2.group(1)
+                after  = line[line.lower().index("purchase from"):]
+                nums   = _extract_nums(after)
+                if not nums: continue
+                before = line[:line.upper().find(pan_v)].strip()
+                name_c = re.sub(
+                    r'^\d+\s*(Other\s+)?Purchases?\s+reported\s+(under\s+GSTR-1\s+of\s+seller\s+)?',
+                    '', before, flags=re.IGNORECASE).strip()
+                result["gst_purchase_detail"].append({
+                    "supplier_name": name_c or pan_v,
+                    "pan": pan_v,
+                    "amount": nums[-1],
+                    "accepted": nums[-1],
+                })
+
+            # Pass 3: structured pattern  \d+ <name> (PAN) <nums>
+            STRUCT_RE = re.compile(
+                r'\d+\s+(.+?)\s+\(([A-Z]{5}[0-9]{4}[A-Z])\)\s+([\d,\.\s]+)',
+                re.IGNORECASE)
+            for line in lines:
+                m = STRUCT_RE.search(line)
+                if not m: continue
+                name_raw, pan_v2, nums_str = m.group(1), m.group(2), m.group(3)
+                nums = _extract_nums(nums_str)
+                if not nums: continue
+                name_c2 = re.sub(
+                    r'(Other\s+)?Purchases?\s+reported\s+(under\s+GSTR-1\s+of\s+seller\s+)?',
+                    '', name_raw, flags=re.IGNORECASE).strip()
+                # Only add if not already found in Pass 2
+                if not any(e["pan"] == pan_v2 for e in result["gst_purchase_detail"]):
+                    result["gst_purchase_detail"].append({
+                        "supplier_name": name_c2 or pan_v2,
+                        "pan": pan_v2,
+                        "amount": nums[-1],
+                        "accepted": nums[-1],
+                    })
+
+            # Also add gst_purchases category total from purchase details if still missing
+            if "gst_purchases" not in result["categories"] and result["gst_purchase_detail"]:
+                total = sum(e["accepted"] for e in result["gst_purchase_detail"])
+                result["categories"]["gst_purchases"] = {
+                    "processed": total, "accepted": total
+                }
+
+        except Exception as e:
+            _log(f"TIS text-mode fallback error: {e}")
+
+    # ── Derive gst_turnover total from detail rows if summary table returned 0 ────
+    # Happens when the TIS PDF table parser found the "GST Turnover" row but the
+    # numeric value was in a merged cell not extracted with it.
+    if result["gst_turnover_detail"]:
+        _dt = sum(d.get("accepted", 0) for d in result["gst_turnover_detail"])
+        _cat = result["categories"].get("gst_turnover", {})
+        if _cat.get("accepted", 0) == 0 and _dt > 0:
+            result["categories"]["gst_turnover"] = {"processed": _dt, "accepted": _dt}
+            _log(f"TIS gst_turnover derived from {len(result['gst_turnover_detail'])} "
+                 f"detail row(s) = ₹{_dt:,.2f}")
+
+    # ── Derive gst_purchases total from purchase detail if summary is 0 ─────────
+    if result["gst_purchase_detail"]:
+        _pt = sum(d.get("accepted", 0) for d in result["gst_purchase_detail"])
+        _catp = result["categories"].get("gst_purchases", {})
+        if _catp.get("accepted", 0) == 0 and _pt > 0:
+            result["categories"]["gst_purchases"] = {"processed": _pt, "accepted": _pt}
+
     _log(f"TIS: categories={list(result['categories'].keys())} "
+         f"gst_turnover={result['categories'].get('gst_turnover',{}).get('accepted',0):,.0f} "
          f"gst_turnover_detail={len(result['gst_turnover_detail'])} "
          f"purchases={len(result['gst_purchase_detail'])}")
     return result
@@ -420,8 +552,12 @@ def parse_ais_pdf(pdf_path, log=None):
     for line in all_text.split("\n")[:30]:
         m = re.search(r"\b([A-Z]{5}\d{4}[A-Z])\b", line)
         if m: result["header"]["pan"] = m.group(1)
-        if "KASIREDDY" in line or ("ARUN" in line and "KUMAR" in line):
-            result["header"]["name"] = line.strip()[:80]
+        # Generic name extraction: long line with PAN found nearby
+        if result["header"].get("pan") and len(line.strip()) > 8 and not result["header"].get("name"):
+            # Skip lines that are just URLs, page numbers, or short labels
+            stripped = line.strip()
+            if not re.match(r"^[\d\s\.\-/]+$", stripped) and "http" not in stripped.lower():
+                result["header"]["name"] = stripped[:80]
 
     # ── AIS mixed-format table parser ──────────────────────────────
     # AIS tables contain: info-code row, then sub-header row, then data rows
@@ -523,17 +659,29 @@ def parse_ais_pdf(pdf_path, log=None):
             if in_purchase_mode:
                 # Row: [sr_no, buyer_gstin, "SUPPLIER (GSTIN)", period, amount, status]
                 buyer_gstin=""; sup_name=""; sup_gstin=""; period_v=""; amount_v=0.0; status_v=""
+                gstins_in_row = []
                 for v in vals:
                     m=re.search(r"\b(\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d])\b",v)
-                    if m and not buyer_gstin: buyer_gstin=m.group(1)
+                    if m:
+                        gstins_in_row.append(m.group(1))
+                        if not buyer_gstin: buyer_gstin=m.group(1)
                     if re.match(r"[A-Z]{3}-\d{4}$",v): period_v=v
                     if v in ("Active","Inactive"): status_v=v
                     # Supplier name + GSTIN in same cell: "NAME (GSTIN)"
                     pm=re.search(r"^(.+?)\s*\((\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d])\)",v)
                     if pm: sup_name=pm.group(1).strip()[:50]; sup_gstin=pm.group(2)
+                # Fallback: if 2+ GSTINs on row and no parenthesis match, second is supplier
+                if not sup_gstin and len(gstins_in_row) >= 2:
+                    sup_gstin = gstins_in_row[1]
+                elif not sup_gstin and len(gstins_in_row) == 1:
+                    sup_gstin = gstins_in_row[0]   # only one GSTIN — treat as supplier
+
                 nums=[_n(v) for v in vals if _n(v)>0]
                 amount_v=nums[-1] if nums else 0.0
-                if buyer_gstin and period_v and amount_v>0:
+
+                # KEY FIX: only require period and amount — buyer_gstin is optional
+                # Previously required buyer_gstin which dropped many rows
+                if period_v and amount_v>0 and sup_gstin:
                     sup_pan=sup_gstin[2:12] if len(sup_gstin)>=12 else ""
                     result["gst_purchases_by_supplier"].append({
                         "buyer_gstin":buyer_gstin,"supplier_name":sup_name,
@@ -602,6 +750,118 @@ def parse_ais_pdf(pdf_path, log=None):
                     if m.get("status","") == "Active")
         result["summary"]["total_turnover"] = (
             result["summary"].get("total_turnover", 0) + total)
+
+    # ── TEXT-MODE FALLBACK for purchases (Issue 2 fix) ─────────────
+    # pdfplumber table extraction misses rows in large AIS PDFs.
+    # When table parse captured fewer purchase rows than the PDF
+    # actually contains, scan the raw text to recover the missing ones.
+    table_purchase_count = len(result["gst_purchases_by_supplier"])
+
+    GSTIN_RE_AIS = re.compile(r'\b(\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d])\b')
+    MON_RE_AIS   = re.compile(r'\b([A-Z]{3}-\d{4})\b')
+    NUM_RE_AIS   = re.compile(r'([\d,]+(?:\.\d+)?)')
+
+    def _ais_nums(line):
+        out = []
+        for n in NUM_RE_AIS.findall(line):
+            try:
+                v = float(n.replace(",",""))
+                if v > 100:
+                    out.append(v)
+            except: pass
+        return out
+
+    # Build a set of (supplier_gstin, period) already captured by table parser
+    # to avoid adding duplicates
+    seen_pairs = {(r["supplier_gstin"], r["period"])
+                  for r in result["gst_purchases_by_supplier"]}
+
+    in_pur_text = False
+    for line in all_text.split("\n"):
+        ll = line.strip()
+        if not ll: continue
+        # Detect section start
+        if re.search(r"EXC-GSTR1", ll, re.IGNORECASE):
+            in_pur_text = True
+            continue
+        # Detect section end (another EXC/SFT/TDS code that is NOT GSTR1)
+        if in_pur_text and re.search(r"\b(EXC-GSTR3B|SFT-|TDS-|TCS-)\b", ll):
+            in_pur_text = False
+            continue
+
+        if not in_pur_text:
+            continue
+
+        # Skip obvious header/footer lines
+        if any(k in ll.lower() for k in ["supplier name","return period",
+                                           "download id","generation date",
+                                           "pan name","gstin","sr no"]):
+            continue
+
+        # Parse: expect GSTIN(s) + period + amount on the line
+        gstins_on_line = GSTIN_RE_AIS.findall(ll)
+        mon_m          = MON_RE_AIS.search(ll)
+        nums           = _ais_nums(ll)
+
+        if not gstins_on_line or not mon_m or not nums:
+            continue
+
+        period_v = mon_m.group(1)
+        amount_v = nums[-1]
+
+        # Identify buyer vs supplier GSTIN:
+        # AIS format: "buyer_gstin  SUPPLIER NAME (supplier_gstin)  period  amount"
+        sup_gstin = ""
+        # Prefer GSTIN inside parentheses (supplier)
+        paren_m = re.search(r'\((\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d])\)', ll)
+        if paren_m:
+            sup_gstin    = paren_m.group(1)
+            buyer_gstin  = gstins_on_line[0] if gstins_on_line[0] != sup_gstin else ""
+        elif len(gstins_on_line) >= 2:
+            buyer_gstin  = gstins_on_line[0]
+            sup_gstin    = gstins_on_line[1]
+        elif len(gstins_on_line) == 1:
+            # Only one GSTIN — likely the buyer; sup_gstin unknown
+            buyer_gstin  = gstins_on_line[0]
+        else:
+            continue
+
+        if not sup_gstin:
+            continue
+
+        pair = (sup_gstin, period_v)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+
+        # Extract supplier name (text before supplier GSTIN, after buyer GSTIN)
+        sup_name = ""
+        name_m = re.search(r'\b' + re.escape(buyer_gstin) + r'\b(.+?)\(' if buyer_gstin else r'^(.+?)\(', ll)
+        if name_m:
+            raw = name_m.group(1).strip()
+            sup_name = re.sub(r'\s+', ' ', raw)[:50]
+
+        # Status: Active or Inactive (default Active)
+        status_v = "Active"
+        if "inactive" in ll.lower():
+            status_v = "Inactive"
+
+        sup_pan = sup_gstin[2:12] if len(sup_gstin) >= 12 else ""
+        result["gst_purchases_by_supplier"].append({
+            "buyer_gstin":    buyer_gstin,
+            "supplier_name":  sup_name,
+            "supplier_gstin": sup_gstin,
+            "supplier_pan":   sup_pan,
+            "period":         period_v,
+            "amount":         amount_v,
+            "status":         status_v,
+        })
+        if status_v == "Active":
+            result["summary"]["total_purchases"] += amount_v
+
+    text_added = len(result["gst_purchases_by_supplier"]) - table_purchase_count
+    if text_added > 0:
+        _log(f"AIS text-mode fallback recovered {text_added} additional purchase row(s)")
 
     _log(f"AIS: GSTINs={list(result['gst_turnover_monthly'].keys())} "
          f"purchases={len(result['gst_purchases_by_supplier'])} "
@@ -738,7 +998,15 @@ def parse_26as_pdf(pdf_path, log=None):
 # GST TURNOVER READER (from GST recon Excel)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _read_gst_turnover(job_dir, log=None):
+def _read_gst_turnover(job_dir, gst_folder=None, log=None):
+    """
+    Read GST turnover from Excel files in:
+      1. gst_folder (ANNUAL_RECONCILIATION lives here — highest priority)
+      2. gst_folder/GSTIN_subfolders (client GSTIN subfolder)
+      3. job_dir  (IT folder — fallback, usually empty of GST Excels)
+    KEY FIX: previously only searched job_dir (IT folder) which never has
+    ANNUAL_RECONCILIATION.xlsx. Now searches gst_folder first.
+    """
     def _log(m):
         if log: log(f"  {m}")
         else: print(f"  {m}")
@@ -761,41 +1029,137 @@ def _read_gst_turnover(job_dir, log=None):
         if "reconciliation" in n: return 2
         return 3
 
-    for xl in sorted([f for f in list(Path(job_dir).glob("*.xlsx"))+list(Path(job_dir).glob("*.xls")) if "IT_RECONCILIATION" not in f.name],
-                     key=_pri):
+    # Build prioritised search list: gst_folder first, then job_dir
+    search_dirs = []
+    if gst_folder:
+        gf = Path(gst_folder)
+        if gf.exists():
+            search_dirs.append(gf)
+            # Also search one level of subfolders (GSTIN-named client dirs)
+            for sub in sorted(gf.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True):
+                if sub.is_dir():
+                    search_dirs.append(sub)
+    search_dirs.append(Path(job_dir))
+
+    for search_dir in search_dirs:
         try:
-            xf=pd.ExcelFile(xl,engine="openpyxl")
-            PREF=["annual_summary","summary_report","summary","gstr1_sales"]
-            sheets=sorted(xf.sheet_names,
-                key=lambda s:next((i for i,p in enumerate(PREF) if p in s.lower()),99))
-            for sn in sheets:
-                try:
-                    df=xf.parse(sn,header=None,dtype=str)
-                    if df.empty or df.shape[1]<2: continue
-                    for _,row in df.iterrows():
-                        ca=_clean(str(row.iloc[0])).lower()
-                        if any(kw in ca for kw in ROW_LABELS):
-                            rn=[_n(v) for v in row.iloc[1:] if _n(v)>0]
-                            if rn:
-                                _log(f"GST Turnover ₹{rn[-1]:,.2f} from {xl.name}→{sn}")
-                                return rn[-1], f"{xl.name}→{sn}"
-                    for hi in range(min(15,len(df))):
-                        hdr=[_clean(str(v)).lower() for v in df.iloc[hi]]
-                        mcols=[i for i,h in enumerate(hdr) if any(k in h for k in COL_KWDS)]
-                        if mcols:
-                            data=df.iloc[hi+1:]
-                            for ci in mcols:
-                                cv=pd.to_numeric(data.iloc[:,ci],errors="coerce").dropna()
-                                cv=cv[cv>0]
-                                if len(cv)>0:
-                                    v=float(cv.sum())
-                                    _log(f"GST Turnover ₹{v:,.2f} col-scan {xl.name}→{sn}")
-                                    return v, f"{xl.name}→{sn}"
-                except: continue
+            candidates = [f for f in
+                          list(search_dir.glob("*.xlsx")) + list(search_dir.glob("*.xls"))
+                          if "IT_RECONCILIATION" not in f.name]
         except: continue
 
+        for xl in sorted(candidates, key=_pri):
+            try:
+                xf=pd.ExcelFile(xl,engine="openpyxl")
+                PREF=["annual_summary","summary_report","summary","gstr1_sales"]
+                sheets=sorted(xf.sheet_names,
+                    key=lambda s:next((i for i,p in enumerate(PREF) if p in s.lower()),99))
+                for sn in sheets:
+                    try:
+                        df=xf.parse(sn,header=None,dtype=str)
+                        if df.empty or df.shape[1]<2: continue
+                        for _,row in df.iterrows():
+                            ca=_clean(str(row.iloc[0])).lower()
+                            if any(kw in ca for kw in ROW_LABELS):
+                                rn=[_n(v) for v in row.iloc[1:] if _n(v)>0]
+                                if rn:
+                                    _log(f"GST Turnover ₹{rn[-1]:,.2f} from {xl.name}→{sn}")
+                                    return rn[-1], f"{xl.name}→{sn}"
+                        for hi in range(min(15,len(df))):
+                            hdr=[_clean(str(v)).lower() for v in df.iloc[hi]]
+                            mcols=[i for i,h in enumerate(hdr) if any(k in h for k in COL_KWDS)]
+                            if mcols:
+                                data=df.iloc[hi+1:]
+                                for ci in mcols:
+                                    cv=pd.to_numeric(data.iloc[:,ci],errors="coerce").dropna()
+                                    cv=cv[cv>0]
+                                    if len(cv)>0:
+                                        v=float(cv.sum())
+                                        _log(f"GST Turnover ₹{v:,.2f} col-scan {xl.name}→{sn}")
+                                        return v, f"{xl.name}→{sn}"
+                    except: continue
+            except: continue
+
     _log("GST turnover not found in Excel — enter manually or use --gst")
-    return 0.0,"Not found"
+    return 0.0, "Not found"
+
+
+def _read_gst_monthly_data(job_dir, log=None):
+    """
+    Gap 2 Fix: Reads GST Reconciliation Excel and returns month-wise data.
+    Returns: {gstin: {mon_key: {"r1_taxable":x, "r1a_amended":y, "r3b_filed":z}}}
+    """
+    import pandas as pd
+    from pathlib import Path
+
+    def _logf(m):
+        if log: log(f"  {m}")
+        else: print(f"  {m}")
+
+    FY_MON_ABBR = {
+        "APRIL":"APR","MAY":"MAY","JUNE":"JUN","JULY":"JUL","AUGUST":"AUG",
+        "SEPTEMBER":"SEP","OCTOBER":"OCT","NOVEMBER":"NOV","DECEMBER":"DEC",
+        "JANUARY":"JAN","FEBRUARY":"FEB","MARCH":"MAR",
+    }
+    GSTR1_KEYS  = ["total taxable","total r1","net taxable","grand total taxable",
+                   "gstr-1 taxable","r1 taxable","total sales taxable",
+                   "total from gstr-1 + gstr-1a","tot_r1_incl_1a"]
+    GSTR1A_KEYS = ["gstr-1a","1a amended","combined total","total gstr-1a"]
+    GSTR3B_KEYS = ["gstr-3b","3b total","3b taxable","outward supplies"]
+
+    result = {}
+
+    for xl in sorted(Path(job_dir).glob("*.xlsx"), key=lambda p: p.name):
+        if "IT_RECONCILIATION" in xl.name.upper():
+            continue
+        try:
+            xf = pd.ExcelFile(xl, engine="openpyxl")
+        except Exception:
+            continue
+
+        gstin_m = re.search(r"\b(\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d])\b",
+                             xl.name + " " + xl.parent.name)
+        gstin_k = gstin_m.group(1) if gstin_m else "UNKNOWN"
+
+        for sn in xf.sheet_names:
+            sn_up = sn.strip().upper()
+            mon_key = None
+            for full, abbr in FY_MON_ABBR.items():
+                if full in sn_up or sn_up.startswith(abbr):
+                    yr_m = re.search(r"(\d{4})", sn_up)
+                    yr = yr_m.group(1) if yr_m else "2025"
+                    mon_key = f"{abbr}-{yr}"; break
+            if not mon_key:
+                continue
+            try:
+                df = xf.parse(sn, header=None, dtype=str).fillna("")
+            except Exception:
+                continue
+
+            mdata = {"r1_taxable": 0.0, "r1a_amended": 0.0, "r3b_filed": 0.0}
+            for _, row in df.iterrows():
+                label = str(row.iloc[0]).lower().strip()
+                nums = []
+                for v in row.iloc[1:]:
+                    try:
+                        n = float(str(v).replace(",",""))
+                        if n > 0: nums.append(n)
+                    except: pass
+                if not nums: continue
+                if any(k in label for k in GSTR1_KEYS) and not mdata["r1_taxable"]:
+                    mdata["r1_taxable"] = nums[0]
+                if any(k in label for k in GSTR1A_KEYS) and not mdata["r1a_amended"]:
+                    mdata["r1a_amended"] = nums[0]
+                if any(k in label for k in GSTR3B_KEYS) and not mdata["r3b_filed"]:
+                    mdata["r3b_filed"] = nums[0]
+
+            if any(v > 0 for v in mdata.values()):
+                if gstin_k not in result:
+                    result[gstin_k] = {}
+                result[gstin_k][mon_key] = mdata
+                _logf(f"Monthly GST data: {gstin_k} {mon_key} R1=₹{mdata['r1_taxable']:,.0f}")
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -803,7 +1167,7 @@ def _read_gst_turnover(job_dir, log=None):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
-                             log=None, gst_turnover_override=None):
+                             log=None, gst_turnover_override=None, gst_folder=None):
     def _log(msg,t="info"):
         if log: log(msg,t)
         else: print(f"  {msg}")
@@ -813,11 +1177,22 @@ def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
 
     # ── Find PDFs ──────────────────────────────────────────────────
     pdf_26as=pdf_ais=pdf_tis=None
-    for p in job_dir.glob("*.pdf"):
+    # Sort: prefer AIS_* / TIS_* (renamed+unlocked by it_suite) over XXXPA* (original encrypted)
+    _pdfs_sorted = sorted(job_dir.glob("*.pdf"),
+                          key=lambda p: (0 if p.name.upper().startswith(("AIS_","TIS_","26AS_")) else 1,
+                                         p.name.lower()))
+    for p in _pdfs_sorted:
         nm=p.name.lower()
-        if any(k in nm for k in ["26as","form26","26_as","26-as","traces"]): pdf_26as=p
-        elif "tis" in nm: pdf_tis=p
-        elif "ais" in nm: pdf_ais=p
+        if any(k in nm for k in ["26as","form26","26_as","26-as","traces"]):
+            if not pdf_26as: pdf_26as=p
+        elif nm.startswith("tis_"):   # renamed/unlocked by it_suite — always prefer
+            pdf_tis=p
+        elif "tis" in nm:
+            if not pdf_tis: pdf_tis=p
+        elif nm.startswith("ais_"):   # renamed/unlocked by it_suite — always prefer
+            pdf_ais=p
+        elif "ais" in nm:
+            if not pdf_ais: pdf_ais=p
 
     # Fallback: assign by size (largest usually = AIS, medium = TIS, smallest = 26AS)
     all_pdfs=sorted(job_dir.glob("*.pdf"),key=lambda p:p.stat().st_size,reverse=True)
@@ -848,7 +1223,7 @@ def write_it_reconciliation(job_dir, company_name, pan, gstin, fy,
         gst_turnover = float(gst_turnover_override)
         gst_source = f"Manual: ₹{gst_turnover:,.2f}"
     else:
-        gst_turnover, gst_source = _read_gst_turnover(job_dir, log=log)
+        gst_turnover, gst_source = _read_gst_turnover(job_dir, gst_folder=gst_folder, log=log)
 
     # ── Derived totals ─────────────────────────────────────────────
     s26 = data_26as["summary"]
@@ -1642,11 +2017,18 @@ if __name__=="__main__":
     gstin =sys.argv[4] if len(sys.argv)>4 else "33AAAAA0000A1ZX"
     fy    =sys.argv[5] if len(sys.argv)>5 else "2024-25"
     gst_ov=None
+    gst_folder_arg=None
     if "--gst" in sys.argv:
         idx=sys.argv.index("--gst")
         if idx+1<len(sys.argv):
             try: gst_ov=float(sys.argv[idx+1].replace(",",""))
             except: pass
+    if "--gst-excel" in sys.argv:
+        idx=sys.argv.index("--gst-excel")
+        if idx+1<len(sys.argv):
+            gst_folder_arg=sys.argv[idx+1]
     print(f"\nIT Recon Engine v4 → {folder}\n")
-    out=write_it_reconciliation(folder,name,pan,gstin,fy,gst_turnover_override=gst_ov)
+    out=write_it_reconciliation(folder,name,pan,gstin,fy,
+                                gst_turnover_override=gst_ov,
+                                gst_folder=gst_folder_arg)
     print(f"Output: {out}")

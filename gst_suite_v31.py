@@ -1,0 +1,12740 @@
+"""
+FIXED in v32 — GSTR-2B value misplacement in Excel output corrected:
+  BUG 1 — read_gstr2b() used hardcoded old-format column indices (col8=Rate%,
+           col9=TaxableVal) for all files. New 2024+ portal format removes
+           Rate% column, shifting TaxableVal to col8, IGST→col9, CGST→col10,
+           SGST→col11, ITC→col15. This caused IGST value to land in Taxable
+           Value column and all subsequent values to be off by one position.
+           Fix: auto-detect format by scanning B2B header rows for "Rate" at
+           column index 8 (same logic as gstr2b_extractor_v2.py).
+  BUG 2 — GSTR-2B ITC sheet (Sheet 3) totrow used raw Python values for
+           SGST and Total Tax columns instead of SUM formulas, causing the
+           annual total row to show accumulated Python float instead of Excel
+           cell-formula result (inconsistent with IGST/CGST formula approach).
+           Fix: replaced round(ann3["sg"]) and manual total with _fsum("I")
+           and _fsum("J") consistent with other columns.
+  BUG 3 — Purchase_2B_Detail sheet totrow started SUM formulas from col H
+           (Rate %) instead of col I (Taxable Value ₹), placing totals one
+           column to the left and putting a spurious SUM in the Rate% cell.
+           Fix: shifted totrow to start sums from col I, blank H and M (ITC).
+
+FIXED in v31 — tot_r1, diff, tot_r1_incl_1a, diff_incl_1a tax columns now
+           correctly net CDN (credit/debit notes) from IGST/CGST/SGST:
+           grand_r1_ig = ig_r1 − cdn_cr_ig + cdn_dr_ig  (likewise cg, sg)
+           Previously tot_r1 showed raw B2B tax (ig_r1) — taxable was correct
+           (netted CDN) but tax columns were NOT netted → mismatch in totals.
+           Same bug propagated into diff, tot_r1_incl_1a, diff_incl_1a.
+  The PDF "Total Liability (Outward supplies other than Reverse charge)" line is
+  the authoritative portal net for GSTR-1A — it already accounts for all sections
+  (4A direct + 9A amendments + 9B CDNR) internally. Using it directly is correct.
+  Previously row 18 calculated B2B_1a - CDNR manually, which could give wrong
+  results when the CDNR extraction was imperfect or when 9A amendments coexist
+  with 4A direct supplies. Now:
+    Row 18 "Total from GSTR-1A Only"    → PDF Total Liability (primary)
+    Row 19 "Total GSTR-1 + GSTR-1A"    → GSTR-1 total + PDF Total Liability
+    Row "Difference (A-B)"              → 3B total - Row 19
+  Fallback to B2B - CDNR calculation retained for months with no PDF.
+
+FIXED in v29 — ALL GSTR-1A table headers extracted and shown as individual rows:
+  Previously the reconciliation sheet showed only 3 GSTR-1A rows:
+    Row 16: B2B Supplies via GSTR-1A
+    Row 17: 9B CDNR
+    Row 18: Total from GSTR-1A Only
+  Now ALL PDF table headers are shown as separate labelled rows:
+    4A  B2B Regular (direct supplies)
+    4B  B2B Reverse Charge
+    5   B2CL Large
+    6A  Exports (EXPWP/EXPWOP)
+    6B  SEZ (SEZWP/SEZWOP)
+    6C  Deemed Exports
+    7   B2CS Small
+    9A  B2B Regular Amended (Full corrected value)
+    9A  B2B RCM Amended
+    9A  B2CL Amended
+    9A  Exports Amended
+    9A  SEZ Amended
+    9A  DE Amended
+    9B  CDNR (Registered) — signed net
+    9B  CDNUR (Unregistered) — signed net
+    9C  CDNRA (Amended registered CDN, net differential)
+    Total Liability (portal authoritative net — cross-check)
+    Total from GSTR-1A Only (calculated)
+  Each row populated from p1a_* keys stored by extract_gstr1a_pdf.
+  Zero rows are still shown (for auditability — proves the section was read).
+
+GST COMPLETE SUITE v30 — AY 2025-26
+====================================
+FIXED in v28 — extract_gstr1a_pdf completely rewritten:
+  ALL PDF table headers now extracted per GST portal layout:
+    4A B2B Regular, 4B RCM, 5 B2CL, 6A Exports, 6B SEZ, 6C DE,
+    7 B2CS, 8 Nil/Exempt/NonGST,
+    9A B2B Amended, 9A RCM, 9A B2CL, 9A Exp, 9A SEZ, 9A DE,
+    9B CDNR (signed), 9B CDNUR, 9C CDNRA,
+    Total Liability (authoritative net)
+  b2b_tx = t9a_b2b_tx + t4a_b2b_tx  (9A amended B2B + 4A direct B2B)
+  cdn_cr = abs(t9b_cdnr_tx)          (9B CDNR net, absolute value)
+  PDF watermark artifacts fixed (FILED letters D/E/L/I/F embedded
+    inside numbers e.g. "1E,59,900" → 159900, "LInvoice" → Invoice)
+  Fallback: Table 12 HSN when both 4A and 9A zero
+  Intra-state CGST=SGST auto-correction retained
+
+FIXED in v27 — tot_r1_incl_1a formula corrected (ADD, not REPLACE):
+  BUG I — Row 19 "Total from GSTR-1 + GSTR-1A (B)" was showing 58,96,198
+           instead of the correct 96,27,444 for August.
+           Root Cause: The old formula subtracted original B2B from the GSTR-1
+           total before adding GSTR-1A net — effectively REPLACING B2B with
+           GSTR-1A. But the correct behaviour is to ADD the GSTR-1A net on TOP
+           of the full GSTR-1 total (all rows intact including original B2B).
+           Old formula: grand_r1_tx - b2b_tx + b2b_1a_tx - cdn_1a_cr  ← WRONG
+           New formula: grand_r1_tx + b2b_1a_tx - cdn_1a_cr            ← CORRECT
+           Fixed in: get_vals() and get_annual_vals() for both
+                     tot_r1_incl_1a and diff_incl_1a keys.
+           Verified: Aug GSTR-1 B2B 37,31,246 + B2CS 5,70,793 = 43,02,039
+                     + GSTR-1A net (60,00,000 − 1,03,802) = 58,96,198
+                     Grand total = 43,02,039 + 58,96,198 = 96,27,444 ✓  (matches GSTR-3B)
+
+FIXED in v26 — GSTR-1A row layout and Total calculation:
+  BUG G — Row 16 showed INCREMENT (GSTR-1A B2B minus original GSTR-1 B2B)
+           instead of the FULL GSTR-1A B2B amount. The user wants to see
+           the actual GSTR-1A declared value (e.g. ₹60L), not the diff.
+
+  BUG H — No separate GSTR-1A Sub-total row existed. The "Total from
+           GSTR-1 + GSTR-1A" row was incorrectly adding GSTR-1A on top
+           of GSTR-1 (including original B2B), causing double-counting.
+
+  New row layout (ROWS_R1):
+    Row 6  GSTR-1 B2B Supplies         — original GSTR-1 B2B (unchanged)
+    ...    other GSTR-1 rows           — B2CS, exports, nil, etc.
+    Row 16 B2B Supplies via GSTR-1A    — FULL GSTR-1A B2B amount (e.g. ₹60L)
+    Row 17 9B CDNR via GSTR-1A         — credit notes (negative)
+    Row 18 Total from GSTR-1A Only     — NEW: GSTR-1A net = B2B - CDNR (₹58.96L)
+    Row 19 Total from GSTR-1 + GSTR-1A — GSTR-1 (non-B2B) + GSTR-1A net
+                                          (GSTR-1A replaces original B2B)
+
+  Correct Total formula:
+    combined = grand_r1_tx - b2b_tx + b2b_1a_tx - cdn_1a_cr
+    (removes original B2B, adds GSTR-1A net instead)
+
+  Verified for August: 37,31,246 B2B + 5,70,793 B2CS - CDN = X
+    GSTR-1A replaces B2B: X - 37,31,246 + 58,96,198 = correct Total
+
+FIXED in v21 (GSTR-1A override — ALL four B2B fields from PDF):
+  BUG C — v20 override only replaced b2b_1a_tx from PDF but left
+           b2b_1a_ig / b2b_1a_cg / b2b_1a_sg taken from the JSON.
+           For pure-tax amendments the JSON camt/samt are DIFFERENTIAL
+           (amended−original), not the full corrected tax. The recon sheet
+           showed correct Taxable (after v20 fix) but wrong CGST/SGST.
+           Fix: override ALL four fields (tx/ig/cg/sg) from PDF in the
+           "BOTH zip AND pdf" branch, identical to the PDF-only branch.
+
+FIXED in v20 (GSTR-1A ZIP + PDF reconciliation):
+  BUG A — GSTR-1A JSON b2b txval = 0 for pure-tax amendments.
+           When a supplier filed GSTR-1A to correct only the tax rate (not the
+           invoice value), the JSON b2b/b2ba entries store txval=0 with only the
+           corrected camt/samt. The PDF summary however always shows the full
+           invoice taxable value. This caused b2b_1a_tx = 0 in the recon sheet
+           even though ₹60L/₹70L was clearly missing from the reconciliation.
+           Fix: After ZIP parse, if PDF also exists, override t["b2b_1a_tx"]
+           with PDF b2b_tx (the authoritative full taxable value).
+
+  BUG B — GSTR-1A JSON cdnr stores DIFFERENTIAL tax, not full tax.
+           The GSTR-1A JSON credit note entries store only the CHANGE in tax
+           (e.g. 2595.05 − 2590.00 = 5.05) while the PDF summary shows the
+           correct full amended tax (2595.05). This caused cdn_1a_sg = 5.05
+           (appears as −5.05 in the recon row) instead of the correct 2595.05.
+           Fix: After ZIP parse, override t["cdn_1a_*"] with PDF values when
+           PDF exists, since the PDF is always the authoritative final summary.
+
+FIXED in v19 (GSTR-1A extraction pipeline):
+  BUG 4 — CDNRA entries from GSTR-1 JSON (cdnra key) were being accumulated
+           into t["cdn_ig"/"cdn_cg"/"cdn_sg"] (GSTR-1 CDN totals) instead of
+           t["cdn_1a_ig"/"cdn_1a_cg"/"cdn_1a_sg"] (GSTR-1A amendment totals).
+           This caused CDNRA tax amounts to appear in the GSTR-1 CDNR row of
+           the reconciliation instead of the GSTR-1A amendment row.
+           Fix: route CDNRA ig/cg/sg into cdn_1a_* and cdn_amend_* accumulators.
+
+  BUG 5 — Net Liability line (Total Liability) was not being used as a
+           cross-check / fallback for CDNR values when the 9B section parse
+           returns zero (e.g. when the CDNR header contains a unicode en-dash
+           "–" vs ASCII hyphen "-" causing section detection to fail on some
+           portal PDF renders).
+           Fix: after parsing, if cdnr_done=False, fall back to computing
+           CDNR amounts from (B2B total − Net Liability total).
+
+  BUG 6 — The "LInvoice" artifact in pdfplumber output (portal renders
+           "Invoice" with an "L" prefix artefact on some Tamil Nadu PDFs)
+           was handled accidentally. Now explicitly normalised.
+
+FIXED in v18 (extract_gstr1a_pdf):
+  BUG 1 — Indian comma-formatted numbers (e.g. 1,03,802.00) were split
+           into wrong tokens by the old regex r"-?[\\.d,]+\\.?\\.d*".
+           Fix: strip digit-commas before extracting decimal numbers.
+  BUG 2 — CDNR IGST/CGST/SGST swapped for intra-state credit notes
+           (consequence of BUG 1 producing wrong column values).
+  BUG 3 — B2B Taxable Value showed 0 in recon Excel when IGST=0 (intra-state)
+           because the count token "1" or "2" before the taxable value was
+           being consumed as part of the number list.
+           Fix: use r"-?\\.d+\\.\\.d+" (decimals only) to extract financial columns,
+           guaranteeing the count integer is never included.
+====================================
+Based on ACTUAL portal screenshots + official GST documentation
+
+CONFIRMED PORTAL FLOW (from screenshots + docs):
+=================================================
+LOGIN:
+  www.gst.gov.in → Click LOGIN → username + password + CAPTCHA → Submit
+
+RETURNS DASHBOARD:
+  Services → Returns → Returns Dashboard
+  Select FY + Quarter + Period → SEARCH
+  Tiles appear:
+    GSTR-1  → Status: Filed → VIEW | DOWNLOAD → JSON only
+    GSTR-1A → PREPARE ONLINE (only if supplier amended their GSTR-1)
+    GSTR-2B → VIEW | DOWNLOAD → Excel (INSTANT — no wait, same as GSTR-3B)
+    GSTR-2A → VIEW | DOWNLOAD → JSON + EXCEL (generates in ~15-20 mins — wait required)
+    GSTR-3B → Status: Filed → VIEW GSTR3B | DOWNLOAD → PDF only
+
+DOWNLOAD TYPE CLASSIFICATION:
+  ⚡ DIRECT / INSTANT (No 20-min generate wait):
+      GSTR-2B → Click DOWNLOAD tile → Click GENERATE EXCEL → File ready INSTANTLY
+      GSTR-3B → Click DOWNLOAD tile → PDF downloads directly
+
+  ⏳ GENERATE-FIRST (15-20 min wait required — then download link appears):
+      GSTR-1  → Click DOWNLOAD tile → Click GENERATE JSON → Wait → Collect link
+      GSTR-1A → Click DOWNLOAD tile → Click GENERATE JSON → Wait → Collect link
+      GSTR-2A → Click DOWNLOAD tile → Click GENERATE EXCEL → Wait → Collect link
+
+PHASED DOWNLOAD FLOW (Optimised — all 12 months, one session, no logout):
+  Phase 1 → Trigger GENERATE for GSTR-1 + GSTR-2A (all 12 months) — click & move on
+  Phase 2 → Direct download GSTR-2B (all 12 months) — INSTANT, keeps session alive
+  Phase 3 → Direct download GSTR-3B (all 12 months) — INSTANT, keeps session alive
+  Phase 4 → Collect DOWNLOAD LINK for GSTR-1 + GSTR-2A (now ready after ~20 min)
+  Total   → ~20 minutes for all 12 months × all 4 returns = 48 files
+
+FAST CASES (No generate at all — GSTR-2B + GSTR-3B both instant):
+  Option 15 → GSTR-2B + GSTR-3B only → 24 tabs → ~10 min
+  Option 4  → GSTR-2B only           → 12 tabs → ~5  min
+  Option 6  → GSTR-3B only           → 12 tabs → ~5  min
+
+RETRY LOGIC — T1 / T2 / T3 (per month per return):
+  T1 → immediate attempt
+  T2 → wait 30s → retry
+  T3 → wait 60s → retry
+  All 3 fail → logged, move to next month
+
+SESSION SAFETY:
+  Portal timeout = 20 mins idle
+  Phase 2 + Phase 3 (instant downloads) keep session alive during generate wait
+  Not Found page → auto F5 reload up to 3 times
+  Batch size = max 6 months per batch (avoids portal Not Found overload)
+
+ALL RESULTS SAVED TO:
+  Downloads/GST_Automation/AY2025-26_YYYYMMDD_HHMM/ClientName/
+    GSTR1_April_2024.zip
+    GSTR2B_April_2024.xlsx
+    GSTR2A_April_2024.xlsx
+    GSTR3B_April_2024.pdf
+  MASTER_REPORT_YYYYMMDD_HHMM.xlsx  ← summary of all clients
+"""
+
+import os, sys, time, json, logging, zipfile, base64, re, shutil
+from datetime import datetime
+from pathlib import Path
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+
+
+MISSING = []
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait, Select
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.edge.service import Service as EdgeService
+    from selenium.webdriver.edge.options import Options as EdgeOptions
+    from selenium.webdriver.chrome.service import Service as ChromeService
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+except ImportError:
+    MISSING.append("selenium")
+
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+    CHROME_MGR = True
+except Exception:
+    CHROME_MGR = False
+
+try:
+    import pandas as pd
+except ImportError:
+    MISSING.append("pandas")
+
+try:
+    import openpyxl
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    MISSING.append("openpyxl")
+
+# -- Constants ----------------------------------------------
+PAGE_WAIT       = 4    # was 8  — halved; smart waits replace fixed sleeps
+SHORT_WAIT      = 1    # was 3
+ACTION_WAIT     = 1    # was 2
+CLIENT_GAP      = 5    # was 10
+FILE_GEN_WAIT   = 300  # was 600 — 5 min max per file (portal usually <90s)
+FILE_GEN_RETRY  = 10   # was 20
+FY_LABEL        = "2025-26"   # ← Change ONLY this line each new financial year
+
+def _build_months_for_fy(fy_label):
+    """Build 12-month list for any FY like 2024-25 or 2025-26. Auto-computes years."""
+    start_yr = int(fy_label.split("-")[0])
+    end_yr   = start_yr + 1
+    return [
+        ("April",     "04", str(start_yr)), ("May",       "05", str(start_yr)),
+        ("June",      "06", str(start_yr)), ("July",      "07", str(start_yr)),
+        ("August",    "08", str(start_yr)), ("September", "09", str(start_yr)),
+        ("October",   "10", str(start_yr)), ("November",  "11", str(start_yr)),
+        ("December",  "12", str(start_yr)), ("January",   "01", str(end_yr)),
+        ("February",  "02", str(end_yr)),   ("March",     "03", str(end_yr)),
+    ]
+
+MONTHS = _build_months_for_fy(FY_LABEL)
+
+QUARTER_MAP = {
+    "April":"Quarter 1 (Apr - Jun)", "May":"Quarter 1 (Apr - Jun)",   "June":"Quarter 1 (Apr - Jun)",
+    "July":"Quarter 2 (Jul - Sep)",  "August":"Quarter 2 (Jul - Sep)","September":"Quarter 2 (Jul - Sep)",
+    "October":"Quarter 3 (Oct - Dec)","November":"Quarter 3 (Oct - Dec)","December":"Quarter 3 (Oct - Dec)",
+    "January":"Quarter 4 (Jan - Mar)","February":"Quarter 4 (Jan - Mar)","March":"Quarter 4 (Jan - Mar)",
+}
+
+# Excel styling
+DARK_BLUE="1F3864"; MED_BLUE="2E75B6"
+GREEN_BG="C6EFCE";  GREEN_FG="276221"
+RED_BG="FFC7CE";    RED_FG="9C0006"
+YELLOW_BG="FFEB9C"; YELLOW_FG="9C6500"
+GREY_BG="F2F2F2";   WHITE="FFFFFF"
+
+def fill(h): return PatternFill("solid", fgColor=h)
+def fnt(b=False,c="000000",s=10): return Font(name="Arial",bold=b,color=c,size=s)
+def bdr(): s=Side(style="thin"); return Border(left=s,right=s,top=s,bottom=s)
+def aln(h="center",wrap=True): return Alignment(horizontal=h,vertical="center",wrap_text=wrap)
+def sc(cell,bold=False,fg="000000",bg=None,size=10,h="center"):
+    cell.font=fnt(bold,fg,size)
+    if bg: cell.fill=fill(bg)
+    cell.alignment=aln(h=h); cell.border=bdr()
+
+def clean_str(s):
+    if s is None or str(s).strip() in ["nan","None",""]: return ""
+    return str(s).strip()
+
+def clean_num(s):
+    try: return float(str(s).replace(",","").replace("₹","").strip())
+    except Exception: return 0.0
+
+def get_latest_file(folder, extensions, name_prefix=None):
+    """Return most recently modified file with given extensions.
+    name_prefix: if set, only files whose name starts with this prefix.
+    """
+    files = []
+    for ext in extensions:
+        files.extend(Path(folder).glob(f"*{ext}"))
+    if name_prefix:
+        files = [f for f in files if f.name.lower().startswith(name_prefix.lower())]
+    if not files: return None
+    return max(files, key=lambda f: f.stat().st_mtime)
+
+
+def rename_latest(folder, new_name, extensions, log, name_prefix=None):
+    """Rename the latest matching file to new_name.
+    name_prefix: restrict candidates to files starting with this string.
+    """
+    try:
+        f = get_latest_file(folder, extensions, name_prefix=name_prefix)
+        if f:
+            dest = Path(folder)/new_name
+            if not dest.exists():
+                f.rename(dest)
+                if log: log.info(f"      Saved: {new_name}")
+            return True
+    except Exception as e:
+        if log: log.warning(f"      Rename failed: {e}")
+    return False
+
+
+def purge_month_artifacts(client_path, month_name, year, log):
+    """
+    Delete ALL portal-named ZIPs and stale _ex folders for a given month
+    from client_path AND the user's Downloads folder.
+
+    Call this IMMEDIATELY BEFORE taking the pre-download snap for each month.
+
+    WHY:
+    ────
+    The GST portal names every GSTR-1 ZIP identically:
+        returns_DDMMYYYY_R1_GSTIN_offline_others_0.zip
+    where DDMMYYYY is today's DATE — not the return period.
+
+    So April, May, June ... all produce the EXACT same filename in the
+    same session.  When Month N+1 downloads:
+      • Chrome writes the new ZIP to client_path (or Downloads)
+      • If Month N's portal zip was NOT deleted after rename, it sits
+        in the folder with the same name but old data
+      • OS may overwrite it silently (same filename) → mtime unchanged
+        → _wait_file misses it → NOT_FOUND, or worse picks stale data
+      • _ex folder from Month N still has Month N's JSON inside
+        → extract_json_to_excel reads Month N data for Month N+1
+
+    By deleting:
+      1. All portal-named ZIPs (returns_*_R1_*_offline_others_0.zip)
+         from both client_path AND Downloads before each month
+      2. The _ex extraction folder for this specific month
+    we guarantee a clean slate for every download.
+    """
+    import shutil as _sh
+    import os as _os
+    from pathlib import Path as _P
+
+    deleted = []
+    client_path = _P(client_path)
+
+    import re as _re_purge
+    # ★ STRICT pattern — ONLY the exact filename the GST portal produces.
+    # returns_DDMMYYYY_R1_GSTIN_offline_others_N.zip
+    # This ensures we NEVER delete GSTR7_NIL_Automation.zip or any other
+    # zip from other scripts/projects that may be in the same folder.
+    _PORTAL_PURGE = _re_purge.compile(
+        r"^returns_\d{8}_R\d_[A-Z0-9]+_offline_others_\d+\.zip$",
+        _re_purge.IGNORECASE
+    )
+
+    # ── 1. Delete portal-named ZIPs from client_path ──────────────────
+    for f in list(client_path.iterdir()):
+        try:
+            if f.suffix.lower() != ".zip": continue
+            if _PORTAL_PURGE.match(f.name):
+                f.unlink()
+                deleted.append(f"client/{f.name}")
+        except Exception: pass
+
+    # ── 2. Delete portal-named ZIPs from Downloads ────────────────────
+    try:
+        dl = _P(_find_output_base())
+        if dl.exists():
+            for f in list(dl.iterdir()):
+                try:
+                    if f.suffix.lower() != ".zip": continue
+                    if _PORTAL_PURGE.match(f.name):
+                        f.unlink()
+                        deleted.append(f"Downloads/{f.name}")
+                except Exception: pass
+    except Exception: pass
+
+    # ── 3. Delete stale _ex extraction folder for THIS month ─────────
+    ex_pattern = f"GSTR1_{month_name}_{year}_ex*"
+    for ex_dir in list(client_path.glob(ex_pattern)):
+        try:
+            _sh.rmtree(str(ex_dir))
+            deleted.append(f"folder/{ex_dir.name}")
+        except Exception as e:
+            log.warning(f"    Could not delete {ex_dir.name}: {e}")
+
+    # ── 4. Also delete stale GSTR1_Month_Year.zip if it fails fp check ──
+    # (handled separately in phase2 via verify_gstr1_zip)
+
+    if deleted:
+        log.info(f"    [purge] Cleared {len(deleted)} stale artifact(s) before {month_name}: "
+                 f"{deleted[:4]}")
+    return deleted
+
+
+# ==========================================================
+# LOGGER
+# ==========================================================
+def setup_logger(log_dir):
+    log_path = os.path.join(log_dir, f"run_log_{datetime.now().strftime('%Y%m%d_%H%M')}.txt")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-8s | %(message)s",
+        handlers=[
+            logging.FileHandler(log_path, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout),
+        ]
+    )
+    return logging.getLogger("gst_v5")
+
+
+# ==========================================================
+# FIND EDGE DRIVER
+# ==========================================================
+def find_edge_driver():
+    import shutil
+    p = shutil.which("msedgedriver")
+    if p: return p
+    for path in [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "msedgedriver.exe"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "msedgedriver.EXE"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedgedriver.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedgedriver.exe",
+    ]:
+        if os.path.exists(path): return path
+    return None
+
+
+# ==========================================================
+# BROWSER SETUP
+# ==========================================================
+def make_driver(download_dir):
+    dl_dir = str(download_dir)
+    edge_path = find_edge_driver()
+    if edge_path:
+        try:
+            opts = EdgeOptions()
+            opts.add_experimental_option("prefs", {
+                "download.default_directory":       dl_dir,
+                "download.prompt_for_download":     False,
+                "download.directory_upgrade":       True,
+                "safebrowsing.enabled":             True,
+                "credentials_enable_service":       False,
+                "profile.password_manager_enabled": False,
+                # Force PDFs to download as files instead of opening in browser viewer
+                # Without this GSTR-3B PDFs open in Edge/Chrome and never land on disk
+                "plugins.always_open_pdf_externally":  True,
+                "download.open_pdf_in_system_reader":  False,
+                # ── KEY FIX: pre-authorise "Download multiple files" ──
+                "profile.default_content_setting_values.automatic_downloads": 1,
+            })
+            opts.add_argument("--start-maximized")
+            opts.add_argument("--disable-blink-features=AutomationControlled")
+            opts.add_argument("--disable-save-password-bubble")
+            opts.add_argument("--disable-features=msEdgeEnhancedSecurityMode")
+            # 'eager' stops waiting for images/analytics — cuts 2-5s per page load
+            opts.page_load_strategy = "eager"
+            opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
+            opts.add_experimental_option("useAutomationExtension", False)
+            opts.add_argument(
+                "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/146.0.0.0 Safari/537.36 Edg/146.0.3856.78"
+            )
+            driver = webdriver.Edge(service=EdgeService(edge_path), options=opts)
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+            })
+            # Belt-and-braces: CDP also allows multiple file downloads at browser level
+            try:
+                driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                    "behavior": "allow",
+                    "downloadPath": dl_dir
+                })
+            except Exception:
+                pass
+            print("  Browser: Microsoft Edge ✓")
+            return driver
+        except Exception as e:
+            print(f"  Edge failed: {e} — trying Chrome...")
+
+    try:
+        opts = ChromeOptions()
+        opts.add_experimental_option("prefs", {
+            "download.default_directory":       dl_dir,
+            "download.prompt_for_download":     False,
+            "download.directory_upgrade":       True,
+            "credentials_enable_service":       False,
+            "profile.password_manager_enabled": False,
+            # Force PDFs to download as files instead of opening in browser viewer
+            # Without this GSTR-3B PDFs open in Chrome and never land on disk
+            "plugins.always_open_pdf_externally":  True,
+            "download.open_pdf_in_system_reader":  False,
+            # ── KEY FIX: pre-authorise "Download multiple files" ──
+            # Chrome shows "return.gst.gov.in wants to download multiple files"
+            # popup when tabs trigger simultaneous downloads.
+            # Setting = 1 (allow) silently permits all — no Allow/Block popup.
+            "profile.default_content_setting_values.automatic_downloads": 1,
+        })
+        opts.add_argument("--start-maximized")
+        opts.add_argument("--disable-blink-features=AutomationControlled")
+        opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
+        opts.add_experimental_option("useAutomationExtension", False)
+        # 'eager' stops waiting for images/analytics — cuts 2-5s per page load
+        opts.page_load_strategy = "eager"
+        svc = ChromeService(ChromeDriverManager().install()) if CHROME_MGR else ChromeService()
+        driver = webdriver.Chrome(service=svc, options=opts)
+        driver.execute_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+        # Belt-and-braces: CDP also allows multiple file downloads at browser level
+        try:
+            driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                "behavior": "allow",
+                "downloadPath": dl_dir
+            })
+        except Exception:
+            pass
+        print("  Browser: Google Chrome ✓")
+        return driver
+    except Exception as e:
+        print(f"\n  Both Edge and Chrome failed: {e}")
+        sys.exit(1)
+
+
+def _is_portal_zip(f):
+    """
+    True if file is a GST portal-named GSTR-1 ZIP.
+    Strict regex: returns_DDMMYYYY_R1_GSTIN_offline_others_N.zip
+    Examples:
+      ✓  returns_23042026_R1_33AXKPV8837H1ZT_offline_others_0.zip
+      ✗  GSTR7_NIL_Automation.zip
+      ✗  returns_something_GSTR2B.zip
+      ✗  gst_suite_final.zip
+    """
+    import re as _re_ip
+    _PAT = _re_ip.compile(
+        r"^returns_\d{8}_R\d_[A-Z0-9]+_offline_others_\d+\.zip$",
+        _re_ip.IGNORECASE
+    )
+    return _PAT.match(f.name) is not None
+
+
+def purge_portal_stubs(client_path, log, also_downloads=True, purge_full_size=True):
+    """
+    Delete portal-named ZIPs from client_path and Downloads.
+
+    ROOT CAUSE: The GST portal always names every GSTR-1 ZIP:
+        returns_DDMMYYYY_R1_GSTIN_offline_others_0.zip
+    where DDMMYYYY is the DOWNLOAD DATE — NOT the return period.
+    Every month in a session produces the EXACT SAME filename.
+
+    TWO failure modes this function prevents:
+    ─────────────────────────────────────────────────────────────
+    1. STUB (< 1500 B): Portal writes a 0-byte or tiny stub when
+       the download link is clicked before the file is ready.
+       If not purged, rename_latest finds the stub as the "latest"
+       zip and renames it — giving a corrupt GSTR1_Month.zip.
+
+    2. FULL-SIZE LEFTOVER: After rename_latest renames the portal
+       zip to GSTR1_April_2025.zip, the ORIGINAL portal zip is
+       deleted by rename (f.rename(dest)). BUT if Chrome saved it
+       to Downloads/ instead of client_path, the original persists.
+       Next month, same filename downloads to Downloads/ → rescue
+       logic moves it to client_path → rename_latest finds TWO zips
+       (April's old one + January's new one) and picks wrong one.
+
+    Fix: delete ALL portal-named ZIPs (stub AND full-size) from
+    both client_path and Downloads before each new month download.
+    The correctly-renamed GSTR1_Month_Year.zip files are NOT deleted
+    (they don't have _R1_+OFFLINE in the name).
+    purge_full_size=True (default) also removes full-size portal zips.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    def _is_stub(f):
+        return _is_portal_zip(f) and f.stat().st_size < 1500
+
+    def _should_purge(f):
+        if purge_full_size:
+            return _is_portal_zip(f)   # delete all portal-named zips
+        return _is_stub(f)             # only stubs
+
+    purged = []
+    for _folder_label, _folder in [("client", _Path(client_path))]:
+        try:
+            for f in _folder.iterdir():
+                try:
+                    if _should_purge(f):
+                        f.unlink()
+                        purged.append(f"{_folder_label}/{f.name}")
+                        log.info(f"    Purged portal zip: {f.name} ({f.stat().st_size if f.exists() else 'gone'} B)")
+                except Exception: pass
+        except Exception: pass
+
+    if also_downloads:
+        try:
+            dl = _Path(_find_output_base())
+            if dl.exists():
+                for f in dl.iterdir():
+                    try:
+                        if _should_purge(f):
+                            f.unlink()
+                            purged.append(f"Downloads/{f.name}")
+                            log.info(f"    Purged Downloads portal zip: {f.name}")
+                    except Exception: pass
+        except Exception: pass
+
+    if purged:
+        log.info(f"    Purged {len(purged)} portal ZIP(s) total")
+    return purged
+
+
+def set_download_dir_all_tabs(driver, download_dir, log=None):
+    """
+    Apply Page.setDownloadBehavior to EVERY open tab/target.
+    Must be called:
+      1. Right after make_driver() (covers the initial tab)
+      2. After opening any new tab via window.open()
+      3. After detecting a new download tab appeared
+    Without this, any tab opened by the portal downloads to Chrome's
+    default Downloads folder instead of client_path.
+    """
+    dl_dir = str(download_dir)
+    try:
+        # Apply to current window/tab first (most important)
+        driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+            "behavior": "allow",
+            "downloadPath": dl_dir
+        })
+    except Exception: pass
+    # Apply to ALL open tabs via Target IDs
+    try:
+        targets = driver.execute_cdp_cmd("Target.getTargets", {})
+        for t in targets.get("targetInfos", []):
+            if t.get("type") != "page": continue
+            tid = t.get("targetId", "")
+            if not tid: continue
+            try:
+                # Switch to this target and set download dir
+                driver.execute_cdp_cmd("Target.activateTarget", {"targetId": tid})
+                driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                    "behavior": "allow",
+                    "downloadPath": dl_dir
+                })
+            except Exception: pass
+    except Exception: pass
+    if log:
+        log.info(f"    Download dir set on all tabs: {dl_dir[:60]}")
+
+
+# ==========================================================
+# HELPERS
+# ==========================================================
+def try_click(driver, xpaths, timeout=8, log=None):
+    for xp in xpaths:
+        try:
+            el = WebDriverWait(driver, timeout).until(
+                EC.element_to_be_clickable((By.XPATH, xp)))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+            time.sleep(0.3)
+            try: el.click()
+            except Exception: driver.execute_script("arguments[0].click();", el)
+            if log: log.info(f"    Clicked: {xp[:60]}")
+            return True
+        except Exception: continue
+    return False
+
+def human_type(driver, by, val, text, log=None):
+    """Type text into a form field. Waits for page/field to be ready, then uses
+    send_keys with JS fallback. The GST login page is Angular-rendered so the
+    field may not be interactable immediately even after the page 'loads'."""
+    try:
+        # First wait for the element to exist (present in DOM)
+        el = WebDriverWait(driver, 15).until(EC.presence_of_element_located((by, val)))
+        # Then wait for it to be clickable (not disabled/hidden)
+        el = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((by, val)))
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+        time.sleep(0.5)
+        # JS click to handle Angular-intercepted click events
+        driver.execute_script("arguments[0].click();", el)
+        time.sleep(0.3)
+        # Clear via JS to avoid Angular validation issues
+        driver.execute_script(
+            "arguments[0].value='';"
+            "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
+            el)
+        time.sleep(0.2)
+        # Type character by character
+        for ch in str(text):
+            el.send_keys(ch)
+            time.sleep(0.04)
+        time.sleep(0.4)
+        # Verify value was set
+        val_check = el.get_attribute("value") or ""
+        if val_check.strip():
+            if log: log.info(f"    Typed via {val} ✓")
+            return True
+        # JS direct-set fallback (works even when send_keys is blocked)
+        driver.execute_script(
+            "arguments[0].value=arguments[1];"
+            "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+            "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));"
+            "arguments[0].dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}));",
+            el, text)
+        time.sleep(0.2)
+        if log: log.info(f"    Typed via {val} (JS fallback) ✓")
+        return True
+    except Exception as e:
+        if log: log.warning(f"    Type failed {val}: {e}")
+        return False
+
+def select_by_text(driver, text, log=None):
+    """Find any dropdown containing text and select it."""
+    for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+        try:
+            s = Select(sel_el)
+            for opt in s.options:
+                if text.lower() in opt.text.lower():
+                    s.select_by_visible_text(opt.text)
+                    if log: log.info(f"    Dropdown selected: {opt.text} ✓")
+                    return True
+        except Exception: continue
+    return False
+
+# ==========================================================
+# ── CDP PDF CAPTURE ────────────────────────────────────────
+# Bypasses window.print() dialog for GSTR-3B downloads
+# ==========================================================
+def _pdf_via_cdp(driver, save_path, log=None):
+    """
+    Capture the current page as a PDF using Chrome/Edge DevTools Protocol.
+
+    WHY THIS EXISTS:
+      The GST portal's GSTR-3B 'PRINT' button fires window.print(), which
+      opens the browser's NATIVE print dialog.  Selenium cannot interact with
+      native OS dialogs — so no PDF file ever lands on disk.
+
+      Page.printToPDF bypasses the dialog entirely: it captures the fully
+      rendered page as PDF bytes directly inside the ChromeDriver session.
+      Works with both ChromeDriver and EdgeDriver.
+
+    Returns True on success, False on failure.
+    """
+    try:
+        # Wait briefly for page content to fully render before capture
+        # (handles slow portal connections — checks for GSTR-3B content)
+        try:
+            for _ in range(6):   # up to 3s total
+                src = driver.page_source or ""
+                if "GSTR" in src and len(src) > 2000:
+                    break
+                time.sleep(0.5)
+        except Exception: pass
+
+        pdf_data = driver.execute_cdp_cmd("Page.printToPDF", {
+            "printBackground":     True,
+            "landscape":           False,
+            "scale":               0.92,
+            "paperWidth":          8.27,    # A4 width  in inches
+            "paperHeight":         11.69,   # A4 height in inches
+            "marginTop":           0.40,
+            "marginBottom":        0.40,
+            "marginLeft":          0.40,
+            "marginRight":         0.40,
+            "displayHeaderFooter": False,
+        })
+        pdf_bytes = base64.b64decode(pdf_data.get("data", ""))
+        if pdf_bytes and len(pdf_bytes) > 5000:
+            with open(str(save_path), "wb") as fh:
+                fh.write(pdf_bytes)
+            if log:
+                log.info(f"      ✅ PDF via CDP: {Path(save_path).name}"
+                         f" ({len(pdf_bytes)//1024} KB)")
+            return True
+        if log:
+            log.warning(f"      CDP printToPDF returned small/empty data"
+                        f" ({len(pdf_bytes)} bytes)")
+        return False
+    except Exception as exc:
+        if log:
+            log.warning(f"      CDP printToPDF error: {exc}")
+        return False
+
+
+# ==========================================================
+# ── NEW: SESSION KEEP-ALIVE ────────────────────────────────
+# Prevents 20-min GST portal timeout during GENERATE waits
+# ==========================================================
+def keep_session_alive(driver, log=None):
+    """
+    Ping the portal by scrolling the current page.
+    Call this every 5-7 mins during GENERATE wait phase
+    so session does not expire.
+    """
+    try:
+        driver.execute_script("window.scrollBy(0, 100);")
+        time.sleep(0.5)
+        driver.execute_script("window.scrollBy(0, -100);")
+        if log: log.info("    [KeepAlive] Session pinged ✓")
+        return True
+    except Exception as e:
+        if log: log.warning(f"    [KeepAlive] Failed: {e}")
+        return False
+
+
+# ==========================================================
+# ── NEW: NOT-FOUND PAGE HANDLER ───────────────────────────
+# Handles "Not Found" / blank page due to fast tab opening
+# ==========================================================
+def handle_not_found_page(driver, log=None, max_reload=3):
+    """
+    If portal shows 'Not Found' / blank / error page, reload.
+    Waits for full page load after each reload.
+    Returns True if page recovered, False if all reloads failed.
+    """
+    not_found_indicators = [
+        "not found", "404", "page not available",
+        "server error", "bad gateway", "service unavailable"
+    ]
+    for attempt in range(1, max_reload + 1):
+        try:
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            if any(ind in body for ind in not_found_indicators) or len(body.strip()) < 30:
+                if log: log.warning(f"    [NotFound] Attempt {attempt}/{max_reload} — reloading page...")
+                driver.refresh()
+                # Wait for full page load
+                WebDriverWait(driver, 20).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
+                )
+                time.sleep(PAGE_WAIT)
+                body = driver.find_element(By.TAG_NAME, "body").text.lower()
+                if not any(ind in body for ind in not_found_indicators) and len(body.strip()) > 30:
+                    if log: log.info(f"    [NotFound] Page recovered on attempt {attempt} ✓")
+                    return True
+            else:
+                return True  # Page is fine
+        except Exception as e:
+            if log: log.warning(f"    [NotFound] Reload error: {e}")
+            time.sleep(2)
+    if log: log.error("    [NotFound] Page did not recover after all reloads")
+    return False
+
+
+# ==========================================================
+# ── NEW: RETRY WRAPPER — T1 / T2 / T3 ────────────────────
+# Wraps any download action with 3 retries + backoff
+# Usage discussed: try 1 → wait 30s → try 2 → wait 1min → try 3
+# ==========================================================
+def retry_download(action_fn, label="download", log=None, max_retries=3):
+    """
+    Retry an action up to 3 times (T1, T2, T3).
+    action_fn: callable that returns True on success, False on failure.
+    Returns (success: bool, attempts_used: int)
+    """
+    wait_times = [0, 30, 60]   # T1: no wait, T2: 30s, T3: 60s
+    for attempt in range(1, max_retries + 1):
+        wait = wait_times[attempt - 1]
+        if wait > 0:
+            if log: log.info(f"    [Retry T{attempt}] Waiting {wait}s before retry for {label}...")
+            time.sleep(wait)
+        try:
+            if log: log.info(f"    [Retry T{attempt}] Attempting {label}...")
+            result = action_fn()
+            if result:
+                if log: log.info(f"    [Retry T{attempt}] ✓ Success: {label}")
+                return True, attempt
+            else:
+                if log: log.warning(f"    [Retry T{attempt}] ✗ Failed: {label}")
+        except Exception as e:
+            if log: log.warning(f"    [Retry T{attempt}] ✗ Error: {e}")
+    if log: log.error(f"    All {max_retries} retries exhausted for {label}. Try early morning 7-9 AM.")
+    return False, max_retries
+
+
+# ==========================================================
+# ── NEW: PHASED DOWNLOAD COORDINATOR ─────────────────────
+# Implements the exact flow we designed:
+#
+#  Phase 1: Click GENERATE on GSTR-1 & GSTR-2A (all months)
+#  Phase 2: Direct download GSTR-2B (keeps session alive)
+#  Phase 3: Direct download GSTR-3B (keeps session alive)
+#  Phase 4: Come back, click DOWNLOAD LINK for GSTR-1 & GSTR-2A
+#
+# This way session never times out and all downloads happen
+# in ~20 minutes total for 12 months.
+#
+# BATCH RULE: Open max 6 months per batch to avoid Not Found
+# ==========================================================
+def phased_download_coordinator(driver, client, client_dir, log, returns_todo,
+                                 navigate_to_month_fn, download_direct_fn,
+                                 generate_fn, collect_generated_fn,
+                                 batch_size=6):
+    """
+    Phased download flow:
+      Phase 1 → Trigger GENERATE for all months (GSTR-1, GSTR-2A) in batches
+      Phase 2 → Direct download GSTR-2B all months (session stays alive)
+      Phase 3 → Direct download GSTR-3B all months (session stays alive)
+      Phase 4 → Collect GENERATE links for GSTR-1, GSTR-2A (now ready)
+
+    Parameters:
+      navigate_to_month_fn(month_tuple) → navigates to returns dashboard for that month
+      download_direct_fn(rtype, month_tuple) → downloads a direct-download return (2B, 3B)
+      generate_fn(rtype, month_tuple) → clicks GENERATE button (1, 2A, 1A)
+      collect_generated_fn(rtype, month_tuple) → downloads the generated file link (1, 2A, 1A)
+      batch_size → max months to process before pausing (default 6)
+
+    Returns dict: {rtype: {month_name: "ok"|"failed"|"skipped"}}
+    """
+    results = {r: {} for r in returns_todo}
+
+    GENERATE_RETURNS = [r for r in ("GSTR1", "GSTR2A") if r in returns_todo]
+    DIRECT_RETURNS   = [r for r in ("GSTR2B", "GSTR3B") if r in returns_todo]
+
+    if log:
+        log.info("  ═══ PHASED DOWNLOAD START ═══")
+        log.info(f"  Generate-first returns : {GENERATE_RETURNS}")
+        log.info(f"  Direct download returns: {DIRECT_RETURNS}")
+        log.info(f"  Batch size             : {batch_size} months per batch")
+
+    # ── PHASE 1: Trigger GENERATE for all months ──────────────────
+    if GENERATE_RETURNS:
+        if log: log.info("\n  ── Phase 1: Triggering GENERATE for all months ──")
+        for batch_start in range(0, len(MONTHS), batch_size):
+            batch = MONTHS[batch_start : batch_start + batch_size]
+            if log: log.info(f"    Batch {batch_start//batch_size + 1}: {[m[0] for m in batch]}")
+            for month_tuple in batch:
+                month_name = month_tuple[0]
+                for rtype in GENERATE_RETURNS:
+                    try:
+                        navigate_to_month_fn(month_tuple)
+                        handle_not_found_page(driver, log)
+                        ok = generate_fn(rtype, month_tuple)
+                        results[rtype][month_name] = "generating" if ok else "gen_failed"
+                        if log: log.info(f"    Generate {rtype} {month_name}: {'triggered ✓' if ok else '✗ failed'}")
+                        time.sleep(SHORT_WAIT)
+                    except Exception as e:
+                        results[rtype][month_name] = "gen_error"
+                        if log: log.warning(f"    Generate {rtype} {month_name} error: {e}")
+            time.sleep(ACTION_WAIT)  # small gap between batches
+
+    # ── PHASE 2+3: Direct download 2B and 3B (keeps session alive) ─
+    if DIRECT_RETURNS:
+        if log: log.info("\n  ── Phase 2/3: Direct downloading (keeps session alive) ──")
+        for rtype in DIRECT_RETURNS:
+            if log: log.info(f"    Downloading {rtype} — all months...")
+            for batch_start in range(0, len(MONTHS), batch_size):
+                batch = MONTHS[batch_start : batch_start + batch_size]
+                for month_tuple in batch:
+                    month_name = month_tuple[0]
+                    def _do_direct(rt=rtype, mt=month_tuple):
+                        navigate_to_month_fn(mt)
+                        handle_not_found_page(driver, log)
+                        return download_direct_fn(rt, mt)
+                    ok, tries = retry_download(_do_direct, f"{rtype} {month_name}", log)
+                    results[rtype][month_name] = "ok" if ok else f"failed(T{tries})"
+                    keep_session_alive(driver, log)   # ping after each month
+                    time.sleep(SHORT_WAIT)
+
+    # ── PHASE 4: Collect generated files (GSTR-1, 2A now ready) ───
+    if GENERATE_RETURNS:
+        if log: log.info("\n  ── Phase 4: Collecting GENERATE download links ──")
+        # Check if enough time has passed — if not, wait with keep-alive pings
+        gen_wait_start = time.time()
+        gen_wait_max   = FILE_GEN_WAIT   # 5 mins max (portal usually <2 min)
+        for month_tuple in MONTHS:
+            month_name = month_tuple[0]
+            for rtype in GENERATE_RETURNS:
+                if results.get(rtype, {}).get(month_name) not in ("generating",):
+                    continue  # skip if generate was not triggered
+
+                def _do_collect(rt=rtype, mt=month_tuple):
+                    navigate_to_month_fn(mt)
+                    handle_not_found_page(driver, log)
+                    return collect_generated_fn(rt, mt)
+
+                # Keep pinging session while waiting
+                elapsed = time.time() - gen_wait_start
+                if elapsed < 60:
+                    if log: log.info(f"    Waiting for generate to complete... ({int(60-elapsed)}s remaining)")
+                    for _ in range(int(60 - elapsed) // 10):
+                        keep_session_alive(driver, log)
+                        time.sleep(10)
+
+                ok, tries = retry_download(_do_collect, f"{rtype} {month_name} link", log)
+                results[rtype][month_name] = "ok" if ok else f"failed(T{tries})"
+                keep_session_alive(driver, log)
+                time.sleep(SHORT_WAIT)
+
+    # ── Summary ───────────────────────────────────────────────────
+    if log:
+        log.info("\n  ═══ PHASED DOWNLOAD COMPLETE ═══")
+        for rtype, months_res in results.items():
+            ok_count   = sum(1 for v in months_res.values() if v == "ok")
+            fail_count = sum(1 for v in months_res.values() if "failed" in v)
+            log.info(f"    {rtype}: {ok_count} ok | {fail_count} failed")
+
+    return results
+
+
+def wait_for_download_link(driver, timeout_seconds, log):
+    """
+    After clicking GENERATE JSON/EXCEL, the portal shows:
+      - First: "Request is being processed" or spinning icon
+      - Then:  A table row with a DOWNLOAD link (href ending in .zip or .json)
+
+    Key: we must REFRESH the page every 30s to check if file is ready.
+    A real download link has href containing 'filedownload' or ends in .zip/.json
+    We must NOT pick up the GENERATE button itself as a link.
+
+    Portal behaviour (confirmed from logs):
+      - File usually ready in 30s - 2 mins
+      - Page shows "Click here" or a table with download icon/link
+    """
+    log.info(f"    Waiting for file to be generated (refreshing every 30s, max {timeout_seconds}s)...")
+
+    def find_real_download_link():
+        """
+        Return a real download link element — NOT the generate button.
+        Real links have href with 'filedownload', '.zip', '.json' or 'download' path.
+        """
+        try:
+            # Look for links with actual file hrefs
+            all_links = driver.find_elements(By.TAG_NAME, "a")
+            for el in all_links:
+                try:
+                    if not el.is_displayed():
+                        continue
+                    href = el.get_attribute("href") or ""
+                    text = el.text.strip().lower()
+                    # Must have a real file URL — not just a page link
+                    is_file_link = (
+                        "filedownload" in href.lower() or
+                        href.lower().endswith(".zip") or
+                        href.lower().endswith(".json") or
+                        href.lower().endswith(".xlsx") or
+                        ("download" in href.lower() and "gst" in href.lower() and len(href) > 60)
+                    )
+                    is_download_text = any(x in text for x in [
+                        "click here", "download", "here to download"
+                    ])
+                    if is_file_link or (is_download_text and len(href) > 40):
+                        return el
+                except Exception: continue
+        except Exception: pass
+        return None
+
+    def page_still_processing():
+        """Check if portal is still generating (spinner or 'processing' text)."""
+        try:
+            page = driver.page_source.lower()
+            return any(x in page for x in [
+                "request is being processed",
+                "being processed",
+                "processing",
+                "please wait",
+                "generating",
+            ])
+        except Exception:
+            return False
+
+    elapsed = 0
+    refresh_interval = 30  # refresh page every 30 seconds
+
+    while elapsed < timeout_seconds:
+        # Check immediately after generate click
+        time.sleep(3)
+        elapsed += 3
+
+        link = find_real_download_link()
+        if link:
+            log.info(f"    ✅ Download link ready after {elapsed}s")
+            return link
+
+        if page_still_processing():
+            log.info(f"    Portal still processing... ({elapsed}s)")
+
+        # Wait in 30s intervals, refreshing page each time
+        wait_chunk = min(refresh_interval, timeout_seconds - elapsed)
+        for _ in range(wait_chunk):
+            time.sleep(1)
+            elapsed += 1
+
+        # Refresh page to check if file is ready
+        log.info(f"    Refreshing page to check status... ({elapsed}s elapsed)")
+        try:
+            driver.refresh()
+            time.sleep(4)
+        except Exception: pass
+
+        link = find_real_download_link()
+        if link:
+            log.info(f"    ✅ Download link ready after {elapsed}s (found after refresh)")
+            return link
+
+    log.warning(f"    ⚠ File not ready after {timeout_seconds}s — moving on")
+    return None
+
+
+# ==========================================================
+# SESSION STATE — stores current client creds for auto re-login
+# ==========================================================
+CURRENT_CLIENT = {}   # populated in process_client before phases start
+
+
+def is_session_lost(driver):
+    """Return True if portal has logged us out or shown access denied."""
+    try:
+        url = driver.current_url.lower()
+        if "accessdenied" in url:
+            return True
+        if "login" in url and "fowelcome" not in url and "gst.gov.in" in url:
+            return True
+        # Check page text for session-expired messages
+        body = driver.find_element(By.TAG_NAME, "body").text.lower()
+        for phrase in ["session expired", "session has expired",
+                       "you are not logged in", "please login again",
+                       "access denied"]:
+            if phrase in body:
+                return True
+    except Exception:
+        pass  # page_source unavailable (e.g. driver closed) — treat as no session loss
+    return False
+
+
+def show_access_denied_overlay(driver, username, log):
+    """
+    Inject a visible overlay banner into the browser on the Access Denied page.
+    The user sees a clear red banner with:
+      - What happened (Access Denied / Session Expired)
+      - Which client it's for
+      - What the script will do (re-login automatically)
+      - A "Re-Login Now" button that navigates to www.gst.gov.in
+    This fires in the browser window so the user knows exactly what is happening.
+    """
+    try:
+        driver.execute_script("""
+            // Remove any existing overlay first
+            var old = document.getElementById('_gst_relogin_overlay');
+            if (old) old.remove();
+
+            var overlay = document.createElement('div');
+            overlay.id = '_gst_relogin_overlay';
+            overlay.style.cssText = [
+                'position:fixed','top:0','left:0','width:100%','z-index:999999',
+                'background:#b91c1c','color:#fff','font-family:Arial,sans-serif',
+                'font-size:15px','padding:18px 24px','box-shadow:0 4px 16px rgba(0,0,0,0.5)',
+                'display:flex','align-items:center','gap:20px','flex-wrap:wrap'
+            ].join(';');
+
+            overlay.innerHTML = `
+              <span style="font-size:22px">🔒</span>
+              <div style="flex:1;min-width:250px">
+                <strong style="font-size:16px">ACCESS DENIED / SESSION EXPIRED</strong><br>
+                <span style="opacity:0.9">Client: <b>` + arguments[0] + `</b> &nbsp;|&nbsp;
+                Script is navigating back to GST Login page automatically...</span>
+              </div>
+              <button id="_gst_relogin_btn" style="
+                background:#fff;color:#b91c1c;border:none;border-radius:6px;
+                padding:10px 22px;font-size:14px;font-weight:bold;cursor:pointer;
+                white-space:nowrap;flex-shrink:0"
+                onclick="window.location.href='https://www.gst.gov.in'">
+                🔄 Re-Login Now
+              </button>
+              <button onclick="document.getElementById('_gst_relogin_overlay').remove()"
+                style="background:transparent;color:#fff;border:2px solid #fff;
+                border-radius:6px;padding:10px 14px;font-size:13px;cursor:pointer;
+                flex-shrink:0">
+                ✕ Dismiss
+              </button>
+            `;
+            document.body.insertBefore(overlay, document.body.firstChild);
+        """, username)
+        log.info("    ✅ Access Denied overlay shown in browser")
+    except Exception as e:
+        log.warning(f"    Could not show overlay: {e}")
+
+
+_LAST_RELOGIN_TIME = 0  # guard against rapid repeated re-logins
+
+def relogin_if_needed(driver, log):
+    """
+    Full re-login from www.gst.gov.in when session is lost or Access Denied.
+    Flow: www.gst.gov.in → LOGIN button → username + password + CAPTCHA → Submit
+    Also injects a visible overlay in the browser so the user can see what's happening.
+    Returns True if re-login succeeded, False if failed.
+    """
+    global _LAST_RELOGIN_TIME
+    import time as _trl
+    # ★ Guard: if re-login was just done within 30s, check session first
+    if _trl.time() - _LAST_RELOGIN_TIME < 30:
+        log.warning("  Re-login called again within 30s — checking if session is actually alive...")
+        _trl.sleep(3)
+        if not is_session_lost(driver):
+            log.info("  Session is alive — skipping duplicate re-login ✓")
+            return True
+    _LAST_RELOGIN_TIME = _trl.time()
+
+    if not is_session_lost(driver):
+        return True   # session still valid
+
+    log.warning("  ⚠ Session expired / Access Denied — going back to Login page...")
+
+    username = CURRENT_CLIENT.get("username", "")
+    password = CURRENT_CLIENT.get("password", "")
+
+    # If no credentials stored, ask the user to type them right now
+    if not username:
+        import getpass
+        print("\n  No stored username found. Please enter credentials manually.")
+        log.warning("  No credentials in CURRENT_CLIENT — prompting user to enter manually")
+        username = input("  Username: ").strip()
+        password = getpass.getpass("  Password: ").strip()
+        CURRENT_CLIENT["username"] = username
+        CURRENT_CLIENT["password"] = password
+
+    # ── Show overlay in the browser so user sees what's happening ────
+    show_access_denied_overlay(driver, username, log)
+
+    print()
+    print("  " + "="*56)
+    print("  🔒 ACCESS DENIED / SESSION EXPIRED")
+    print("  " + "-"*56)
+    print(f"  Client  : {username}")
+    print("  Action  : Navigating to www.gst.gov.in → Login page")
+    print("  The browser shows a RE-LOGIN banner — you can also")
+    print("  click 'Re-Login Now' in the browser to go there manually.")
+    print("  Please type the CAPTCHA when the login page appears.")
+    print("  " + "="*56)
+
+    # do_login navigates to www.gst.gov.in, clicks LOGIN, fills username +
+    # password, waits for CAPTCHA input, then clicks LOGIN button.
+    # It has its own 3-attempt retry loop with credential re-entry on denial.
+    return do_login(driver, username, password, log)
+
+
+def safe_go_to_dashboard(driver, log):
+    """
+    Navigate to Returns Dashboard with full re-login on Access Denied / session loss.
+    Flow:
+      1. If session is already lost  → full re-login FIRST, then navigate
+      2. Try normal navigation        (Services → Returns → Returns Dashboard)
+      3. If navigation fails/denied   → full re-login again, then retry once
+    """
+    # ── Step 1: Re-login BEFORE navigating if session already lost ──
+    if is_session_lost(driver):
+        log.warning("  Session lost before dashboard nav — re-logging in first...")
+        print("\n" + "!"*56)
+        print("  SESSION EXPIRED — Re-login required before continuing")
+        print("!"*56)
+        if not relogin_if_needed(driver, log):
+            log.error("  Re-login failed — cannot navigate to dashboard")
+            return False
+
+    # ── Step 2: Attempt normal navigation ──────────────────────────
+    result = go_to_returns_dashboard(driver, log)
+
+    # ── Step 3: Smart recovery after nav failure ─────────────────────
+    if not result:
+        cur_after = driver.current_url
+        session_gone = is_session_lost(driver)
+        log.info(f"  Nav returned False — URL: {cur_after} | session_lost={session_gone}")
+
+        if not session_gone:
+            # ★ FIX: Session alive — try fowelcome reset then re-nav (NO re-login)
+            log.info("  Nav failed but session alive — resetting via fowelcome...")
+            try:
+                driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+                WebDriverWait(driver, 10).until(lambda d: "gst.gov.in" in d.current_url)
+                time.sleep(2)
+                result = go_to_returns_dashboard(driver, log)
+                if result:
+                    log.info("  ✅ Returns Dashboard reached after fowelcome reset ✓")
+                    return True
+            except Exception as _sfe:
+                log.warning(f"  fowelcome reset error: {_sfe}")
+
+            # Still failing — check session once more
+            session_gone = is_session_lost(driver)
+
+        if session_gone:
+            # Session truly dead → re-login
+            log.warning("  Session confirmed dead — re-logging in...")
+            print("\n" + "!"*56)
+            print("  SESSION EXPIRED — Re-login required")
+            print("!"*56)
+            if relogin_if_needed(driver, log):
+                # After re-login, navigate fresh
+                time.sleep(2)
+                result = go_to_returns_dashboard(driver, log)
+                if result:
+                    log.info("  ✅ Re-login successful — resuming")
+                    print("\n" + "="*56)
+                    print("  ✅ RE-LOGIN OK — Resuming download from current month")
+                    print("="*56)
+                else:
+                    # One last direct URL attempt post-login
+                    try:
+                        driver.get("https://return.gst.gov.in/returns/auth/dashboard")
+                        WebDriverWait(driver, 12).until(
+                            lambda d: "dashboard" in d.current_url.lower())
+                        result = "return.gst.gov.in" in driver.current_url
+                    except Exception: pass
+            else:
+                result = False
+        else:
+            log.warning("  Nav still failing after fowelcome reset — proceeding anyway")
+            # Last resort: direct URL (session is alive, just nav menu is broken)
+            try:
+                driver.get("https://return.gst.gov.in/returns/auth/dashboard")
+                WebDriverWait(driver, 12).until(
+                    lambda d: "dashboard" in d.current_url.lower()
+                              or "accessdenied" in d.current_url.lower())
+                result = "return.gst.gov.in" in driver.current_url and                          "dashboard" in driver.current_url
+                if result:
+                    log.info("  ✅ Returns Dashboard via direct URL ✓")
+            except Exception: pass
+
+    return result
+
+
+# ==========================================================
+# GENERATE + INSTANT DOWNLOAD (GSTR-2B — same flow as GSTR-3B)
+# Portal flow:  tile DOWNLOAD  →  Generate page
+#               Click GENERATE EXCEL  →  file downloads INSTANTLY
+#               No link appears. No page polling. Pure folder watch.
+# ==========================================================
+def generate_then_download_immediate(driver, client_dir, save_name, log,
+                                      gen_xpaths=None, max_wait=60):
+    """
+    GSTR-2B INSTANT DOWNLOAD — identical flow to GSTR-3B:
+      1. Click tile DOWNLOAD  →  lands on Generate page
+      2. Click GENERATE EXCEL →  file downloads INSTANTLY (no link, no polling page)
+      3. Poll folder every 0.5s until file appears  →  rename  →  done
+
+    No link scanning. No page polling. Pure file-system watch like GSTR-3B.
+    max_wait: max seconds to wait for the file after clicking Generate (default 60s).
+    """
+    if gen_xpaths is None:
+        gen_xpaths = [
+            "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+            "//button[contains(text(),'GENERATE EXCEL')]",
+            "//button[contains(text(),'Generate Excel')]",
+            "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+            "//button[contains(text(),'Generate JSON')]",
+        ]
+
+    client_path = Path(client_dir)
+
+    def _snap(exts):
+        """Snapshot current files in folder."""
+        return {str(f): f.stat().st_mtime
+                for f in client_path.iterdir()
+                if f.suffix.lower() in exts}
+
+    def _first_new(before, exts):
+        """Return first complete new file that appeared since snapshot."""
+        for f in client_path.iterdir():
+            if f.suffix.lower() not in exts: continue
+            if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+            prev = before.get(str(f))
+            if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 5000:
+                return f
+        return None
+
+    EXTS = {".xlsx", ".zip", ".json"}
+
+    # 1. Wait briefly for Generate page to render (replaces old sleep(SHORT_WAIT))
+    time.sleep(0.8)
+    log.info(f"    GSTR-2B generate page: {driver.current_url}")
+
+    # 2. Snapshot BEFORE clicking Generate
+    before = _snap(EXTS)
+
+    # 3. Click GENERATE EXCEL — triggers instant browser download
+    gen_clicked = try_click(driver, gen_xpaths, timeout=8, log=log)
+    if gen_clicked:
+        log.info("    ✅ GENERATE EXCEL clicked — watching folder for instant file...")
+    else:
+        log.warning("    ⚠ GENERATE EXCEL button not found on page")
+
+    # 4. Fast-poll folder every 0.5s (same as GSTR-3B fast poll)
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        time.sleep(0.5)
+        new_f = _first_new(before, EXTS)
+        if new_f:
+            log.info(f"    ⚡ File received instantly: {new_f.name}")
+            time.sleep(0.5)   # let Chrome finish flushing
+            rename_latest(client_dir, save_name, [".xlsx", ".zip", ".json"], log)
+            return True
+
+    log.warning(f"    ⚠ GSTR-2B file not received within {max_wait}s for {save_name}")
+    return False
+
+
+
+def do_login(driver, username, password, log):
+    """
+    Login to GST portal with up to 3 attempts.
+    On Access Denied or wrong credentials, prompts user to retype
+    username and password before retrying.
+    """
+    MAX_ATTEMPTS = 3
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+
+        # ── Navigate to portal & click LOGIN ──────────────────────
+        log.info(f"    Opening www.gst.gov.in (attempt {attempt}/{MAX_ATTEMPTS})...")
+        driver.get("https://www.gst.gov.in")
+        time.sleep(2)  # was 4
+
+        log.info("    Clicking LOGIN button...")
+        try_click(driver, [
+            "//a[normalize-space()='LOGIN']",
+            "//a[normalize-space()='Login']",
+            "//button[normalize-space()='LOGIN']",
+            "//a[contains(@href,'login')]",
+        ], timeout=8, log=log)
+        # Wait for login page to fully load — GST portal uses Angular
+        # so the form fields take time to render after navigation.
+        log.info("    Waiting for login page to load...")
+        try:
+            WebDriverWait(driver, 20).until(
+                lambda d: "login" in d.current_url.lower() or
+                          "services.gst.gov.in" in d.current_url.lower()
+            )
+        except Exception: pass
+        time.sleep(2)  # Angular render time
+        log.info(f"    Login page: {driver.current_url}")
+
+        # Wait for at least one text input to appear (Angular form ready)
+        try:
+            WebDriverWait(driver, 15).until(
+                lambda d: len(d.find_elements(By.CSS_SELECTOR,
+                    "input[type='text'], input[type='password'], input[id*='user'], input[name*='user']")) > 0
+            )
+        except Exception:
+            log.warning("    Username input not found yet — continuing anyway")
+        time.sleep(1)
+
+        # ── Fill username ──────────────────────────────────────────
+        log.info(f"    Filling username: {username}")
+        filled = False
+        for by, val in [
+            (By.ID,   "username"),
+            (By.NAME, "username"),
+            (By.ID,   "user_name"),
+            (By.NAME, "user_name"),
+            (By.CSS_SELECTOR, "input[placeholder*='sername']"),
+            (By.CSS_SELECTOR, "input[placeholder*='Username']"),
+            (By.XPATH, "//input[@type='text' and not(@readonly) and not(@disabled)]"),
+            (By.CSS_SELECTOR, "input[type='text']:not([readonly]):not([disabled])"),
+        ]:
+            if human_type(driver, by, val, username, log):
+                filled = True; break
+        if not filled:
+            # Last resort: JS direct inject into first text input
+            try:
+                driver.execute_script("""
+                    var inputs = document.querySelectorAll('input[type=text]');
+                    for(var i=0;i<inputs.length;i++){
+                        if(!inputs[i].readOnly && !inputs[i].disabled){
+                            inputs[i].value = arguments[0];
+                            inputs[i].dispatchEvent(new Event('input',{bubbles:true}));
+                            inputs[i].dispatchEvent(new Event('change',{bubbles:true}));
+                            break;
+                        }
+                    }
+                """, username)
+                log.info("    Username filled via JS last resort")
+                filled = True
+            except Exception as je:
+                log.error(f"    JS last resort also failed: {je}")
+        if not filled:
+            log.error("    Cannot fill username field!"); return False
+
+        time.sleep(ACTION_WAIT)
+
+        # ── Fill password ──────────────────────────────────────────
+        log.info("    Filling password...")
+        filled = False
+        for by, val in [
+            (By.ID,   "user_pass"),
+            (By.NAME, "user_pass"),
+            (By.ID,   "password"),
+            (By.NAME, "password"),
+            (By.CSS_SELECTOR, "input[type='password']"),
+        ]:
+            if human_type(driver, by, val, password, log):
+                filled = True; break
+        if not filled:
+            log.error("    Cannot fill password field!"); return False
+
+        time.sleep(ACTION_WAIT)
+
+        # ── CAPTCHA — manual ───────────────────────────────────────
+        print()
+        print("  " + "="*52)
+        print(f"  CLIENT  : {username}")
+        if attempt > 1:
+            print(f"  ATTEMPT : {attempt} of {MAX_ATTEMPTS}  (previous login was denied)")
+        print("  " + "-"*52)
+        print("  1. Look at the browser window")
+        print("  2. Type CAPTCHA letters in the browser")
+        print("  3. Come back here and press ENTER")
+        print("  NOTE: Do NOT click Login — script will do it")
+        print("  " + "="*52)
+        input("  >> Press ENTER after typing CAPTCHA: ")
+
+        # ── Click LOGIN ────────────────────────────────────────────
+        log.info("    Clicking LOGIN button...")
+        try_click(driver, [
+            "//button[@id='btnlogin']",
+            "//button[normalize-space()='LOGIN']",
+            "//button[normalize-space()='Login']",
+            "//button[@type='submit']",
+            "//input[@type='submit']",
+            "//button[contains(text(),'LOGIN')]",
+            "//button[contains(text(),'Login')]",
+        ], timeout=8, log=log)
+
+        # Smart wait: poll for dashboard/home after login (max 6s)
+        try:
+            from selenium.webdriver.support.ui import WebDriverWait
+            WebDriverWait(driver, 6).until(
+                lambda d: "login" not in d.current_url.lower() or "fowelcome" in d.current_url.lower()
+            )
+        except Exception: time.sleep(3)
+
+        # ── OTP if needed ──────────────────────────────────────────
+        try:
+            body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            if "otp" in body and ("enter" in body or "verify" in body):
+                print("\n  OTP REQUIRED — Enter OTP in browser then press ENTER here")
+                input("  >> Press ENTER after OTP entered: ")
+                time.sleep(2)
+        except Exception: pass
+
+        # ── Check result ───────────────────────────────────────────
+        cur = driver.current_url.lower()
+        log.info(f"    Post-login URL: {driver.current_url}")
+
+        # ── Fix: error/notfound after login → navigate to portal home ──
+        # Do NOT use direct URL to return.gst.gov.in — causes Access Denied.
+        # Instead go to www.gst.gov.in (home) and let caller use menu nav.
+        if "error/notfound" in cur or "error/notfound" in driver.current_url:
+            log.warning("    Post-login landed on error/notfound — navigating to portal home...")
+            try:
+                driver.get("https://www.gst.gov.in")
+                WebDriverWait(driver, 15).until(
+                    lambda d: "gst.gov.in" in d.current_url
+                    and "error" not in d.current_url.lower()
+                )
+                cur = driver.current_url.lower()
+                log.info(f"    Recovered to portal home: {driver.current_url}")
+            except Exception: pass
+
+        login_failed = (
+            "accessdenied" in cur or
+            ("login" in cur and "fowelcome" not in cur and "error" not in cur)
+        )
+
+        if not login_failed:
+            log.info("    Login SUCCESSFUL ✓")
+            return True
+
+        # ── Login denied — prompt user to retype credentials ───────
+        log.warning(f"    Login DENIED (attempt {attempt}/{MAX_ATTEMPTS})")
+        print()
+        print("  " + "!"*52)
+        print("  ✗  ACCESS DENIED — Username or Password is wrong")
+        print("  " + "!"*52)
+
+        if attempt < MAX_ATTEMPTS:
+            print(f"\n  Attempt {attempt} of {MAX_ATTEMPTS} failed.")
+            print("  Please retype the credentials below.")
+            print("  (Press ENTER to keep the current value)\n")
+
+            import getpass
+            new_user = input(f"  Username [{username}]: ").strip()
+            new_pass = getpass.getpass(f"  Password (leave blank to keep current): ").strip()
+
+            if new_user:
+                username = new_user
+            if new_pass:
+                password = new_pass
+
+            # Update global CURRENT_CLIENT so relogin_if_needed also uses new creds
+            global CURRENT_CLIENT
+            CURRENT_CLIENT["username"] = username
+            CURRENT_CLIENT["password"] = password
+
+            log.info(f"    Retrying with username: {username}")
+            print(f"\n  Retrying login for: {username} ...\n")
+        else:
+            print(f"\n  All {MAX_ATTEMPTS} login attempts failed for: {username}")
+            print("  Skipping this client. Check credentials in clients.xlsx/csv.")
+            log.error(f"    Login FAILED after {MAX_ATTEMPTS} attempts — skipping client")
+
+    return False
+
+
+# ==========================================================
+# GO TO RETURNS DASHBOARD
+# Services → Returns → Returns Dashboard
+# ==========================================================
+def go_to_returns_dashboard(driver, log):
+    """
+    Navigate: Services --> Returns --> Returns Dashboard
+    ─────────────────────────────────────────────────────
+    CRITICAL RULE: NEVER use driver.get() to jump directly to
+    return.gst.gov.in — the GST portal returns "Access Denied"
+    on direct URL navigation even when the user IS logged in.
+    ALWAYS follow the menu path: Services → Returns → Returns Dashboard.
+
+    The menu nav may land on services.gst.gov.in/services/auth/dashboard
+    (the services domain dashboard).  From there we do a SECOND menu walk
+    to reach return.gst.gov.in/returns/auth/dashboard.
+
+    Returns True  → we are on return.gst.gov.in/…/dashboard
+    Returns False → session is lost; caller must trigger re-login
+    """
+    cur = driver.current_url
+
+    # ── Already on the correct Returns Dashboard ──────────────────────
+    if "return.gst.gov.in" in cur and "dashboard" in cur:
+        log.info("    Already on Returns Dashboard ✓")
+        return True
+
+    # ── Session already lost — caller handles re-login ────────────────
+    if is_session_lost(driver):
+        log.warning("    Session/Access Denied at nav start — returning False for re-login")
+        return False
+
+    # ── e-Invoice portal redirect — navigate back to main services portal ─
+    # The GST portal sometimes redirects to einvoice.gst.gov.in after login.
+    # Menu clicks on that domain go to e-invoice navigation, not returns.
+    # Fix: navigate directly to services.gst.gov.in home first, then menu-walk.
+    if "einvoice.gst.gov.in" in cur:
+        log.warning("    ⚠ On e-Invoice portal — redirecting to services.gst.gov.in...")
+        try:
+            driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+            WebDriverWait(driver, 12).until(
+                lambda d: "services.gst.gov.in" in d.current_url
+                          or "gst.gov.in" in d.current_url
+            )
+            cur = driver.current_url
+            log.info(f"    Redirected to: {cur}")
+        except Exception as _e:
+            log.warning(f"    e-Invoice redirect failed: {_e}")
+            # Fallback: go to portal home
+            try:
+                driver.get("https://www.gst.gov.in")
+                time.sleep(2)
+            except Exception:
+                pass
+
+    # ── If off the portal domain completely, press Back ───────────────
+    if "gst.gov.in" not in cur:
+        log.info("    Not on GST portal — pressing Back...")
+        try:
+            driver.back()
+            time.sleep(2)
+        except Exception: pass
+        if "gst.gov.in" not in driver.current_url:
+            log.warning("    Still off portal after Back — treating as session loss")
+            return False
+        if is_session_lost(driver):
+            log.warning("    Session lost after Back — returning False for re-login")
+            return False
+
+    # ── Menu-nav helpers ──────────────────────────────────────────────
+    #
+    # THE CORRECT WAY TO NAVIGATE Services → Returns → Returns Dashboard:
+    #
+    # PROBLEM: JS that clicks any <a> with text="Services" or "Returns"
+    #   matches the WRONG elements on the fowelcome dashboard page:
+    #   - fowelcome has a "Returns Calendar" table with "Returns" text
+    #   - JS picks that cell instead of the dropdown menu item
+    #   - Result: dropdown never opens, navigation never happens
+    #
+    # SOLUTION: use Selenium's ActionChains hover to open the menu,
+    #   wait for the dropdown to be VISIBLE, then click inside it.
+    #   This is the only reliable way because:
+    #   1. ActionChains hover keeps the dropdown open
+    #   2. WebDriverWait for dropdown visibility ensures timing
+    #   3. XPath scope restricts click to inside open dropdown only
+
+    def _do_full_nav():
+        """
+        One full attempt: hover Services → wait dropdown → click Returns
+        → wait submenu → click Returns Dashboard → wait for dashboard URL.
+
+        EXTRA STRATEGIES when dropdown doesn't open (portal navigates to
+        quicklinks/returns directly instead of showing a hover dropdown):
+          A. If on quicklinks/returns → click "Returns Dashboard" button there
+          B. Direct JS scan for any visible "Returns Dashboard" anchor
+          C. Check href-based links to return.gst.gov.in/dashboard
+          D. Navigate to fowelcome first, then retry the menu walk
+        """
+        from selenium.webdriver.common.action_chains import ActionChains
+
+        def _land_on_dashboard_from_here():
+            """
+            We are somewhere on the portal (logged in).
+            Try every possible way to reach return.gst.gov.in/dashboard
+            WITHOUT calling driver.get() on the returns domain directly.
+            """
+            cur = driver.current_url
+
+            # ── Strategy A: on quicklinks/returns page ────────────────────
+            # The portal navigates here when Services → Returns is clicked.
+            # This is NOT a session loss — the user IS logged in.
+            # The page shows return-type cards. We must find and click
+            # "Returns Dashboard" to proceed.
+            if "quicklinks" in cur.lower():
+                log.info("    On quicklinks/returns page (session alive) — finding Returns Dashboard...")
+
+                def _click_returns_dashboard_on_quicklinks():
+                    # Try 1: standard XPath + href patterns
+                    for xp in [
+                        "//a[contains(normalize-space(text()),'Returns Dashboard')]",
+                        "//button[contains(normalize-space(text()),'Returns Dashboard')]",
+                        "//a[contains(@href,'return.gst.gov.in') and contains(@href,'dashboard')]",
+                        "//a[contains(@href,'/returns/auth/dashboard')]",
+                        "//*[contains(translate(normalize-space(.),"
+                        "'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),"
+                        "'RETURNS DASHBOARD')]",
+                    ]:
+                        try:
+                            for el in driver.find_elements(By.XPATH, xp):
+                                if el.is_displayed():
+                                    driver.execute_script(
+                                        "arguments[0].scrollIntoView({block:'center'});", el)
+                                    time.sleep(0.2)
+                                    el.click()
+                                    log.info("    Returns Dashboard clicked (XPath) ✓")
+                                    try:
+                                        WebDriverWait(driver, 15).until(
+                                            lambda d: "return.gst.gov.in" in d.current_url
+                                            and "dashboard" in d.current_url)
+                                        return True
+                                    except Exception:
+                                        time.sleep(2)
+                                    if "return.gst.gov.in" in driver.current_url                                             and "dashboard" in driver.current_url:
+                                        return True
+                        except Exception: pass
+
+                    # Try 2: hover each card — some portals need mouseover to reveal link
+                    from selenium.webdriver.common.action_chains import ActionChains as _AC
+                    try:
+                        cards = driver.find_elements(By.XPATH,
+                            "//div[contains(@class,'card')] | //li[contains(@class,'card')]"
+                            " | //div[contains(@class,'tile')] | //li[contains(@class,'tile')]")
+                        for card in cards:
+                            try:
+                                txt = (card.text or "").lower()
+                                if "returns" in txt and "dashboard" in txt:
+                                    _AC(driver).move_to_element(card).perform()
+                                    time.sleep(0.3)
+                                    card.click()
+                                    log.info("    Returns Dashboard card clicked (hover) ✓")
+                                    try:
+                                        WebDriverWait(driver, 15).until(
+                                            lambda d: "return.gst.gov.in" in d.current_url
+                                            and "dashboard" in d.current_url)
+                                        return True
+                                    except Exception: pass
+                            except Exception: pass
+                    except Exception: pass
+
+                    # Try 3: JS — find any link whose text or href points to returns dashboard
+                    try:
+                        clicked = driver.execute_script("""
+                            var els = document.querySelectorAll('a,button,div,li');
+                            for (var i=0; i<els.length; i++) {
+                                var t = (els[i].innerText||'').toLowerCase();
+                                var h = (els[i].href||'');
+                                if ((t.includes('returns dashboard') ||
+                                     h.includes('return.gst.gov.in') && h.includes('dashboard'))
+                                    && els[i].offsetParent !== null) {
+                                    els[i].scrollIntoView({block:'center'});
+                                    els[i].click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        """)
+                        if clicked:
+                            log.info("    Returns Dashboard clicked via JS on quicklinks ✓")
+                            try:
+                                WebDriverWait(driver, 15).until(
+                                    lambda d: "return.gst.gov.in" in d.current_url
+                                    and "dashboard" in d.current_url)
+                                return True
+                            except Exception: pass
+                            if "return.gst.gov.in" in driver.current_url                                     and "dashboard" in driver.current_url:
+                                return True
+                    except Exception: pass
+
+                    # Try 4: Navigate to fowelcome then redo full menu walk
+                    log.info("    Returns Dashboard not found on quicklinks — going to fowelcome first")
+                    try:
+                        driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+                        WebDriverWait(driver, 12).until(
+                            lambda d: "gst.gov.in" in d.current_url)
+                        time.sleep(1)
+                    except Exception as _fe:
+                        log.warning(f"    fowelcome nav error: {_fe}")
+                    return False
+
+                if _click_returns_dashboard_on_quicklinks():
+                    return True
+
+                # quicklinks page but couldn't find Returns Dashboard link.
+                # Only bail for re-login if session actually lost.
+                if is_session_lost(driver):
+                    log.warning("    Session lost on quicklinks page — re-login needed")
+                    return False
+                log.info("    quicklinks handled — continuing to Strategy B/C")
+
+            # ── Strategy B: JS scan for Returns Dashboard link anywhere ─
+            try:
+                href = driver.execute_script("""
+                    var links = document.querySelectorAll('a');
+                    for (var i=0; i<links.length; i++) {
+                        var t = (links[i].innerText || links[i].textContent || '').trim();
+                        var h = (links[i].href || '');
+                        if ((t.toLowerCase().includes('returns dashboard')) ||
+                            (h.includes('return.gst.gov.in') && h.includes('dashboard'))) {
+                            links[i].scrollIntoView({block:'center'});
+                            links[i].click();
+                            return h || t;
+                        }
+                    }
+                    return null;
+                """)
+                if href:
+                    log.info(f"    Returns Dashboard clicked via JS scan ({str(href)[:60]}) ✓")
+                    try:
+                        WebDriverWait(driver, 15).until(
+                            lambda d: "return.gst.gov.in" in d.current_url
+                            and "dashboard" in d.current_url
+                        )
+                        return True
+                    except Exception:
+                        time.sleep(3)
+                    if "return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url:
+                        return True
+            except Exception:
+                pass
+
+            # ── Strategy C: navigate to fowelcome then do menu walk ──────
+            try:
+                log.info("    Navigating to fowelcome as anchor, then retrying menu...")
+                driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+                WebDriverWait(driver, 10).until(
+                    lambda d: "services.gst.gov.in" in d.current_url
+                )
+                time.sleep(1)
+                # Re-scan for Returns Dashboard link now on the home page
+                href2 = driver.execute_script("""
+                    var links = document.querySelectorAll('a');
+                    for (var i=0; i<links.length; i++) {
+                        var h = (links[i].href || '');
+                        if (h.includes('return.gst.gov.in') && h.includes('dashboard')) {
+                            links[i].click(); return h;
+                        }
+                    }
+                    return null;
+                """)
+                if href2:
+                    log.info(f"    Returns Dashboard clicked from fowelcome ✓")
+                    try:
+                        WebDriverWait(driver, 15).until(
+                            lambda d: "return.gst.gov.in" in d.current_url
+                            and "dashboard" in d.current_url
+                        )
+                        return True
+                    except Exception:
+                        time.sleep(3)
+                    if "return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url:
+                        return True
+            except Exception:
+                pass
+
+            return False
+
+        try:
+            # Step 1: Find Services nav link
+            svc_el = None
+            for xp in [
+                "//nav//a[normalize-space(text())='Services']",
+                "//ul[contains(@class,'nav')]//a[normalize-space()='Services']",
+                "//a[normalize-space(text())='Services']",
+            ]:
+                try:
+                    els = driver.find_elements(By.XPATH, xp)
+                    for el in els:
+                        if el.is_displayed():
+                            svc_el = el; break
+                    if svc_el: break
+                except Exception: pass
+
+            if not svc_el:
+                log.warning("    Services link not found on page — trying fallback strategies")
+                return _land_on_dashboard_from_here()
+
+            # Step 2: Hover + click Services to open dropdown
+            try:
+                ActionChains(driver).move_to_element(svc_el).perform()
+                time.sleep(0.3)
+                svc_el.click()
+                log.info("    Services menu clicked ✓")
+            except Exception:
+                driver.execute_script("arguments[0].click();", svc_el)
+                log.info("    Services menu clicked (JS) ✓")
+            time.sleep(0.5)
+
+            # Step 3: Wait for dropdown to be visible (contains 'Returns' link)
+            ret_el = None
+            try:
+                ret_el = WebDriverWait(driver, 4).until(
+                    EC.element_to_be_clickable((By.XPATH,
+                        "//*[contains(@class,'dropdown') and contains(@class,'open')]"
+                        "//a[normalize-space(text())='Returns']"
+                        "|"
+                        "//*[contains(@class,'dropdown-menu') and not(contains(@style,'display: none'))]"
+                        "//a[normalize-space(text())='Returns']"
+                    ))
+                )
+            except Exception: pass
+
+            if not ret_el:
+                try:
+                    for el in driver.find_elements(By.XPATH, "//a[normalize-space(text())='Returns']"):
+                        if el.is_displayed():
+                            parent = driver.execute_script(
+                                "return arguments[0].closest('ul,li,div')", el)
+                            if parent:
+                                cls = (parent.get_attribute("class") or "").lower()
+                                if "dropdown" in cls or "nav" in cls or "menu" in cls:
+                                    ret_el = el; break
+                except Exception: pass
+
+            if not ret_el:
+                # ── Dropdown didn't open — portal may have navigated to quicklinks ──
+                # Check current URL: if it's quicklinks/returns or similar, use fallback
+                log.warning("    Returns link not found in open dropdown — checking page state")
+                time.sleep(0.5)
+                cur_after = driver.current_url
+                log.info(f"    Current URL after Services click: {cur_after}")
+                if _land_on_dashboard_from_here():
+                    return True
+                return False
+
+            # Step 4: Click Returns
+            try:
+                ret_el.click()
+                log.info("    Returns clicked ✓")
+            except Exception:
+                driver.execute_script("arguments[0].click();", ret_el)
+                log.info("    Returns clicked (JS) ✓")
+            time.sleep(0.5)
+
+            # Step 5: Find and click Returns Dashboard
+            dash_el = None
+            try:
+                dash_el = WebDriverWait(driver, 4).until(
+                    EC.element_to_be_clickable((By.XPATH,
+                        "//a[contains(@href,'return.gst.gov.in') and contains(@href,'dashboard')]"
+                        "|"
+                        "//*[contains(@class,'dropdown') and contains(@class,'open')]"
+                        "//a[contains(normalize-space(text()),'Returns Dashboard')]"
+                        "|"
+                        "//*[contains(@class,'dropdown-menu')]"
+                        "//a[contains(normalize-space(text()),'Returns Dashboard')]"
+                    ))
+                )
+            except Exception: pass
+
+            if not dash_el:
+                try:
+                    for el in driver.find_elements(By.XPATH,
+                        "//a[contains(normalize-space(text()),'Returns Dashboard')]"):
+                        if el.is_displayed():
+                            dash_el = el; break
+                except Exception: pass
+
+            if not dash_el:
+                log.warning("    Returns Dashboard link not found in submenu — trying fallback")
+                if _land_on_dashboard_from_here():
+                    return True
+                return False
+
+            try:
+                dash_el.click()
+                log.info("    Returns Dashboard clicked ✓")
+            except Exception:
+                driver.execute_script("arguments[0].click();", dash_el)
+                log.info("    Returns Dashboard clicked (JS) ✓")
+
+            # Step 6: Wait for URL to become return.gst.gov.in/dashboard
+            try:
+                WebDriverWait(driver, 15).until(
+                    lambda d: ("return.gst.gov.in" in d.current_url and "dashboard" in d.current_url)
+                    or "accessdenied" in d.current_url.lower()
+                    or ("login" in d.current_url.lower() and "fowelcome" not in d.current_url.lower())
+                )
+            except Exception:
+                time.sleep(3)
+
+            cur_now = driver.current_url
+            log.info(f"    After nav: {cur_now}")
+
+            if "return.gst.gov.in" in cur_now and "dashboard" in cur_now:
+                return True
+
+            # Landed on services dashboard — try direct URL jump (session proven active)
+            if "services.gst.gov.in" in cur_now and "dashboard" in cur_now:
+                log.info("    On services dashboard — jumping to returns dashboard directly...")
+                try:
+                    driver.get("https://return.gst.gov.in/returns/auth/dashboard")
+                    WebDriverWait(driver, 12).until(
+                        lambda d: "dashboard" in d.current_url.lower()
+                        or "accessdenied" in d.current_url.lower()
+                    )
+                    if "return.gst.gov.in" in driver.current_url and "dashboard" in driver.current_url:
+                        log.info("    ✅ Jumped to returns dashboard ✓")
+                        return True
+                except Exception: pass
+
+            # Final fallback strategies
+            return _land_on_dashboard_from_here()
+
+        except Exception as _nav_exc:
+            log.warning(f"    Nav attempt error: {_nav_exc}")
+            return False
+
+    def _is_on_returns_dashboard():
+        return ("return.gst.gov.in" in driver.current_url and
+                "dashboard" in driver.current_url)
+
+    def _is_on_services_dashboard():
+        return ("services.gst.gov.in" in driver.current_url and
+                "dashboard" in driver.current_url)
+
+    # ── Main nav loop — up to 5 full attempts ────────────────────────
+    # Extra attempts handle transient dropdown timing issues without re-login
+    for nav_attempt in range(1, 6):
+        log.info(f"    [Nav {nav_attempt}/5] Services → Returns → Returns Dashboard ...")
+
+        if _do_full_nav():
+            log.info("    ✅ Returns Dashboard loaded ✓")
+            return True
+
+        cur2 = driver.current_url
+        log.info(f"    [Nav {nav_attempt}] URL: {cur2}")
+
+        # Access Denied or session lost → tell caller to re-login immediately
+        if "accessdenied" in cur2.lower() or is_session_lost(driver):
+            log.warning(f"    [Nav {nav_attempt}] Session lost / Access Denied — re-login needed")
+            show_access_denied_overlay(driver, CURRENT_CLIENT.get("username",""), log)
+            return False
+
+        # If nav attempt returned to quicklinks — only bail if session
+        # is actually lost (login page). Otherwise retry — the fowelcome
+        # fallback inside Strategy A will have moved us to the right place.
+        if "quicklinks" in cur2.lower():
+            if is_session_lost(driver):
+                log.warning(f"    [Nav {nav_attempt}] Session lost on quicklinks — re-login needed")
+                return False
+            log.info(f"    [Nav {nav_attempt}] Still on quicklinks (session OK) — retrying nav...")
+            time.sleep(1)
+            continue
+
+        log.warning(f"    [Nav {nav_attempt}] Not on Returns Dashboard — retrying...")
+        time.sleep(1)
+
+    # ★ FIX: All menu-nav attempts failed.
+    # BEFORE triggering re-login, check if session is actually alive.
+    # The nav failure may be a dropdown timing issue, not a session loss.
+    log.warning("    All menu-nav attempts failed — checking session before re-login...")
+
+    if not is_session_lost(driver):
+        # Session is alive — try direct URL jump (last resort)
+        log.info("    Session alive — trying direct URL: return.gst.gov.in/returns/auth/dashboard")
+        try:
+            driver.get("https://return.gst.gov.in/returns/auth/dashboard")
+            WebDriverWait(driver, 12).until(
+                lambda d: "dashboard" in d.current_url.lower()
+                          or "accessdenied" in d.current_url.lower()
+                          or "login" in d.current_url.lower()
+            )
+            cur_direct = driver.current_url
+            log.info(f"    Direct URL result: {cur_direct}")
+            if "return.gst.gov.in" in cur_direct and "dashboard" in cur_direct:
+                log.info("    ✅ Reached Returns Dashboard via direct URL ✓")
+                return True
+            elif "accessdenied" not in cur_direct.lower() and not is_session_lost(driver):
+                # Portal may have accepted it — try fowelcome then re-navigate
+                log.info("    Direct URL didn't land on dashboard — trying fowelcome...")
+                try:
+                    driver.get("https://services.gst.gov.in/services/auth/fowelcome")
+                    WebDriverWait(driver, 10).until(lambda d: "gst.gov.in" in d.current_url)
+                    time.sleep(1)
+                    if _do_full_nav():
+                        log.info("    ✅ Returns Dashboard loaded after fowelcome retry ✓")
+                        return True
+                except Exception: pass
+        except Exception as _du:
+            log.warning(f"    Direct URL attempt error: {_du}")
+
+        # Still alive but couldn't reach dashboard — return False only to trigger
+        # one more re-nav attempt at caller level, not a full re-login
+        log.warning("    Nav failed but session alive — caller will retry navigation")
+        return False
+
+    # Session is truly dead — return False to trigger re-login
+    log.error("    All nav attempts failed AND session is dead — re-login needed")
+    return False
+
+
+def select_and_search(driver, month_name, log):
+    """Select FY/Quarter/Period dropdowns then click SEARCH. Uses smart waits — no fixed sleeps."""
+    log.info(f"    Setting: FY={FY_LABEL}  Quarter={QUARTER_MAP.get(month_name,'')}  Period={month_name}")
+
+    # Wait for dropdowns to appear (max 4s)
+    try:
+        WebDriverWait(driver, 4).until(
+            lambda d: len(d.find_elements(By.TAG_NAME, "select")) >= 1
+        )
+    except Exception: pass
+
+    all_sels = driver.find_elements(By.TAG_NAME, "select")
+
+    # ── Fast JS dropdown setter ────────────────────────────────────────
+    # Set all 3 dropdowns (FY / Quarter / Period) in one JS call:
+    # find each select by its options, set value, fire 'change'.
+    # Falls back to Selenium Select per-dropdown if JS fails.
+    qtr = QUARTER_MAP.get(month_name, "")
+    month_names_lower = ["january","february","march","april","may","june",
+                         "july","august","september","october","november","december"]
+    js_result = None
+    try:
+        js_result = driver.execute_script("""
+            var fy_label = arguments[0];
+            var qtr_prefix = arguments[1];
+            var period = arguments[2].toLowerCase();
+            var result = {fy:false, qtr:false, period:false};
+            var sels = document.querySelectorAll('select');
+            for(var i=0;i<sels.length;i++){
+                var opts = Array.from(sels[i].options).map(o=>o.text.trim());
+                var optsLow = opts.map(o=>o.toLowerCase());
+                // FY dropdown: has options like "2025-26"
+                if(!result.fy && opts.some(o=>o.includes('-') && o.length<=9)){
+                    for(var j=0;j<opts.length;j++){
+                        if(opts[j].includes(fy_label)){
+                            sels[i].value = sels[i].options[j].value;
+                            sels[i].dispatchEvent(new Event('change',{bubbles:true}));
+                            result.fy = opts[j]; break;
+                        }
+                    }
+                }
+                // Quarter dropdown
+                else if(!result.qtr && optsLow.some(o=>o.includes('quarter'))){
+                    for(var j=0;j<optsLow.length;j++){
+                        if(optsLow[j].includes(qtr_prefix.toLowerCase())){
+                            sels[i].value = sels[i].options[j].value;
+                            sels[i].dispatchEvent(new Event('change',{bubbles:true}));
+                            result.qtr = opts[j]; break;
+                        }
+                    }
+                }
+                // Period dropdown: has month names
+                else if(!result.period && optsLow.some(o=>
+                    ['january','february','march','april','may','june',
+                     'july','august','september','october','november','december'
+                    ].some(m=>o.includes(m)))){
+                    for(var j=0;j<optsLow.length;j++){
+                        if(optsLow[j].includes(period)){
+                            sels[i].value = sels[i].options[j].value;
+                            sels[i].dispatchEvent(new Event('change',{bubbles:true}));
+                            result.period = opts[j]; break;
+                        }
+                    }
+                }
+            }
+            return result;
+        """, FY_LABEL, qtr[:9], month_name)
+    except Exception: pass
+
+    if js_result and js_result.get("fy") and js_result.get("period"):
+        log.info(f"    FY: {js_result['fy']} ✓  Quarter: {js_result.get('qtr','')} ✓  Period: {js_result['period']} ✓")
+    else:
+        # JS failed — fall back to Selenium Select per-dropdown
+        fy_changed = False
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any("-" in o and len(o) <= 9 for o in opts):
+                    current_val = sel_el.get_attribute("value") or ""
+                    if FY_LABEL in current_val:
+                        log.info(f"    FY: already {FY_LABEL} ✓")
+                        break
+                    for opt in s.options:
+                        if FY_LABEL in opt.text:
+                            s.select_by_visible_text(opt.text)
+                            log.info(f"    FY: {opt.text} ✓")
+                            fy_changed = True
+                            break
+                    break
+            except Exception: continue
+        if fy_changed:
+            try:
+                WebDriverWait(driver, 4).until(
+                    lambda d: len(d.find_elements(By.TAG_NAME, "select")) >= 2
+                )
+            except Exception:
+                time.sleep(1)
+        all_sels = driver.find_elements(By.TAG_NAME, "select")
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any("quarter" in o.lower() for o in opts):
+                    for opt in s.options:
+                        if qtr[:9].lower() in opt.text.lower():
+                            s.select_by_visible_text(opt.text)
+                            log.info(f"    Quarter: {opt.text} ✓"); break
+                    break
+            except Exception: continue
+        all_sels = driver.find_elements(By.TAG_NAME, "select")
+        for sel_el in all_sels:
+            try:
+                s = Select(sel_el)
+                opts = [o.text.strip() for o in s.options]
+                if any(m in " ".join(opts).lower() for m in month_names_lower):
+                    for opt in s.options:
+                        if month_name.lower() in opt.text.lower():
+                            s.select_by_visible_text(opt.text)
+                            log.info(f"    Period: {opt.text} ✓"); break
+                    break
+            except Exception: continue
+
+    # SEARCH — try JS first (instant), then XPath (3s timeout)
+    search_done = False
+    try:
+        driver.execute_script("""
+            var btns=document.querySelectorAll('button,input[type=submit]');
+            for(var i=0;i<btns.length;i++){
+                var t=(btns[i].innerText||btns[i].value||'').toUpperCase();
+                if(t.includes('SEARCH')){btns[i].click();break;}
+            }
+        """)
+        search_done = True
+        log.info("    SEARCH clicked via JS ✓")
+    except Exception: pass
+
+    if not search_done:
+        try_click(driver, [
+            "//button[normalize-space()='SEARCH']",
+            "//button[normalize-space()='Search']",
+            "//button[contains(text(),'SEARCH')]",
+            "//input[@value='SEARCH']",
+        ], timeout=3, log=log)
+
+    # NOTE: tile wait removed from here — caller waits for ALL tabs together
+    # (see Step 2b poll in multitab_direct_download for simultaneous tile wait)
+    log.info("    SEARCH fired ✓")
+
+
+# ==========================================================
+# CLICK TILE + DOWNLOAD BUTTON
+# After SEARCH, tiles appear: GSTR-1, GSTR-2B, GSTR-2A, GSTR-3B
+# Each tile has VIEW and DOWNLOAD buttons
+# ==========================================================
+def is_gstr1a_available(driver, log):
+    """
+    Check if GSTR-1A tile shows "VIEW GSTR-1A" button (filed, PDF available)
+    or only "PREPARE ONLINE" (not filed — nothing to download).
+    Returns True  → GSTR-1A is filed: "VIEW GSTR-1A" button present
+    Returns False → GSTR-1A only shows "PREPARE ONLINE" — skip this month
+    """
+    try:
+        body_text = driver.find_element(By.TAG_NAME, "body").text.upper()
+        # If GSTR-1A tile only has "PREPARE ONLINE" and no DOWNLOAD near it, it's not available
+        # Strategy: look for DOWNLOAD button specifically inside GSTR-1A tile
+        name_variants = ["GSTR1A", "GSTR-1A"]
+        for variant in name_variants:
+            subtitle_els = driver.find_elements(By.XPATH,
+                f"//*[not(self::button) and not(self::a) and normalize-space(text())='{variant}']")
+            for subtitle_el in subtitle_els:
+                parent = subtitle_el
+                for level in range(6):
+                    try:
+                        parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                        if parent is None: break
+                        tile_text = (driver.execute_script("return arguments[0].innerText;", parent) or "").upper()
+                        # Stop if we've climbed too high (multiple tiles)
+                        gstr_count = sum(1 for g in ["GSTR-1 ", "GSTR-1A", "GSTR-2B", "GSTR-2A", "GSTR-3B"]
+                                         if g in tile_text)
+                        if gstr_count > 1: break
+                        # Check for DOWNLOAD button in this tile
+                        view_btns = parent.find_elements(By.XPATH,
+                            ".//*[contains(translate(normalize-space(text()),"
+                            "'abcdefghijklmnopqrstuvwxyz-',"
+                            "'ABCDEFGHIJKLMNOPQRSTUVWXYZ '),'VIEW GSTR') "
+                            "and contains(translate(normalize-space(text()),"
+                            "'abcdefghijklmnopqrstuvwxyz-',"
+                            "'ABCDEFGHIJKLMNOPQRSTUVWXYZ '),'1A')]")
+                        if view_btns:
+                            log.info("    GSTR-1A availability: VIEW GSTR-1A button found ✓ (filed)")
+                            return True
+                        # Check for PREPARE ONLINE (means not available)
+                        if "PREPARE ONLINE" in tile_text:
+                            log.info("    GSTR-1A availability: PREPARE ONLINE only — NOT available for this client")
+                            return False
+                    except Exception: break
+    except Exception as e:
+        log.warning(f"    GSTR-1A availability check error: {e}")
+    # Default: if we couldn't determine, assume NOT available (safer — avoids wasted retries)
+    if "PREPARE ONLINE" in (driver.find_element(By.TAG_NAME, "body").text.upper()):
+        log.info("    GSTR-1A availability: PREPARE ONLINE detected in page — NOT available")
+        return False
+    log.info("    GSTR-1A availability: could not determine — assuming NOT available")
+    return False
+
+
+
+
+def download_gstr1a_pdf(driver, client_path, month_name, year, log):
+    """
+    Download GSTR-1A Summary PDF — exact portal flow:
+      Step 1: On dashboard → click VIEW GSTR-1A
+              → wait for gstr1a portal to FULLY load (URL change + spinner gone)
+              → scroll to bottom (tiles may be below fold)
+      Step 2: Click VIEW SUMMARY
+              → wait for summary page to fully load
+              → scroll to bottom (download button is at page bottom)
+      Step 3: Click DOWNLOAD GSTR-1A SUMMARY (PDF)
+              → wait for PDF file to appear in client_path
+    """
+    from pathlib import Path as _Path
+    import time as _time
+
+    save_name = f"GSTR1A_{month_name}_{year}.pdf"
+    save_path = _Path(client_path) / save_name
+
+    def _pdf_snap():
+        return {str(f): f.stat().st_mtime
+                for f in _Path(client_path).iterdir()
+                if f.suffix.lower() == ".pdf"
+                and not f.name.endswith((".crdownload", ".tmp", ".part"))}
+
+    def _wait_page_ready(timeout=20):
+        """Wait for Angular/portal page to fully render (no spinner, readyState=complete)."""
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            _time.sleep(0.5)
+            try:
+                state = driver.execute_script("return document.readyState")
+                spinner = driver.execute_script(
+                    "return !!(document.querySelector('.loading') || "
+                    "document.querySelector('[class*=spinner]') || "
+                    "document.querySelector('[class*=loader]'))"
+                )
+                if state == "complete" and not spinner:
+                    _time.sleep(0.5)  # extra settle for Angular digest
+                    return True
+            except Exception: pass
+        return False
+
+    def _scroll_and_find_button(*keywords):
+        """Scroll page fully then find button containing all keywords."""
+        # Scroll to top first
+        driver.execute_script("window.scrollTo(0, 0);")
+        _time.sleep(0.3)
+        # Scroll slowly to bottom to trigger lazy-load
+        driver.execute_script("""
+            var total = document.body.scrollHeight;
+            var step = Math.floor(total / 5);
+            var pos = 0;
+            var iv = setInterval(function(){
+                pos = Math.min(pos + step, total);
+                window.scrollTo(0, pos);
+                if (pos >= total) clearInterval(iv);
+            }, 150);
+        """)
+        _time.sleep(1.2)  # wait for scroll + lazy render
+        # Now click matching button
+        js = """
+            var kws = arguments;
+            var els = Array.from(document.querySelectorAll('button,a,[role=button],input[type=button]'));
+            for (var i = 0; i < els.length; i++) {
+                var t = (els[i].innerText || els[i].value || els[i].textContent || '')
+                          .trim().toUpperCase().replace(/\\s+/g,' ');
+                var match = true;
+                for (var k = 0; k < kws.length; k++) {
+                    if (t.indexOf(kws[k]) === -1) { match = false; break; }
+                }
+                if (match && els[i].offsetParent !== null) {
+                    els[i].scrollIntoView({block:'center', behavior:'smooth'});
+                    setTimeout(function(e){ e.click(); }, 100, els[i]);
+                    return t;
+                }
+            }
+            return null;
+        """
+        return driver.execute_script(js, *keywords)
+
+    try:
+        # ── STEP 1: Click VIEW GSTR-1A ──────────────────────────────────
+        log.info(f"    GSTR-1A {month_name}: looking for VIEW GSTR-1A button...")
+        clicked1 = driver.execute_script("""
+            var els = Array.from(document.querySelectorAll('button,a,[role=button]'));
+            for (var i = 0; i < els.length; i++) {
+                var t = (els[i].innerText || els[i].textContent || '')
+                          .trim().toUpperCase().replace(/\\s+/g,' ');
+                if ((t === 'VIEW GSTR-1A' || t === 'VIEW GSTR1A' || t === 'VIEW GSTR - 1A')
+                    && els[i].offsetParent !== null) {
+                    els[i].scrollIntoView({block:'center'});
+                    els[i].click();
+                    return t;
+                }
+            }
+            return null;
+        """)
+        if not clicked1:
+            log.warning(f"    GSTR-1A {month_name}: VIEW GSTR-1A button not found on dashboard")
+            return None
+        log.info(f"    GSTR-1A {month_name}: clicked VIEW GSTR-1A ✓")
+
+        # Wait for URL to change to gstr1a portal
+        log.info(f"    GSTR-1A {month_name}: waiting for gstr1a portal to load...")
+        nav_ok = False
+        for _ in range(40):  # up to 20s
+            _time.sleep(0.5)
+            cur = driver.current_url.lower()
+            if "gstr1a" in cur or ("gstr1" in cur and "dashboard" not in cur and "offlinedownload" not in cur):
+                nav_ok = True
+                break
+        if not nav_ok:
+            log.warning(f"    GSTR-1A {month_name}: URL did not change to gstr1a portal (still: {driver.current_url[:60]})")
+        
+        # Wait for page to FULLY render
+        _wait_page_ready(timeout=15)
+        log.info(f"    GSTR-1A {month_name}: portal page loaded, URL={driver.current_url[:60]}")
+
+        # ── STEP 2: Scroll then click VIEW SUMMARY ───────────────────────
+        log.info(f"    GSTR-1A {month_name}: scrolling and clicking VIEW SUMMARY...")
+        clicked2 = None
+        for attempt in range(4):
+            clicked2 = _scroll_and_find_button("VIEW SUMMARY")
+            if clicked2:
+                break
+            # Retry with broader match
+            clicked2 = _scroll_and_find_button("SUMMARY")
+            if clicked2:
+                break
+            log.info(f"    GSTR-1A {month_name}: VIEW SUMMARY not found (attempt {attempt+1}/4), waiting...")
+            _time.sleep(3)
+            _wait_page_ready(timeout=8)
+
+        if not clicked2:
+            # Log page body for debugging
+            try:
+                body_text = driver.find_element("tag name", "body").text[:300]
+                log.warning(f"    GSTR-1A {month_name}: page body: {body_text}")
+            except Exception: pass
+            log.warning(f"    GSTR-1A {month_name}: VIEW SUMMARY button not found after 4 attempts")
+            return None
+        log.info(f"    GSTR-1A {month_name}: clicked VIEW SUMMARY ✓")
+
+        # Wait for summary page to FULLY load
+        log.info(f"    GSTR-1A {month_name}: waiting for summary page to load...")
+        _wait_page_ready(timeout=20)
+        # Also wait until download button or liability data appears
+        for _ in range(30):
+            _time.sleep(0.5)
+            try:
+                body = driver.find_element("tag name", "body").text.upper()
+                if any(k in body for k in ["DOWNLOAD", "TOTAL LIABILITY", "OUTWARD"]):
+                    break
+            except Exception: pass
+
+        # ── STEP 3: Scroll then click DOWNLOAD GSTR-1A SUMMARY (PDF) ────
+        # Re-apply CDP download dir before clicking
+        try:
+            driver.execute_cdp_cmd("Page.setDownloadBehavior",
+                {"behavior": "allow", "downloadPath": str(_Path(client_path))})
+        except Exception: pass
+
+        snap = _pdf_snap()
+        log.info(f"    GSTR-1A {month_name}: scrolling and clicking DOWNLOAD PDF button...")
+        clicked3 = None
+        for attempt in range(3):
+            clicked3 = _scroll_and_find_button("DOWNLOAD", "GSTR", "1A", "PDF")
+            if clicked3: break
+            clicked3 = _scroll_and_find_button("DOWNLOAD", "1A")
+            if clicked3: break
+            clicked3 = _scroll_and_find_button("DOWNLOAD", "PDF")
+            if clicked3: break
+            log.info(f"    GSTR-1A {month_name}: PDF button not found (attempt {attempt+1}/3), waiting...")
+            _time.sleep(3)
+
+        if not clicked3:
+            log.warning(f"    GSTR-1A {month_name}: DOWNLOAD PDF button not found after 3 attempts")
+            return None
+        log.info(f"    GSTR-1A {month_name}: clicked '{clicked3[:50]}' ✓ — waiting for PDF...")
+
+        # Poll for PDF file
+        deadline = _time.time() + 45
+        while _time.time() < deadline:
+            _time.sleep(0.5)
+            for f in _Path(client_path).iterdir():
+                if f.suffix.lower() != ".pdf": continue
+                if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                if f.stat().st_size < 5000: continue
+                prev = snap.get(str(f))
+                if prev is None or f.stat().st_mtime > prev + 0.1:
+                    try:
+                        if str(f) != str(save_path):
+                            f.rename(save_path)
+                    except Exception:
+                        import shutil as _sh
+                        _sh.copy2(str(f), str(save_path))
+                    sz = save_path.stat().st_size // 1024
+                    log.info(f"    ✅ Saved: {save_name} ({sz} KB)")
+                    return save_path
+        log.warning(f"    GSTR-1A {month_name}: PDF not received within 45s")
+        return None
+
+    except Exception as e:
+        log.warning(f"    GSTR-1A {month_name} error: {e}")
+        import traceback
+        log.warning(traceback.format_exc())
+        return None
+
+
+def click_tile_download(driver, tile_name, log):
+    """
+    Find the tile for tile_name and click its DOWNLOAD button.
+
+    ROOT FIX: GSTR-3B tile is BELOW THE FOLD on the portal page.
+    The script was finding only 1 DOWNLOAD button (GSTR-1's) because
+    it never scrolled down. Fix: scroll to bottom first so ALL tiles
+    are rendered and visible before searching.
+
+    GSTR-3B: use 'VIEW GSTR3B' as anchor (unique to that tile).
+    All others: find subtitle text → walk up DOM → DOWNLOAD inside.
+    """
+    log.info(f"    Finding {tile_name} tile DOWNLOAD button...")
+
+    # ── CRITICAL FIX: Scroll full page so all tiles are visible ──────
+    # GSTR-3B is below the fold — without scrolling, only 1 DOWNLOAD
+    # button (GSTR-1's) is visible and position fallback fails.
+    try:
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(0.5)
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+    # ── GSTR-3B: click the DOWNLOAD button on the tile ──────────────
+    # IMPORTANT: GSTR-3B tile has TWO buttons:
+    #   1. "VIEW GSTR3B" — opens filed return summary (NOT what we want here)
+    #   2. "DOWNLOAD"    — navigates to the Offline Download / print page
+    # We must click "DOWNLOAD", NOT "VIEW GSTR3B".
+    # After DOWNLOAD is clicked, a page appears where we click PRINT/PDF
+    # to trigger the actual PDF file download.
+    if tile_name.upper().replace("-","") == "GSTR3B":
+        log.info("    GSTR3B: looking for DOWNLOAD button in GSTR-3B tile...")
+
+        # Strategy A: Find GSTR-3B tile via unique "GSTR-3B" text, walk up
+        # to tile container, find the DOWNLOAD button inside that container.
+        # This avoids accidentally clicking a different tile's button.
+        for variant in ["GSTR-3B", "GSTR3B", "GSTR 3B"]:
+            try:
+                # Find elements whose text is EXACTLY the variant (tile label)
+                label_els = driver.find_elements(By.XPATH,
+                    f"//*[normalize-space(text())='{variant}' or "
+                    f"normalize-space(text())='{variant.upper()}']")
+                for label_el in label_els:
+                    if not label_el.is_displayed():
+                        try: driver.execute_script("arguments[0].scrollIntoView({block:'center'});", label_el)
+                        except Exception: pass
+                    parent = label_el
+                    for level in range(8):
+                        try:
+                            parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                            if parent is None: break
+                            # Stop if container spans multiple tiles
+                            ptext = (driver.execute_script("return arguments[0].innerText;", parent) or "").upper()
+                            gstr_count = sum(1 for g in ["GSTR-1 ","GSTR-1A","GSTR-2B","GSTR-2A","GSTR-3B"]
+                                             if g in ptext)
+                            if gstr_count > 1: break
+                            # Find DOWNLOAD button (not VIEW, not GENERATE)
+                            btns = parent.find_elements(By.XPATH,
+                                ".//*[(self::button or self::a) and "
+                                "contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD') and "
+                                "not(contains(translate(normalize-space(text()),'generate','GENERATE'),'GENERATE')) and "
+                                "not(contains(translate(normalize-space(text()),'view','VIEW'),'VIEW GSTR'))]")
+                            for btn in btns:
+                                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                                time.sleep(0.3)
+                                driver.execute_script("arguments[0].click();", btn)
+                                log.info(f"    GSTR3B DOWNLOAD clicked (Strategy A, level {level}) ✓")
+                                return True
+                        except Exception: break
+            except Exception: continue
+
+        # Strategy B: JS — scan all tiles, find GSTR-3B tile, click its DOWNLOAD
+        try:
+            clicked_text = driver.execute_script("""
+                var variants = ['GSTR-3B','GSTR3B','GSTR 3B'];
+                var allEls = document.querySelectorAll('*');
+                for (var i=0; i<allEls.length; i++) {
+                    var el = allEls[i];
+                    var t = (el.innerText || el.textContent || '').trim().toUpperCase();
+                    var isLabel = false;
+                    for (var v=0; v<variants.length; v++) {
+                        if (t === variants[v].toUpperCase()) { isLabel=true; break; }
+                    }
+                    if (!isLabel) continue;
+                    // Walk up to tile container
+                    var container = el;
+                    for (var lvl=0; lvl<10; lvl++) {
+                        if (!container.parentElement) break;
+                        container = container.parentElement;
+                        var ct = (container.innerText || '').toUpperCase();
+                        // Count GSTR tiles in container
+                        var cnt = 0;
+                        ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A','GSTR-3B'].forEach(function(g){
+                            if(ct.includes(g)) cnt++;
+                        });
+                        if (cnt > 1) break;
+                        // Find DOWNLOAD button inside
+                        var btns = container.querySelectorAll('button,a');
+                        for (var b=0; b<btns.length; b++) {
+                            var bt = (btns[b].innerText||btns[b].textContent||'').trim().toUpperCase();
+                            if (bt.includes('DOWNLOAD') && !bt.includes('GENERATE') && !bt.includes('VIEW GSTR')) {
+                                btns[b].scrollIntoView({block:'center'});
+                                btns[b].click();
+                                return bt;
+                            }
+                        }
+                    }
+                }
+                return null;
+            """)
+            if clicked_text:
+                log.info(f"    GSTR3B DOWNLOAD clicked (Strategy B JS: '{clicked_text}') ✓")
+                return True
+        except Exception as e:
+            log.warning(f"    GSTR3B Strategy B JS error: {e}")
+
+        # Strategy C: anchor on the unique "VIEW GSTR3B" button then find
+        # the DOWNLOAD sibling inside the same tile container.
+        # Replaces fragile position-index (index varies by portal layout,
+        # causing wrong-tile clicks that land on the GSTR-2B page).
+        try:
+            clicked_text = driver.execute_script("""
+                var viewBtns = Array.from(
+                    document.querySelectorAll('button,a,[role=button]')
+                ).filter(function(b) {
+                    var t = (b.innerText || b.textContent || '')
+                        .trim().toUpperCase().replace(/\\s+/g, '');
+                    return t === 'VIEWGSTR3B' || t === 'VIEWGSTR-3B';
+                });
+                if (!viewBtns.length) return null;
+                var container = viewBtns[0];
+                for (var i = 0; i < 8; i++) {
+                    if (!container.parentElement) break;
+                    container = container.parentElement;
+                    var btns = Array.from(
+                        container.querySelectorAll('button,a')
+                    );
+                    for (var b = 0; b < btns.length; b++) {
+                        var t = (btns[b].innerText || btns[b].textContent || '')
+                            .trim().toUpperCase();
+                        if (t === 'DOWNLOAD' && !t.includes('GENERATE')) {
+                            btns[b].scrollIntoView({block:'center'});
+                            btns[b].click();
+                            return 'VIEW_ANCHOR:' + t;
+                        }
+                    }
+                }
+                return null;
+            """)
+            if clicked_text:
+                log.info(f"    GSTR3B DOWNLOAD clicked (Strategy C VIEW-anchor) ✓")
+                return True
+        except Exception as e:
+            log.warning(f"    GSTR3B Strategy C error: {e}")
+
+        log.warning(f"    GSTR3B DOWNLOAD button not found — check page state")
+        return False
+
+    # ── All other tiles: subtitle anchor strategy ─────────────────────
+    name_variants = {
+        "GSTR1":  ["GSTR1", "GSTR-1"],
+        "GSTR1A": ["GSTR1A", "GSTR-1A"],
+        "GSTR2B": ["GSTR2B", "GSTR-2B"],
+        "GSTR2A": ["GSTR2A", "GSTR-2A"],
+    }
+    variants = name_variants.get(tile_name.upper().replace("-",""), [tile_name])
+
+    for variant in variants:
+        try:
+            subtitle_els = driver.find_elements(By.XPATH,
+                f"//*[not(self::button) and not(self::a) and normalize-space(text())='{variant}']")
+            if not subtitle_els:
+                subtitle_els = driver.find_elements(By.XPATH,
+                    f"//*[normalize-space(text())='{variant}']")
+            for subtitle_el in subtitle_els:
+                # Scroll subtitle into view first
+                try: driver.execute_script("arguments[0].scrollIntoView({block:'center'});", subtitle_el)
+                except Exception: pass
+                time.sleep(0.2)
+                parent = subtitle_el
+                for level in range(6):
+                    try:
+                        parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                        if parent is None: break
+                        btns = parent.find_elements(By.XPATH,
+                            ".//button[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD') "
+                            "and not(contains(text(),'GENERATE'))] | "
+                            ".//a[contains(translate(text(),'download','DOWNLOAD'),'DOWNLOAD') "
+                            "and not(contains(text(),'GENERATE'))]")
+                        for btn in btns:
+                            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                            time.sleep(0.2)
+                            driver.execute_script("arguments[0].click();", btn)
+                            log.info(f"    {tile_name} ({variant}) DOWNLOAD clicked at level {level} ✓")
+                            return True
+                    except Exception: break
+        except Exception: continue
+
+    log.warning(f"    {tile_name} tile DOWNLOAD button not found on page")
+    return False
+
+
+# ==========================================================
+# GENERATE FILE AND DOWNLOAD
+# After clicking DOWNLOAD on tile → new page shows:
+#   GENERATE JSON FILE TO DOWNLOAD
+#   GENERATE EXCEL FILE TO DOWNLOAD  (for 2B/2A)
+# Click generate → wait → download link appears → click it
+# ==========================================================
+def click_generate_only(driver, log):
+    """
+    Phase 1: Click GENERATE JSON button and move on immediately.
+    Do NOT wait for file — portal generates in background.
+    Returns True if button was clicked.
+    """
+    time.sleep(0.5)  # was SHORT_WAIT=3
+    log.info(f"    Generate page: {driver.current_url}")
+    clicked = try_click(driver, [
+        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE JSON')]",
+        "//button[contains(text(),'Generate JSON')]",
+        "//a[contains(text(),'GENERATE JSON')]",
+    ], timeout=8, log=log)
+    if clicked:
+        log.info("    GENERATE JSON clicked — moving on (file generates in background)")
+        time.sleep(0.5)  # was 2
+    else:
+        log.warning("    GENERATE JSON button not found")
+    return clicked
+
+def download_ready_file(driver, client_dir, save_name, log):
+    """
+    Phase 2: Find 'Click here to download' link and download the ready ZIP.
+    Uses fast 0.5s file polling instead of fixed sleep(8).
+    Returns True if downloaded successfully.
+    """
+    time.sleep(0.5)  # was SHORT_WAIT=3
+    log.info(f"    Checking for download link on: {driver.current_url}")
+
+    client_path = Path(client_dir)
+    before = {str(f): f.stat().st_mtime for f in client_path.iterdir()
+              if f.suffix.lower() in {".zip", ".json", ".xlsx"}}
+
+    for xp in [
+        "//a[contains(text(),'Click here to download')]",
+        "//a[contains(text(),'click here to download')]",
+        "//a[contains(text(),'File 1')]",
+        "//a[contains(text(),'File 2')]",
+        "//a[contains(@href,'.zip')]",
+        "//a[contains(@href,'filedownload')]",
+        "//a[contains(@href,'download') and string-length(@href) > 50]",
+    ]:
+        try:
+            els = driver.find_elements(By.XPATH, xp)
+            for el in els:
+                if el.is_displayed():
+                    href = el.get_attribute("href") or ""
+                    txt  = el.text.strip()
+                    log.info(f"    Found link: '{txt}' → {href[:60]}")
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                    driver.execute_script("arguments[0].click();", el)
+                    log.info(f"    Download clicked: {save_name} ✓")
+                    # Fast poll instead of fixed sleep(8)
+                    deadline = time.time() + 15
+                    while time.time() < deadline:
+                        time.sleep(0.5)
+                        for f in client_path.iterdir():
+                            if f.suffix.lower() not in {".zip", ".json", ".xlsx"}: continue
+                            if f.name.endswith((".crdownload", ".tmp")): continue
+                            prev = before.get(str(f))
+                            if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 5000:
+                                time.sleep(0.5)
+                                rename_latest(client_dir, save_name, [".zip", ".json", ".xlsx"], log)
+                                return True
+                    rename_latest(client_dir, save_name, [".zip", ".json", ".xlsx"], log)
+                    return True
+        except Exception: continue
+
+    log.warning(f"    No download link found for {save_name} — file may not be ready yet")
+    return False
+
+def generate_and_download(driver, file_type, client_dir, save_name, log):
+    """Legacy wrapper — kept for compatibility."""
+    return click_generate_only(driver, log)
+
+
+# ==========================================================
+# MULTI-TAB SIMULTANEOUS DOWNLOAD — GSTR-2B & GSTR-3B
+# Mirrors the manual "12 tabs" approach:
+#   Batch 1: Open 6 tabs → navigate each → click all → all download simultaneously
+#   Batch 2: Open next 6 tabs → same
+#   Failed months → retry T1→T2→T3 sequentially
+# ==========================================================
+def multitab_direct_download(driver, client_dir, rtype, log, batch_size=6):
+    """
+    Download all 12 months of GSTR-2B or GSTR-3B.
+
+    ── GSTR-3B (SIMULTANEOUS multi-tab) ──────────────────────────────
+    After clicking DOWNLOAD on the dashboard tile, the PDF downloads
+    DIRECTLY in the browser — no intermediate domain page.
+    Chrome handles 6 parallel PDF downloads independently.
+    → Open 6 tabs, click all simultaneously, all 6 PDFs arrive together.
+
+    ── GSTR-2B (SIMULTANEOUS multi-tab — same as GSTR-3B) ───────────
+    After clicking tile DOWNLOAD, browser goes to gstr2b.gst.gov.in for
+    THAT TAB's selected month. Each tab has its OWN month context.
+    Clicking GENERATE EXCEL on all 6 tabs → 6 DIFFERENT month files
+    download simultaneously (confirmed: Nov/Oct/Sep/Aug/Jul/Jun in parallel).
+    Portal filename: MMYYYY_GSTIN_GSTR2B_date.xlsx — matched by MMYYYY.
+
+    Returns dict: {month_key: "OK" | "NOT_FOUND" | "TILE_FAIL" | ...}
+    """
+    if rtype == "GSTR2B":
+        return _gstr2b_multitab(driver, client_dir, log, batch_size)
+    else:
+        return _gstr3b_multitab(driver, client_dir, log, batch_size)
+
+
+def _gstr2b_multitab(driver, client_dir, log, batch_size=6):
+    """
+    GSTR-2B: Parallel tab SETUP + Sequential GENERATE (correct approach).
+
+    WHY SEQUENTIAL GENERATE IS REQUIRED:
+    ──────────────────────────────────────────────────────────────────────
+    The GSTR-2B download page (gstr2b.gst.gov.in/gstr2b/auth/gstr2bdwld)
+    uses SERVER-SIDE session state to decide which month to generate.
+    When multiple tabs all click GENERATE EXCEL simultaneously, every
+    request hits the same server session → all tabs download the SAME
+    month (the last one the server saw), confirmed by screenshot showing
+    092025_...GSTR2B... downloaded 5 times with different file sizes.
+
+    CORRECT APPROACH — Pipeline:
+    ──────────────────────────────────────────────────────────────────────
+    Phase 1 (PARALLEL):   Open 6 tabs → navigate each to its month →
+                          click tile DOWNLOAD → each tab lands on
+                          gstr2b.gst.gov.in with its month in context.
+                          ALL tabs ready in ~20s simultaneously.
+
+    Phase 2 (ISOLATED SEQUENTIAL):
+      For each tab:
+        1. CLOSE all other gstr2b tabs (eliminates server session conflict)
+        2. Navigate THIS tab: dashboard → select month → tile DOWNLOAD
+        3. Click GENERATE EXCEL (isolated session = correct month guaranteed)
+        4. Wait for file → verify MMYYYY → rename → next tab
+      Each month takes ~6s. 6 tabs × ~6s = ~36s total.
+
+    Speed gain vs pure sequential: ~2× faster (parallel setup saves navigation).
+    Correctness: isolated gstr2b session = correct month every time.
+
+    Portal filename format: MMYYYY_GSTIN_GSTR2B_date.xlsx
+      e.g. 092025_33ABLFM7918H1ZZ_GSTR2B_21042026.xlsx
+    """
+    results     = {}
+    client_path = Path(client_dir)
+    extensions  = {".xlsx", ".zip", ".json"}
+
+    EXCEL_GEN_XP = [
+        "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE EXCEL')]",
+        "//button[contains(text(),'Generate Excel')]",
+        "//a[contains(text(),'GENERATE EXCEL')]",
+    ]
+
+    def _snap():
+        return {str(f): f.stat().st_mtime for f in client_path.iterdir()
+                if f.suffix.lower() in extensions
+                and not f.name.endswith((".crdownload",".tmp",".part"))}
+
+    def _wait_one_file(snap_before, timeout=45):
+        """Poll until exactly 1 new complete .xlsx file appears.
+        Tracks .crdownload in-progress files — extends wait while download is active."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(0.5)
+            # Extend deadline while Chrome is actively writing a .crdownload
+            active_crd = [f for f in client_path.iterdir()
+                          if f.name.endswith(".crdownload") and f.stat().st_size > 0]
+            if active_crd:
+                deadline = max(deadline, time.time() + 15)  # extend 15s
+            for f in client_path.iterdir():
+                if f.suffix.lower() not in extensions: continue
+                if f.name.endswith((".crdownload",".tmp",".part")): continue
+                prev = snap_before.get(str(f))
+                if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 5000:
+                    time.sleep(0.3)   # let Chrome finish flushing
+                    return f
+        return None
+
+    def _fname_match(f, month_num, year):
+        """Match portal filename MMYYYY_GSTIN_GSTR2B_date.xlsx to month."""
+        stem = f.stem.lower()
+        mn2  = str(month_num).zfill(2)
+        mn   = str(month_num)
+        yr   = str(year)
+        yr2  = yr[-2:]
+        patterns = [
+            f"{mn2}{yr}", f"{mn}{yr}",    # 062025, 62025
+            f"{mn2}_{yr}", f"{mn}_{yr}",  # 06_2025
+            f"_{mn2}{yr2}", f"_{mn}{yr2}",# _0625, _625
+            f"{mn2}-{yr}", f"{mn}-{yr}",  # 06-2025
+        ]
+        return any(p in stem for p in patterns)
+
+    def _rename_file(src_f, dest, month_name):
+        try:
+            # ★ ZIP guard: reject PDF/HTML/non-portal ZIPs masquerading as GSTR-1
+            if dest.suffix.lower() == ".zip" and src_f.exists() and src_f.stat().st_size > 0:
+                with open(src_f, "rb") as _chk:
+                    magic = _chk.read(4)
+                if magic[:4] == b"%PDF" or magic[:2] in (b"<h", b"<!"):
+                    log.warning(
+                        f"    ✗ [{month_name}] REJECTED: portal returned "
+                        f"{'PDF' if magic[:4]==b'%PDF' else 'HTML'} instead of ZIP "
+                        f"({src_f.name}, {src_f.stat().st_size//1024}KB) — will retry"
+                    )
+                    return False
+                if magic[:2] != b"PK":
+                    log.warning(
+                        f"    ✗ [{month_name}] REJECTED: not a valid ZIP "
+                        f"(magic={magic.hex()}, file={src_f.name})"
+                    )
+                    return False
+                # ★ CRITICAL: For GSTR1_*.zip destinations, verify the JSON fp field
+                # This catches the gstr7_automation zip / wrong-period zip problem
+                if dest.name.startswith("GSTR1_") and not dest.name.startswith("GSTR1A_"):
+                    # Extract expected month/year from dest filename: GSTR1_April_2025.zip
+                    try:
+                        _parts = dest.stem.split("_")  # ['GSTR1','April','2025']
+                        _mn    = _parts[1]  # 'April'
+                        _yr    = int(_parts[2])
+                        _MMAP  = {"January":1,"February":2,"March":3,"April":4,
+                                  "May":5,"June":6,"July":7,"August":8,
+                                  "September":9,"October":10,"November":11,"December":12}
+                        _mm    = _MMAP.get(_mn, 0)
+                        if _mm and _yr:
+                            if not verify_gstr1_zip(src_f, _mm, _yr, log):
+                                log.warning(
+                                    f"    ✗ [{month_name}] REJECTED: ZIP fp mismatch "
+                                    f"or no GSTR-1 JSON inside ({src_f.name}) — "
+                                    f"contains wrong data, will retry"
+                                )
+                                try: src_f.unlink()  # delete the bad file
+                                except Exception: pass
+                                return False
+                    except Exception: pass
+            if str(src_f) != str(dest):
+                src_f.rename(dest)
+            sz = dest.stat().st_size // 1024
+            log.info(f"    ✅ Saved: {dest.name} ({sz} KB)")
+            return True
+        except Exception:
+            try:
+                import shutil
+                shutil.copy2(str(src_f), str(dest))
+                try: src_f.unlink()
+                except Exception: pass
+                sz = dest.stat().st_size // 1024
+                log.info(f"    ✅ Saved (copy): {dest.name} ({sz} KB)")
+                return True
+            except Exception as e:
+                log.warning(f"    Rename failed {month_name}: {e}")
+                return False
+
+    total         = len(MONTHS)
+    total_batches = -(-total // batch_size)
+    ok_count      = 0
+
+    log.info(f"\n  ══ GSTR-2B — Pipeline Download (parallel setup + sequential generate) ══")
+    log.info(f"  Phase 1: Open {batch_size} tabs simultaneously → each navigates to its month")
+    log.info(f"  Phase 2: One-by-one GENERATE EXCEL per tab → prevents server session clash")
+    log.info(f"  Batches: {total_batches} × {batch_size} months = {total} months total")
+
+    safe_go_to_dashboard(driver, log)
+    main_window = driver.current_window_handle
+
+    for batch_idx in range(0, total, batch_size):
+        batch     = MONTHS[batch_idx : batch_idx + batch_size]
+        batch_num = batch_idx // batch_size + 1
+        log.info(f"\n  ── Batch {batch_num}/{total_batches}: {[m[0] for m in batch]} ──")
+
+        # Skip already-downloaded months
+        pending = []
+        for month_name, month_num, year in batch:
+            save_name = f"GSTR2B_{month_name}_{year}.xlsx"
+            if (client_path / save_name).exists():
+                log.info(f"    ✓ {month_name} already done — skip")
+                results[f"{month_name}_{year}_GSTR2B"] = "OK"
+                ok_count += 1
+            else:
+                pending.append((month_name, month_num, year, save_name))
+
+        if not pending:
+            continue
+
+        if "return.gst.gov.in" not in driver.current_url or "dashboard" not in driver.current_url:
+            safe_go_to_dashboard(driver, log)
+        main_window = driver.current_window_handle
+
+        # ── PHASE 1A: Open all tabs simultaneously from dashboard ─────────
+        DASH_URL = "https://return.gst.gov.in/returns/auth/dashboard"
+        tab_map  = {}
+        for month_name, month_num, year, save_name in pending:
+            try:
+                driver.execute_script("window.open(arguments[0]);", DASH_URL)
+                time.sleep(0.25)
+                new_tab = driver.window_handles[-1]
+                tab_map[new_tab] = (month_name, month_num, year, save_name)
+                log.info(f"    Opened tab: {month_name}")
+                driver.switch_to.window(main_window)
+            except Exception as e:
+                log.warning(f"    Tab open failed {month_name}: {e}")
+
+        # ★ FIX 3: Set download dir on ALL tabs immediately after opening
+        try: set_download_dir_all_tabs(driver, client_path)
+        except Exception: pass
+        # ── PHASE 1B: Navigate ALL tabs to their month simultaneously ──────
+        # Tabs loaded in parallel in background while we set dropdowns.
+        # select_and_search is pure JS — very fast (~0.2s per tab).
+        nav_ok = {}
+        log.info(f"    Setting month/FY on {len(tab_map)} tabs (parallel setup)...")
+        for tab, (month_name, month_num, year, save_name) in list(tab_map.items()):
+            try:
+                driver.switch_to.window(tab)
+                time.sleep(0.3)
+                cur = driver.current_url
+                if "dashboard" not in cur:
+                    try:
+                        WebDriverWait(driver, 10).until(
+                            lambda d: "dashboard" in d.current_url or "login" in d.current_url)
+                    except Exception: pass
+                if "login" in driver.current_url or "denied" in driver.current_url:
+                    safe_go_to_dashboard(driver, log)
+                select_and_search(driver, month_name, log)
+                # Scroll so GSTR-2B tile is visible before clicking
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(0.2)
+                driver.execute_script("window.scrollTo(0, 0);")
+                nav_ok[tab] = True
+                log.info(f"    ✓ Tab ready: {month_name}")
+            except Exception as e:
+                log.warning(f"    Tab setup failed {month_name}: {e}")
+                nav_ok[tab] = False
+
+        # CRITICAL: Wait for SEARCH results (tiles) to appear on ALL tabs
+        # before clicking DOWNLOAD. If tiles not loaded, the wrong month
+        # may be passed to gstr2b.gst.gov.in
+        log.info(f"    Waiting for tiles on all tabs before clicking...")
+        tile_deadline = time.time() + 15
+        tiles_confirmed = set()
+        while time.time() < tile_deadline:
+            for tab, (month_name, month_num, year, save_name) in tab_map.items():
+                if not nav_ok.get(tab): continue
+                if tab in tiles_confirmed: continue
+                try:
+                    driver.switch_to.window(tab)
+                    body = driver.find_element(By.TAG_NAME, "body").text
+                    if any(g in body for g in ["GSTR-1","GSTR-2","GSTR-3","DOWNLOAD"]):
+                        tiles_confirmed.add(tab)
+                except Exception: pass
+            if len(tiles_confirmed) >= sum(1 for t in tab_map if nav_ok.get(t)):
+                break
+            time.sleep(0.6)
+        driver.switch_to.window(main_window)
+        ready = sum(1 for t in tab_map if nav_ok.get(t))
+        log.info(f"    Phase 1 done: {ready}/{len(tab_map)} tabs ready ({len(tiles_confirmed)} tiles confirmed) ✓")
+
+        # ── PHASE 1C: Mark ready tabs (no tile click here) ─────────────
+        # Phase 2 handles each tab's dashboard→tile→gstr2b navigation
+        # independently with an isolated session (one at a time).
+        # Clicking tile DOWNLOAD here would contaminate the gstr2b session
+        # for later tabs (last navigation wins = wrong month).
+        click_ok = {tab: nav_ok.get(tab, False) for tab in tab_map}
+        ready = sum(1 for v in click_ok.values() if v)
+        log.info(f"    Phase 1 complete: {ready}/{len(tab_map)} tabs ready for Phase 2 ✓")
+
+        # ── PHASE 2: Navigate each tab to gstr2b page ONE BY ONE ─────────
+        #
+        # ROOT CAUSE OF WRONG MONTH BUG:
+        # gstr2b.gst.gov.in tracks ONE "current month" per server session.
+        # When multiple tabs are open on gstr2b.gst.gov.in simultaneously,
+        # the last tab to navigate sets the server's context → clicking
+        # GENERATE EXCEL on any tab downloads THAT LAST month for all.
+        #
+        # FIX: For each tab — close ALL other gstr2b tabs first, then
+        # navigate THIS tab from dashboard to gstr2b (fresh isolated context),
+        # then immediately GENERATE EXCEL. Only ONE gstr2b tab at a time.
+        #
+        # Speed: navigation from dashboard → gstr2b is ~3s (tile click).
+        # Total: 6 tabs × ~6s = ~36s (vs 12 × 20s old sequential = 4 min).
+        #
+        driver.switch_to.window(main_window)
+        log.info(f"    Phase 2: Generate one-by-one with isolated gstr2b sessions...")
+        tabs_in_order = [(t, d) for t, d in tab_map.items() if click_ok.get(t)]
+
+        for tab_idx, (tab, (month_name, month_num, year, save_name)) in enumerate(tabs_in_order):
+            key  = f"{month_name}_{year}_GSTR2B"
+            dest = client_path / save_name
+            try:
+                # ── Step A: Close ALL other gstr2b tabs (isolate session) ──
+                # Only keep: main_window + current working tab.
+                # Any other tab on gstr2b.gst.gov.in would corrupt the session context.
+                for other_tab, (other_month, _, _, _) in tabs_in_order:
+                    if other_tab == tab: continue  # keep this one open
+                    try:
+                        driver.switch_to.window(other_tab)
+                        if "gstr2b" in driver.current_url.lower():
+                            driver.close()
+                            log.info(f"    Closed {other_month} gstr2b tab (isolating {month_name})")
+                    except Exception: pass
+                driver.switch_to.window(main_window)
+
+                # ── Step B: Navigate to dashboard → select month ───────────
+                # The tab from Phase 1 may still be on return.gst.gov.in with
+                # tiles loaded. Switch to it and navigate fresh to gstr2b.
+                try:
+                    driver.switch_to.window(tab)
+                    cur = driver.current_url
+                    # If still on dashboard tiles page — use it directly
+                    if "return.gst.gov.in" in cur and "dashboard" in cur:
+                        # Tiles already loaded — just re-search to ensure correct month
+                        select_and_search(driver, month_name, log)
+                    else:
+                        # Tab already navigated away — go back to dashboard
+                        safe_go_to_dashboard(driver, log)
+                        select_and_search(driver, month_name, log)
+                except Exception:
+                    # Tab closed or broken — navigate fresh from main window
+                    driver.switch_to.window(main_window)
+                    safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    tab = main_window  # use main window for this month
+
+                # ── Step C: Click tile DOWNLOAD → navigate to gstr2b page ──
+                if not click_tile_download(driver, "GSTR2B", log):
+                    log.warning(f"    [{month_name}] Tile not found")
+                    results[key] = "TILE_FAIL"; continue
+
+                # Wait for gstr2b.gst.gov.in to load (session now isolated)
+                try:
+                    WebDriverWait(driver, 10).until(
+                        lambda d: "gstr2b" in d.current_url.lower()
+                    )
+                except Exception: pass
+                cur = driver.current_url
+                log.info(f"    [{month_name}] On: {cur[:60]}")
+
+                # ── Step D: Check for no-record error ─────────────────────
+                # CRITICAL: Angular renders async — wait up to 5s for page body
+                # to contain either the error message OR the GENERATE button.
+                # Without this wait, check runs on empty body → misses error →
+                # clicks GENERATE → waits 45s → NOT_FOUND.
+                def _check_no_record():
+                    try:
+                        body = driver.find_element(By.TAG_NAME, "body").text.lower()
+                        phrases = [
+                            "no record for gstr 2b",
+                            "either there is no record",
+                            "not generated by system",
+                            "compute your gstr 2b manually",
+                            "gstr 2b for current return period is not generated",
+                            "ims dashboard",       # always in the no-record message
+                            "non-filing gstr 3b",  # always in the no-record message
+                        ]
+                        # Match: at least 2 phrases from the error banner
+                        hit = sum(1 for p in phrases if p in body)
+                        return hit >= 2
+                    except Exception:
+                        return False
+
+                # Wait up to 5s for Angular to render error or GENERATE button
+                _page_ready = False
+                for _pw in range(10):
+                    time.sleep(0.5)
+                    try:
+                        body_chk = driver.find_element(By.TAG_NAME, "body").text
+                        if ("GENERATE" in body_chk.upper() or
+                                "no record" in body_chk.lower() or
+                                "either there is no" in body_chk.lower() or
+                                "ims dashboard" in body_chk.lower()):
+                            _page_ready = True
+                            break
+                    except Exception: pass
+
+                if _check_no_record():
+                    log.info(f"    [{month_name}] ℹ GSTR-2B not available for this period — skipping (N/A)")
+                    results[key] = "N/A"; continue
+                if not _page_ready:
+                    log.warning(f"    [{month_name}] Page body empty after 5s wait — checking URL")
+                    # If still on gstr2b domain but no content, treat as N/A
+                    if "gstr2b" in driver.current_url.lower():
+                        log.info(f"    [{month_name}] gstr2b page loaded but no content — N/A")
+                        results[key] = "N/A"; continue
+
+                # ── Step E: GENERATE EXCEL — session is isolated, safe ────
+                snap = _snap()
+                gen_done = False
+                try:
+                    driver.execute_script("""
+                        var btns = document.querySelectorAll('button,a');
+                        for (var i = 0; i < btns.length; i++) {
+                            var t = (btns[i].innerText || '').toUpperCase();
+                            if (t.includes('GENERATE') && t.includes('EXCEL')) {
+                                btns[i].click(); break;
+                            }
+                        }
+                    """)
+                    gen_done = True
+                    log.info(f"    [{month_name}] GENERATE EXCEL clicked ✓")
+                except Exception: pass
+                if not gen_done:
+                    gen_done = try_click(driver, EXCEL_GEN_XP, timeout=5, log=log)
+                    if gen_done:
+                        log.info(f"    [{month_name}] GENERATE EXCEL (XPath) ✓")
+                if not gen_done:
+                    # ★ FIX 2: If GENERATE not found, page may have shown error
+                    # banner without GENERATE button. Re-check for N/A.
+                    if _check_no_record():
+                        log.info(f"    [{month_name}] GENERATE not found + error banner — N/A")
+                        results[key] = "N/A"; continue
+                    log.warning(f"    [{month_name}] GENERATE EXCEL not found")
+                    results[key] = "GEN_FAIL"; continue
+
+                # ── Step F: Wait for file and verify month ─────────────────
+                # Re-check for error after GENERATE click (error may appear now)
+                time.sleep(1.5)
+                if _check_no_record():
+                    log.info(f"    [{month_name}] Error shown after GENERATE click — N/A")
+                    results[key] = "N/A"; continue
+                new_f = _wait_one_file(snap, timeout=45)
+                if new_f:
+                    if _fname_match(new_f, month_num, year):
+                        if _rename_file(new_f, dest, month_name):
+                            results[key] = "OK"; ok_count += 1
+                        else:
+                            results[key] = "NOT_FOUND"
+                    else:
+                        # Still wrong month (shouldn't happen with isolated session)
+                        log.warning(f"    [{month_name}] ⚠ Unexpected: wrong month {new_f.name}"
+                                    f" (expected {str(month_num).zfill(2)}{year})")
+                        results[key] = "MISMATCH"
+                else:
+                    log.warning(f"    [{month_name}] ⚠ No xlsx received in 45s")
+                    results[key] = "NOT_FOUND"
+
+            except Exception as e:
+                log.warning(f"    [{month_name}] Error: {e}")
+                results[key] = f"ERR:{e}"
+
+        # Mark un-clicked tabs
+        for tab, (month_name, month_num, year, save_name) in tab_map.items():
+            if not click_ok.get(tab):
+                results[f"{month_name}_{year}_GSTR2B"] = "TILE_FAIL"
+
+        # Close all batch tabs
+        for tab in list(tab_map.keys()):
+            try:
+                driver.switch_to.window(tab)
+                driver.close()
+            except Exception: pass
+        driver.switch_to.window(main_window)
+        log.info(f"    Batch {batch_num} complete ✓")
+        time.sleep(0.5)
+
+    # ── Pre-retry: check for late-arriving portal-named files ─────────
+    for month_name, month_num, year in MONTHS:
+        key = f"{month_name}_{year}_GSTR2B"
+        if results.get(key) == "OK": continue
+        save_name = f"GSTR2B_{month_name}_{year}.xlsx"
+        dest = client_path / save_name
+        if dest.exists() and dest.stat().st_size > 5000:
+            results[key] = "OK"; ok_count += 1
+            log.info(f"  Late-arrived file accepted: {save_name}")
+            continue
+        for f in client_path.iterdir():
+            if f.suffix.lower() not in extensions: continue
+            if f.name.endswith((".crdownload",".tmp",".part")): continue
+            if f.stat().st_size < 5000: continue
+            if _fname_match(f, month_num, year):
+                try:
+                    if str(f) != str(dest): f.rename(dest)
+                    sz = dest.stat().st_size // 1024
+                    log.info(f"  Late portal file: {save_name} ({sz} KB)")
+                    results[key] = "OK"; ok_count += 1
+                except Exception: pass
+                break
+
+    # ── Retry still-failed months sequentially (T1→T2→T3) ────────────
+    # KEY FIX: skip months where portal explicitly showed "no record" (N/A).
+    # Retrying them wastes 3×45s and always fails — portal has no file to give.
+    failed = [(mn, mm, yr) for mn, mm, yr in MONTHS
+              if results.get(f"{mn}_{yr}_GSTR2B") not in ("OK", "N/A", "SKIPPED")
+              and f"{mn}_{yr}_GSTR2B" in results]
+    if failed:
+        log.info(f"\n  Retrying {len(failed)} failed GSTR2B months sequentially...")
+        for month_name, month_num, year in failed:
+            key = f"{month_name}_{year}_GSTR2B"
+            save_name = f"GSTR2B_{month_name}_{year}.xlsx"
+            if (client_path / save_name).exists():
+                results[key] = "OK"; ok_count += 1; continue
+            for attempt, wait_s in enumerate([0, 30, 60], 1):
+                if wait_s: time.sleep(wait_s)
+                try:
+                    safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    if not click_tile_download(driver, "GSTR2B", log):
+                        log.warning(f"    [T{attempt}] Tile not found for {month_name}")
+                        results[key] = "TILE_FAIL"; continue
+                    # Wait for gstr2b page
+                    try:
+                        WebDriverWait(driver, 10).until(
+                            lambda d: "gstr2b" in d.current_url.lower())
+                    except Exception: pass
+                    # Check for no-record error — wait for Angular render first
+                    _body_ready = False
+                    for _rw in range(8):
+                        time.sleep(0.5)
+                        try:
+                            _rb = driver.find_element(By.TAG_NAME, "body").text
+                            if ("GENERATE" in _rb.upper() or
+                                    "no record" in _rb.lower() or
+                                    "ims dashboard" in _rb.lower() or
+                                    "either there is no" in _rb.lower()):
+                                _body_ready = True; break
+                        except Exception: pass
+                    try:
+                        body = driver.find_element(By.TAG_NAME, "body").text.lower()
+                        _na_phrases = [
+                            "no record for gstr 2b",
+                            "either there is no record",
+                            "not generated by system",
+                            "compute your gstr 2b manually",
+                            "ims dashboard", "non-filing gstr 3b",
+                        ]
+                        _na_hits = sum(1 for p in _na_phrases if p in body)
+                        if _na_hits >= 2:
+                            log.info(f"    [T{attempt}] ℹ {month_name}: No GSTR-2B (N/A) — skipping")
+                            results[key] = "N/A"; break
+                    except Exception: pass
+                    snap = _snap()
+                    try:
+                        driver.execute_script("""
+                            var btns=document.querySelectorAll('button,a');
+                            for(var i=0;i<btns.length;i++){
+                                var t=(btns[i].innerText||'').toUpperCase();
+                                if(t.includes('GENERATE')&&t.includes('EXCEL'))
+                                    {btns[i].click();break;}
+                            }
+                        """)
+                    except Exception:
+                        try_click(driver, EXCEL_GEN_XP, timeout=6, log=log)
+                    # Re-check for N/A after clicking GENERATE
+                    time.sleep(1.5)
+                    try:
+                        _rb2 = driver.find_element(By.TAG_NAME, "body").text.lower()
+                        _na2 = sum(1 for p in ["no record for gstr 2b",
+                                               "either there is no record",
+                                               "not generated by system",
+                                               "ims dashboard","non-filing gstr 3b"]
+                                   if p in _rb2)
+                        if _na2 >= 2:
+                            log.info(f"    [T{attempt}] ℹ {month_name}: N/A after GENERATE — skip")
+                            results[key] = "N/A"; break
+                    except Exception: pass
+                    new_f = _wait_one_file(snap, timeout=45)
+                    if new_f:
+                        dest = client_path / save_name
+                        if _fname_match(new_f, month_num, year):
+                            if _rename_file(new_f, dest, month_name):
+                                results[key] = "OK"; ok_count += 1; break
+                        else:
+                            log.warning(f"    [T{attempt}] Wrong month file: {new_f.name}")
+                            results[key] = "MISMATCH"
+                    else:
+                        log.warning(f"    [T{attempt}] ✗ GSTR2B {month_name}: no file")
+                        results[key] = "NOT_FOUND"
+                        # ★ FIX 5: After 2 NOT_FOUND → assume N/A (portal has no file)
+                        # Avoids wasting time on 3rd attempt for non-existent records.
+                        if attempt >= 2:
+                            log.info(
+                                f"    [{month_name}] 2 attempts failed — "
+                                f"assuming GSTR-2B not available (N/A). "
+                                f"If this is wrong, download manually from portal."
+                            )
+                            results[key] = "N/A"; break
+                except Exception as e:
+                    log.warning(f"    [T{attempt}] Error {month_name}: {e}")
+            log.info(f"    {'✅' if results.get(key) in ('OK','N/A') else '❌'} "
+                     f"GSTR2B {month_name}: {results.get(key)}")
+
+    na_count   = sum(1 for v in results.values() if v == "N/A")
+    fail_count = sum(1 for v in results.values() if v not in ("OK","N/A"))
+    log.info(f"\n  GSTR2B complete: {ok_count} downloaded | {na_count} N/A (no record) | {fail_count} failed")
+    return results
+
+
+def _gstr3b_multitab(driver, client_dir, log, batch_size=6):
+    """
+    GSTR-3B: TRUE multi-tab simultaneous download.
+    PDF downloads directly from return.gst.gov.in — no intermediate domain.
+    Chrome handles all 6 PDFs in parallel independently.
+    """
+    results     = {}
+    client_path = Path(client_dir)
+    extensions  = {".pdf"}
+
+    def _snap():
+        return {str(f): f.stat().st_mtime for f in client_path.iterdir()
+                if f.suffix.lower() in extensions
+                and not f.name.endswith((".crdownload",".tmp",".part"))}
+
+    def _wait_files(snap_before, count, timeout=90):
+        deadline = time.time() + timeout
+        found    = {}
+        while time.time() < deadline:
+            time.sleep(0.5)
+            # Extend wait if .crdownload files are still in progress
+            active_crd = [f for f in client_path.iterdir()
+                          if f.name.endswith(".crdownload") and f.stat().st_size > 0]
+            if active_crd and len(found) < count:
+                deadline = max(deadline, time.time() + 10)  # extend by 10s
+            for f in client_path.iterdir():
+                if f.suffix.lower() not in extensions: continue
+                if f.name.endswith((".crdownload",".tmp",".part")): continue
+                prev = snap_before.get(str(f))
+                if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 5000:
+                    found[str(f)] = f
+            if len(found) >= count:
+                break
+        return list(found.values())
+
+    def _fname_match(f, month_num, year):
+        stem = f.stem.lower()
+        mn2  = str(month_num).zfill(2)   # always 2-digit: 6 → "06"
+        mn   = str(month_num)             # raw: "6"
+        yr   = str(year)
+        yr2  = yr[-2:]
+        return any(p in stem for p in [
+            f"{mn2}{yr}", f"{mn}{yr}",    # 062025, 62025
+            f"{mn2}_{yr}", f"{mn}_{yr}",  # 06_2025, 6_2025
+            f"{mn2}-{yr}", f"{mn}-{yr}",  # 06-2025, 6-2025
+            f"_{mn2}{yr2}", f"_{mn}{yr2}" # _0625, _625
+        ])
+
+    def _rename_file(src, dest, month_name):
+        try:
+            if str(src) != str(dest):
+                src.rename(dest)
+            sz = dest.stat().st_size // 1024
+            log.info(f"    ✅ Saved: {dest.name} ({sz} KB)")
+            return True
+        except Exception:
+            try:
+                import shutil
+                shutil.copy2(str(src), str(dest))
+                try: src.unlink()
+                except Exception: pass
+                sz = dest.stat().st_size // 1024
+                log.info(f"    ✅ Saved (copy): {dest.name} ({sz} KB)")
+                return True
+            except Exception as e:
+                log.warning(f"    Rename failed {month_name}: {e}")
+                return False
+
+    def _cleanup_portal_files():
+        import re as _re
+        good = {f"GSTR3B_{mn}_{yr}.pdf" for mn, mm, yr in MONTHS}
+        for f in list(client_path.iterdir()):
+            if f.suffix.lower() != ".pdf": continue
+            if f.name in good: continue
+            if f.name.endswith((".crdownload",".tmp",".part")): continue
+            if _re.search(r"_\d{6}", f.stem):
+                log.info(f"    Removing portal-named duplicate: {f.name}")
+                try: f.unlink()
+                except Exception: pass
+
+    total         = len(MONTHS)
+    total_batches = -(-total // batch_size)
+    ok_count      = 0
+
+    log.info(f"\n  ══ GSTR-3B — Multi-Tab Simultaneous Download ══")
+    log.info(f"  PDF downloads directly → Chrome handles {batch_size} in parallel")
+    log.info(f"  Batches: {total_batches} × {batch_size} months = {total} months total")
+
+    # Ensure main tab is on dashboard before opening tabs
+    safe_go_to_dashboard(driver, log)
+    main_window = driver.current_window_handle
+
+    for batch_idx in range(0, total, batch_size):
+        batch     = MONTHS[batch_idx : batch_idx + batch_size]
+        batch_num = batch_idx // batch_size + 1
+        log.info(f"\n  ── Batch {batch_num}/{total_batches}: {[m[0] for m in batch]} ──")
+
+        # Skip already done
+        pending = []
+        for month_name, month_num, year in batch:
+            save_name = f"GSTR3B_{month_name}_{year}.pdf"
+            if (client_path / save_name).exists():
+                log.info(f"    ✓ {month_name} already done — skip")
+                results[f"{month_name}_{year}_GSTR3B"] = "OK"
+                ok_count += 1
+            else:
+                pending.append((month_name, month_num, year, save_name))
+
+        if not pending:
+            continue
+
+        # Ensure on dashboard before opening tabs
+        if "return.gst.gov.in" not in driver.current_url or "dashboard" not in driver.current_url:
+            safe_go_to_dashboard(driver, log)
+        main_window = driver.current_window_handle
+
+        # ── Open tabs from return.gst.gov.in (cookies transfer) ──────
+        DASH_URL = "https://return.gst.gov.in/returns/auth/dashboard"
+        tab_map  = {}
+        for month_name, month_num, year, save_name in pending:
+            try:
+                driver.execute_script("window.open(arguments[0]);", DASH_URL)
+                time.sleep(0.3)
+                new_tab = driver.window_handles[-1]
+                tab_map[new_tab] = (month_name, month_num, year, save_name)
+                log.info(f"    Opened tab: {month_name}")
+            except Exception as e:
+                log.warning(f"    Tab open failed {month_name}: {e}")
+
+        # ★ FIX 3: Set download dir on ALL tabs immediately after opening
+        try: set_download_dir_all_tabs(driver, client_path)
+        except Exception: pass
+        # ── Navigate + select month on all tabs ───────────────────────
+        nav_ok = {}
+        for tab, (month_name, month_num, year, save_name) in tab_map.items():
+            try:
+                driver.switch_to.window(tab)
+                time.sleep(0.5)
+                cur = driver.current_url
+                if "dashboard" not in cur:
+                    driver.get(DASH_URL)
+                    try:
+                        WebDriverWait(driver, 15).until(
+                            lambda d: "dashboard" in d.current_url or "login" in d.current_url)
+                    except Exception: pass
+                if "login" in driver.current_url or "denied" in driver.current_url:
+                    log.warning(f"    Tab {month_name}: session issue — menu nav fallback")
+                    safe_go_to_dashboard(driver, log)
+                select_and_search(driver, month_name, log)
+                # Scroll to load all tiles
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(0.4)
+                nav_ok[tab] = True
+                log.info(f"    ✓ Tab ready: {month_name}")
+            except Exception as e:
+                log.warning(f"    Tab setup failed {month_name}: {e}")
+                nav_ok[tab] = False
+
+        # ── Click DOWNLOAD one-by-one per tab (sequential) ──────────────
+        # REASON: parallel PDF downloads arrive within ms of each other.
+        # _fname_match by MMYYYY is the only reliable way to assign them,
+        # but portal PDF names don't always include MMYYYY clearly.
+        # Sequential: click one tab → wait for its PDF → rename → next tab.
+        # Each PDF takes ~2-4s. 6 tabs × ~4s = ~24s per batch. Reliable.
+        log.info(f"    Phase 2: downloading one tab at a time (sequential, reliable)...")
+        for tab, (month_name, month_num, year, save_name) in tab_map.items():
+            key  = f"{month_name}_{year}_GSTR3B"
+            dest = client_path / save_name
+            if not nav_ok.get(tab):
+                results[key] = "NAV_FAIL"; continue
+            try:
+                # Guard: tab may have been closed by a new-tab download
+                if tab not in driver.window_handles:
+                    log.warning(f"    [{month_name}] Tab closed unexpectedly — skip")
+                    results[key] = "TAB_CLOSED"; continue
+
+                snap_before = _snap()
+                driver.switch_to.window(tab)
+
+                # Re-confirm month context
+                select_and_search(driver, month_name, log)
+                try:
+                    WebDriverWait(driver, 10).until(
+                        lambda d: any(g in d.find_element(By.TAG_NAME,"body").text
+                                     for g in ["GSTR-3B","DOWNLOAD","VIEW"]))
+                except Exception: pass
+
+                # Click DOWNLOAD
+                if not click_tile_download(driver, "GSTR3B", log):
+                    log.warning(f"    [{month_name}] Tile not found")
+                    results[key] = "TILE_FAIL"
+                else:
+                    # Wait for this one PDF
+                    got = _wait_files(snap_before, 1, timeout=45)
+                    if got:
+                        matched = None
+                        # Strategy A: filename match
+                        for f in got:
+                            if _fname_match(f, month_num, year):
+                                matched = f; break
+                        # Strategy B: only file received = must be ours
+                        if not matched and len(got) == 1:
+                            matched = got[0]
+                        if matched:
+                            if _rename_file(matched, dest, month_name):
+                                results[key] = "OK"; ok_count += 1
+                            else:
+                                results[key] = "RENAME_FAIL"
+                        else:
+                            log.warning(f"    [{month_name}] PDF name mismatch: {got[0].name}")
+                            results[key] = "MISMATCH"
+                    else:
+                        log.warning(f"    [{month_name}] No PDF in 45s")
+                        results[key] = "NOT_FOUND"
+
+                # Close this tab immediately after attempt
+                try:
+                    if tab in driver.window_handles:
+                        driver.switch_to.window(tab)
+                        driver.close()
+                    driver.switch_to.window(main_window)
+                except Exception: pass
+
+            except Exception as e:
+                log.warning(f"    GSTR3B [{month_name}] error: {e}")
+                results[key] = f"ERR:{e}"
+                try:
+                    if tab in driver.window_handles:
+                        driver.switch_to.window(tab); driver.close()
+                    driver.switch_to.window(main_window)
+                except Exception: pass
+
+        # Mark nav-failed tabs
+        for tab, (month_name, month_num, year, save_name) in tab_map.items():
+            if not nav_ok.get(tab):
+                results.setdefault(f"{month_name}_{year}_GSTR3B", "TILE_FAIL")
+
+        try:
+            driver.switch_to.window(main_window)
+        except Exception: pass
+        log.info(f"    Batch {batch_num} complete ✓")
+        time.sleep(0.5)
+
+    # ── Retry failed months sequentially ─────────────────────────────
+    failed = [(mn, mm, yr) for mn, mm, yr in MONTHS
+              if results.get(f"{mn}_{yr}_GSTR3B") not in ("OK",)
+              and f"{mn}_{yr}_GSTR3B" in results]
+    if failed:
+        log.info(f"\n  Retrying {len(failed)} failed GSTR3B months (T1→T2→T3)...")
+        for month_name, month_num, year in failed:
+            key = f"{month_name}_{year}_GSTR3B"
+            save_name = f"GSTR3B_{month_name}_{year}.pdf"
+            if (client_path / save_name).exists():
+                results[key] = "OK"; ok_count += 1; continue
+            for attempt, wait_s in enumerate([0, 30, 60], 1):
+                if wait_s:
+                    time.sleep(wait_s)
+                try:
+                    safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    snap = _snap()
+                    if click_tile_download(driver, "GSTR3B", log):
+                        got = _wait_files(snap, 1, timeout=45)
+                        if got:
+                            dest = client_path / save_name
+                            if _rename_file(got[0], dest, month_name):
+                                results[key] = "OK"; ok_count += 1; break
+                except Exception as e:
+                    log.warning(f"    [T{attempt}] Error {month_name}: {e}")
+            log.info(f"    {'✅' if results.get(key)=='OK' else '❌'} GSTR3B {month_name}: {results.get(key)}")
+
+    _cleanup_portal_files()
+    fail = sum(1 for v in results.values() if v != "OK")
+    log.info(f"\n  GSTR3B complete: {ok_count}/12 downloaded | {fail} failed")
+    return results
+
+
+def download_month(driver, month_name, month_num, year, client_dir, log):
+    return {"GSTR1":"SKIPPED","GSTR2B":"SKIPPED","GSTR2A":"SKIPPED","GSTR3B":"SKIPPED"}
+
+
+# ==========================================================
+# PHASE 1 — TRIGGER FILE GENERATION FOR ALL MONTHS
+# For each month: navigate dashboard → select period → SEARCH
+#   GSTR-1  : click DOWNLOAD → click GENERATE JSON → move on
+#   GSTR-2B : click DOWNLOAD → click GENERATE EXCEL → move on
+#   GSTR-2A : click DOWNLOAD → click GENERATE EXCEL → move on
+#   GSTR-3B : click DOWNLOAD → PDF downloads directly → rename
+# Returns dict  key="{Month}_{Year}_{RetType}" → status string
+# ==========================================================
+
+def phase1_trigger_all(driver, client_dir, log, returns_todo=None):
+    """
+    CORRECT PHASED DOWNLOAD ORDER:
+
+    Phase 1A  GSTR-1 → click GENERATE (quick, move on — portal generates in background)
+    Phase 2   GSTR-2B           → INSTANT Excel download (no generate wait, file ready immediately)
+    Phase 3   GSTR-3B           → INSTANT PDF  download (no generate wait, file ready immediately)
+    Phase 4   Tax Liability      → download comparison report (if requested)
+    Phase 1B  GSTR-2A           → click GENERATE (generates while 2B/3B/TAX downloaded above)
+    (Collect GSTR-1/2A links happens in phase2_download_all after portal finishes generating)
+
+    IMPORTANT: GSTR-2B and GSTR-3B are INSTANT downloads.
+      - GSTR-2B: tile → GENERATE EXCEL → file in folder immediately
+      - GSTR-3B: tile → DOWNLOAD → PDF in folder immediately
+      - Do NOT wait for them separately — just poll folder for new file
+      - Rename: read MMYYYY from portal filename to match correct month
+      - Delete portal-named original after rename to avoid duplicates
+
+    Returns dict: key = "{Month}_{Year}_{RetType}" -> status string
+    """
+    if returns_todo is None:
+        returns_todo = {"GSTR1", "GSTR2B", "GSTR2A", "GSTR3B"}
+
+    triggered    = {}
+    client_path  = Path(client_dir)
+
+    EXCEL_GENERATE_XPATHS = [
+        "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE EXCEL')]",
+        "//button[contains(text(),'Generate Excel')]",
+        "//a[contains(text(),'GENERATE EXCEL')]",
+        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE JSON')]",
+        "//button[contains(text(),'Generate JSON')]",
+    ]
+
+    MONTHLY_RETURNS = {"GSTR1", "GSTR2B", "GSTR2A", "GSTR3B"}
+    months_to_run   = MONTHS if (returns_todo & MONTHLY_RETURNS) else []
+
+    # ════════════════════════════════════════════════════════════════
+    # PHASE 1A — SIMULTANEOUS GENERATE: GSTR-1 + GSTR-1A (all months)
+    #
+    # SPEED UPGRADE — v12 parallel approach:
+    #   OLD: Sequential loop — 12 months × 2 returns × ~8s = ~3 min
+    #   NEW: Multi-tab — open 6 tabs simultaneously, trigger GENERATE on
+    #        BOTH GSTR-1 and GSTR-1A in EACH tab before moving to next.
+    #        6 tabs × 2 returns × ~4s per tab = ~50s for 12 months!
+    #
+    # HOW IT WORKS PER TAB:
+    #   Tab opened → navigate to month dashboard → SEARCH → tiles load
+    #   → click GSTR-1 tile DOWNLOAD → click GENERATE JSON → back button
+    #   → click GSTR-1A tile DOWNLOAD (if available) → click GENERATE
+    #   → tab done.  Next tab repeats for its month.
+    #   All 12 months × both returns triggered in 2 batches of 6 tabs.
+    #
+    # SESSION SAFETY: GSTR-1/1A generate page is on return.gst.gov.in
+    #   (NOT gstr2b.gst.gov.in) — so multi-tab is safe, no session clash.
+    #   Each tab has its own GSTR-1 context because the month is set by
+    #   select_and_search() on return.gst.gov.in/returns/auth/dashboard
+    #   which IS session-safe for multiple tabs.
+    # ════════════════════════════════════════════════════════════════
+    generate_p1 = [r for r in ("GSTR1",) if r in returns_todo]  # GSTR-1A is PDF-only, handled separately below
+    if generate_p1:
+        log.info(f"\n  ══ Phase 1A — SIMULTANEOUS GENERATE: {generate_p1} (multi-tab) ══")
+        log.info("     Opening 6 tabs in parallel — triggering GSTR-1 JSON generate")
+        log.info("     GSTR-1A PDF downloaded per-month after each GSTR-1 generate trigger")
+        log.info("     Speed: ~50s for 12 months (was ~3 min sequential)")
+
+        BATCH_SIZE_P1 = 6
+        DASH_URL      = "https://return.gst.gov.in/returns/auth/dashboard"
+        main_window   = driver.current_window_handle
+
+        # Filter months that still need work
+        pending_months = []
+        for month_name, month_num, year in months_to_run:
+            needs_work = False
+            for rtype in generate_p1:
+                zip_name = f"{rtype}_{month_name}_{year}.zip"
+                if (client_path / zip_name).exists():
+                    triggered[f"{month_name}_{year}_{rtype}"] = "TRIGGERED"
+                    log.info(f"    ✓ {rtype} {month_name} already exists — skip")
+                else:
+                    needs_work = True
+            if needs_work:
+                pending_months.append((month_name, month_num, year))
+
+        total_p1     = len(pending_months)
+        total_batches = -(-total_p1 // BATCH_SIZE_P1)
+
+        for batch_idx in range(0, total_p1, BATCH_SIZE_P1):
+            batch     = pending_months[batch_idx : batch_idx + BATCH_SIZE_P1]
+            batch_num = batch_idx // BATCH_SIZE_P1 + 1
+            log.info(f"\n  ── P1A Batch {batch_num}/{total_batches}: {[m[0] for m in batch]} ──")
+
+            # ── Step 1: Open all batch tabs simultaneously ─────────────────
+            tab_map = {}  # tab_handle → (month_name, month_num, year)
+            safe_go_to_dashboard(driver, log)
+            main_window = driver.current_window_handle
+
+            for month_name, month_num, year in batch:
+                try:
+                    driver.execute_script("window.open(arguments[0]);", DASH_URL)
+                    time.sleep(0.3)
+                    new_tab = driver.window_handles[-1]
+                    tab_map[new_tab] = (month_name, month_num, year)
+                    driver.switch_to.window(main_window)
+                    log.info(f"    Opened tab: {month_name}")
+                except Exception as e:
+                    log.warning(f"    Tab open failed {month_name}: {e}")
+
+            # ── Step 2: Navigate ALL tabs to their month in parallel ────────
+            nav_ok = {}
+            # ★ FIX 3: Set download dir on ALL tabs immediately after opening
+            try: set_download_dir_all_tabs(driver, client_path)
+            except Exception: pass
+            log.info(f"    Setting month on {len(tab_map)} tabs (parallel)...")
+            for tab, (month_name, month_num, year) in tab_map.items():
+                try:
+                    driver.switch_to.window(tab)
+                    try:
+                        WebDriverWait(driver, 12).until(
+                            lambda d: "dashboard" in d.current_url or "login" in d.current_url)
+                    except Exception:
+                        pass
+                    if "login" in driver.current_url or "denied" in driver.current_url:
+                        safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    nav_ok[tab] = True
+                    log.info(f"    ✓ Tab ready: {month_name}")
+                except Exception as e:
+                    log.warning(f"    Tab setup failed {month_name}: {e}")
+                    nav_ok[tab] = False
+
+            # ── Step 3: Wait for tiles to load on all tabs ──────────────────
+            log.info(f"    Waiting for tiles to appear on all tabs...")
+            tile_deadline = time.time() + 20
+            tiles_confirmed = set()
+            while time.time() < tile_deadline:
+                for tab in list(tab_map):
+                    if not nav_ok.get(tab) or tab in tiles_confirmed:
+                        continue
+                    try:
+                        driver.switch_to.window(tab)
+                        body = driver.find_element(By.TAG_NAME, "body").text
+                        if any(g in body for g in ["GSTR-1", "GSTR1", "DOWNLOAD", "VIEW"]):
+                            tiles_confirmed.add(tab)
+                    except Exception:
+                        pass
+                if len(tiles_confirmed) >= sum(1 for t in tab_map if nav_ok.get(t)):
+                    break
+                time.sleep(0.5)
+            driver.switch_to.window(main_window)
+            log.info(f"    {len(tiles_confirmed)}/{len(tab_map)} tabs have tiles ready ✓")
+
+            # ── Step 4: In each tab — trigger GSTR-1 then GSTR-1A ──────────
+            # We go tab-by-tab but do BOTH returns per tab before moving on.
+            # This is fast because both generates happen on the SAME page load.
+            for tab, (month_name, month_num, year) in tab_map.items():
+                if not nav_ok.get(tab):
+                    for rtype in generate_p1:
+                        triggered[f"{month_name}_{year}_{rtype}"] = "NAV_FAIL"
+                    continue
+
+                try:
+                    driver.switch_to.window(tab)
+                    log.info(f"\n    Processing tab: {month_name}")
+
+                    # ── GSTR-1: GENERATE → wait for link on page → click → close tab ──
+                    # YOUR APPROACH: Phase 1 opens tabs simultaneously, triggers
+                    # GENERATE on each tab, then immediately waits for the download
+                    # link to appear ON THAT SAME PAGE and clicks it.
+                    # Tab closed after download starts. No Phase 2 needed for GSTR-1.
+                    #
+                    # CRITICAL FIX for "April/January repeated" bug:
+                    #   Old zip files from previous runs (even unrelated scripts)
+                    #   sitting in the folder were accepted as valid without checking
+                    #   their content. Now we verify the fp field inside every zip.
+                    #   Zips that contain Python scripts, wrong tools, or wrong
+                    #   period data are deleted and re-downloaded.
+                    if "GSTR1" in generate_p1:
+                        key1      = f"{month_name}_{year}_GSTR1"
+                        zip1_name = f"GSTR1_{month_name}_{year}.zip"
+                        zip1_path = client_path / zip1_name
+                        dest_ok   = False
+
+                        # ── Check existing file with fp verification ──────────────
+                        if zip1_path.exists():
+                            if verify_gstr1_zip(zip1_path, month_num, year, log):
+                                triggered[key1] = "TRIGGERED"
+                                log.info(f"    ✓ GSTR1 {month_name}: existing file verified OK — skip")
+                                dest_ok = True
+                            else:
+                                log.warning(f"    ⚠ GSTR1 {month_name}: existing file INVALID/WRONG PERIOD — deleting")
+                                try: zip1_path.unlink()
+                                except Exception: pass
+
+                        if not dest_ok:
+                            # ── Re-search to ensure correct month context ─────────
+                            select_and_search(driver, month_name, log)
+                            time.sleep(0.5)
+                            if not click_tile_download(driver, "GSTR1", log):
+                                triggered[key1] = "TILE_FAIL"
+                                log.warning(f"    ✗ GSTR1 {month_name}: tile not found")
+                            else:
+                                # Wait for offline/generate page to load
+                                try:
+                                    WebDriverWait(driver, 12).until(
+                                        lambda d: "dashboard" not in d.current_url.lower()
+                                        or "offline" in d.current_url.lower()
+                                        or "offlinedownload" in d.current_url.lower())
+                                except Exception: pass
+                                time.sleep(0.5)
+
+                                # Take folder snapshot BEFORE generate click
+                                _snap_g1 = {str(_f): _f.stat().st_mtime
+                                    for _f in client_path.iterdir()
+                                    if _f.suffix.lower() in {".zip", ".json"}
+                                    and not _f.name.endswith((".crdownload",".tmp",".part"))}
+
+                                # ── Click GENERATE JSON — with 2-click confirmation ──
+                                # WHY TWO CLICKS:
+                                # Angular buttons on the GST portal briefly enter a
+                                # disabled/loading state after the DOWNLOAD tile click.
+                                # A single click during this window is silently swallowed
+                                # — the button appears present but the generate request
+                                # is never sent.  The portal gives NO visual feedback of
+                                # failure; the page simply never shows the download link.
+                                #
+                                # Fix: click once, wait 1.5s for Angular to settle, then
+                                # check whether the button is still present.  If it is still
+                                # there (i.e. the first click was ignored), click a second time.
+                                # If the button has gone away / page changed, the first click
+                                # was registered — no second click needed.
+                                gen_ok = False
+
+                                def _js_click_generate():
+                                    """JS click on GENERATE JSON button. Returns True if button found."""
+                                    return driver.execute_script("""
+                                        var btns=document.querySelectorAll('button,a');
+                                        for(var i=0;i<btns.length;i++){
+                                            var t=(btns[i].innerText||'').toUpperCase();
+                                            if(t.includes('GENERATE')&&t.includes('JSON')){
+                                                btns[i].scrollIntoView({block:'center'});
+                                                btns[i].click();
+                                                return true;
+                                            }
+                                        }
+                                        return false;
+                                    """)
+
+                                # ── Click 1 ──────────────────────────────────────────
+                                try:
+                                    found = _js_click_generate()
+                                    if found:
+                                        gen_ok = True
+                                        log.info(f"    GSTR1 {month_name}: GENERATE JSON click-1 ✓")
+                                except Exception: pass
+
+                                if not gen_ok:
+                                    # XPath fallback for click 1
+                                    gen_ok = try_click(driver, [
+                                        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+                                        "//button[contains(text(),'GENERATE JSON')]",
+                                        "//button[contains(text(),'Generate JSON')]",
+                                    ], timeout=8, log=log)
+
+                                if gen_ok:
+                                    # ── Wait 1.5s for Angular to process click-1 ─────
+                                    time.sleep(1.5)
+
+                                    # ── Verify click was registered ───────────────────
+                                    # If GENERATE button is still visible and page URL
+                                    # has NOT changed to a "processing" state, the first
+                                    # click was ignored — send a second click.
+                                    try:
+                                        btn_still_present = driver.execute_script("""
+                                            var btns=document.querySelectorAll('button,a');
+                                            for(var i=0;i<btns.length;i++){
+                                                var t=(btns[i].innerText||'').toUpperCase();
+                                                if(t.includes('GENERATE')&&t.includes('JSON')
+                                                   && btns[i].offsetParent!==null){
+                                                    return true;
+                                                }
+                                            }
+                                            return false;
+                                        """)
+                                        if btn_still_present:
+                                            log.info(f"    GSTR1 {month_name}: GENERATE button still present — click-2 (confirmation)")
+                                            _js_click_generate()
+                                            time.sleep(0.8)
+                                            log.info(f"    GSTR1 {month_name}: GENERATE JSON click-2 ✓")
+                                        else:
+                                            log.info(f"    GSTR1 {month_name}: click-1 registered (button gone) — no second click needed")
+                                    except Exception as _ve:
+                                        log.info(f"    GSTR1 {month_name}: verification check skipped ({_ve}) — proceeding")
+
+                                if not gen_ok:
+                                    triggered[key1] = "GEN_FAIL"
+                                    log.warning(f"    ✗ GSTR1 {month_name}: GENERATE JSON not found")
+                                else:
+                                    # ── GENERATE clicked — mark TRIGGERED and move on ────
+                                    # Phase 1A only triggers the generate. Portal generates
+                                    # in background while we download GSTR-2B and GSTR-3B.
+                                    # Phase 2 (phase2_download_all) handles ALL GSTR-1 downloads
+                                    # — it opens fresh tabs, waits for the link, downloads, verifies.
+                                    # This avoids: waiting 90s × 12 months = 18 min in Phase 1A.
+                                    triggered[key1] = "TRIGGERED"
+                                    log.info(f"    ✅ GSTR1 {month_name}: generate triggered ✓ — Phase 2 will download")
+
+                    # ── GSTR-1A: Direct PDF (VIEW GSTR-1A → VIEW SUMMARY → DOWNLOAD PDF) ─
+                    if "GSTR1A" in (returns_todo or set()):
+                        key1a = f"{month_name}_{year}_GSTR1A"
+                        pdf1a = f"GSTR1A_{month_name}_{year}.pdf"
+                        if (client_path / pdf1a).exists():
+                            triggered[key1a] = "OK"
+                            log.info(f"    ✓ GSTR1A {month_name}: PDF already exists")
+                        else:
+                            # Go back to dashboard for this tab
+                            try:
+                                driver.back()
+                                time.sleep(0.5)
+                            except Exception:
+                                pass
+                            if "dashboard" not in driver.current_url:
+                                safe_go_to_dashboard(driver, log)
+                            select_and_search(driver, month_name, log)
+                            time.sleep(1.0)
+
+                            # Check: VIEW GSTR-1A present (filed) or PREPARE ONLINE (not filed)?
+                            _1a_ok = is_gstr1a_available(driver, log)
+                            if not _1a_ok:
+                                triggered[key1a] = "NOT_AVAILABLE"
+                                log.info(f"    ⚡ GSTR-1A {month_name}: PREPARE ONLINE → skip")
+                            else:
+                                log.info(f"    ✓ GSTR-1A {month_name}: VIEW GSTR-1A available → downloading PDF")
+                                # Track handles before — PDF download may open new tab
+                                _handles_before_1a = set(driver.window_handles)
+                                _1a_pdf = download_gstr1a_pdf(driver, client_path, month_name, year, log)
+                                # Close any stray tabs opened during PDF download
+                                for _nh in set(driver.window_handles) - _handles_before_1a - {tab}:
+                                    try:
+                                        driver.switch_to.window(_nh); driver.close()
+                                    except Exception: pass
+                                try: driver.switch_to.window(tab)
+                                except Exception: pass
+                                if _1a_pdf:
+                                    triggered[key1a] = "OK"
+                                    log.info(f"    ✅ GSTR1A {month_name}: PDF saved ✓")
+                                else:
+                                    triggered[key1a] = "FAIL"
+                                    log.warning(f"    ✗ GSTR1A {month_name}: PDF download failed")
+
+                except Exception as e:
+                    log.warning(f"    Phase1A tab error [{month_name}]: {e}")
+                    for rtype in generate_p1:
+                        triggered.setdefault(f"{month_name}_{year}_{rtype}", f"ERR:{e}")
+
+            # ── Step 5: Close all batch tabs, return to main window ─────────
+            for tab in list(tab_map.keys()):
+                try:
+                    driver.switch_to.window(tab)
+                    driver.close()
+                except Exception:
+                    pass
+            driver.switch_to.window(main_window)
+            log.info(f"    Batch {batch_num} tabs closed ✓")
+            time.sleep(ACTION_WAIT)
+
+        # ── Summary ─────────────────────────────────────────────────
+        trig_ok  = sum(1 for k, v in triggered.items()
+                       if any(r in k for r in ("GSTR1",)) and v == "TRIGGERED")
+        trig_1a_ok = sum(1 for k, v in triggered.items()
+                         if "GSTR1A" in k and v in ("TRIGGERED","OK"))
+        trig_1a_na = sum(1 for k, v in triggered.items()
+                         if "GSTR1A" in k and v == "NOT_AVAILABLE")
+        log.info(f"\n  ✅ Phase 1A complete (SIMULTANEOUS)")
+        log.info(f"     GSTR-1  : {trig_ok} months triggered")
+        log.info(f"     GSTR-1A : {trig_1a_ok} PDF saved | {trig_1a_na} not available (PREPARE ONLINE)")
+        log.info(f"     All generating in portal background — GSTR-2B/3B download starts now")
+
+    # ════════════════════════════════════════════════════════════════
+    # PHASE 2 — GSTR-2B: INSTANT Excel download (all 12 months)
+    # Portal flow: tile → GENERATE EXCEL → file downloads INSTANTLY
+    # Keeps session alive while GSTR-1/1A generate in background.
+    # ════════════════════════════════════════════════════════════════
+    if "GSTR2B" in returns_todo:
+        log.info(f"\n  ══ Phase 2 — GSTR-2B Instant Download (12 months) ══")
+        log.info("     No generate wait — file appears instantly after clicking GENERATE EXCEL")
+        mt_results = multitab_direct_download(driver, client_dir, "GSTR2B", log, batch_size=6)
+        triggered.update(mt_results)
+
+    # ════════════════════════════════════════════════════════════════
+    # PHASE 3 — GSTR-3B: INSTANT PDF download (all 12 months)
+    # Portal flow: tile → DOWNLOAD button → PDF appears instantly
+    # Keeps session alive while GSTR-1/1A generate in background.
+    # ════════════════════════════════════════════════════════════════
+    if "GSTR3B" in returns_todo:
+        log.info(f"\n  ══ Phase 3 — GSTR-3B Instant Download (12 months) ══")
+        log.info("     No generate wait — PDF downloads directly on DOWNLOAD click")
+        mt_results = multitab_direct_download(driver, client_dir, "GSTR3B", log, batch_size=6)
+        triggered.update(mt_results)
+
+    # ════════════════════════════════════════════════════════════════
+    # PHASE 4 — Tax Liability & ITC Comparison (if requested)
+    # ════════════════════════════════════════════════════════════════
+    if "TAX_LIABILITY" in returns_todo:
+
+        # ==================================================
+        # TAX LIABILITY & ITC COMPARISON DOWNLOAD
+        #
+        # EXACT FLOW — identical pattern to go_to_returns_dashboard:
+        #   CLICK Services  →  CLICK Returns  →  CLICK "Tax liabilities and ITC comparison"
+        # Then on the /comparison page:
+        #   Select FY from dropdown → SEARCH → scroll bottom → DOWNLOAD COMPARISON REPORTS (EXCEL)
+        #
+        # NO hover, NO direct URL (causes Access Denied)
+        # Same try_click() calls used for every other menu navigation
+        # ==================================================
+
+        TAX_FY_YEARS = ["2024-25", "2025-26"]   # both FY years
+
+        def go_to_tax_liabilities():
+            """
+            CONFIRMED WORKING FLOW (Selenium ActionChains — NO pyautogui needed):
+              Step 1: Click Services
+              Step 2: move_to_element(Returns) — CSS :hover opens submenu
+              Step 3: click Tax liabilities and ITC comparison
+
+            Uses only selenium.webdriver.common.action_chains.ActionChains
+            Exactly as user confirmed: Option 1 / Visible hover inside browser.
+            """
+            from selenium.webdriver.common.action_chains import ActionChains
+            log.info("    [TAX] Services → hover Returns → click Tax liabilities")
+
+            # -- Step 1: Click Services ------------------------
+            svc_ok = try_click(driver, [
+                "//a[normalize-space(text())='Services']",
+                "//nav//a[normalize-space()='Services']",
+                "//ul[contains(@class,'nav')]//a[contains(text(),'Services')]",
+                "//*[@id='main-nav']//a[contains(text(),'Services')]",
+                "//li//a[normalize-space()='Services']",
+            ], timeout=10, log=log)
+            if not svc_ok:
+                log.warning("    [TAX] Services not found"); return False
+            time.sleep(1.5)
+            log.info("    [TAX] Services clicked ✓")
+
+            # -- Step 2: ActionChains.move_to_element(Returns) -
+            # This triggers CSS :hover on the <li> → submenu slides out
+            # Per user confirmed method: move cursor to Returns, pause 2s
+            log.info("    [TAX] Hovering Returns via ActionChains...")
+            returns_menu = None
+            wait = WebDriverWait(driver, 8)
+            for xp in [
+                "//a[normalize-space(text())='Returns']",
+                "//li[.//a[normalize-space(text())='Returns']]",
+                "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
+                "//ul[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
+                "//li//a[normalize-space()='Returns']",
+            ]:
+                try:
+                    returns_menu = wait.until(
+                        EC.visibility_of_element_located((By.XPATH, xp)))
+                    if returns_menu.is_displayed():
+                        break
+                except Exception: continue
+
+            if returns_menu:
+                actions = ActionChains(driver)
+                actions.move_to_element(returns_menu).perform()
+                time.sleep(1)   # allow submenu to open
+                log.info("    [TAX] Hovered Returns ✓  submenu should be open")
+            else:
+                log.warning("    [TAX] Returns element not found — trying JS mouseenter")
+                try:
+                    driver.execute_script("""
+                        var lis=document.querySelectorAll('li');
+                        for(var li of lis){
+                            var a=li.querySelector('a');
+                            if(a && a.textContent.trim()==='Returns'){
+                                li.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));
+                                li.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+                                li.classList.add('open'); break;
+                            }
+                        }
+                    """)
+                    time.sleep(1.5)
+                    log.info("    [TAX] JS mouseenter triggered ✓")
+                except Exception as _je:
+                    log.warning(f"    [TAX] JS fallback failed: {_je}")
+
+            # -- Step 3: Click Tax liabilities ----------------
+            # Exactly per user: wait.until(EC.element_to_be_clickable(...))
+            log.info("    [TAX] Clicking Tax liabilities...")
+            tax_xpaths = [
+                "//a[normalize-space(text())='Tax liabilities and ITC comparison']",
+                "//a[contains(text(),'Tax liabilities and ITC')]",
+                "//a[contains(text(),'Tax liabilities')]",
+                "//a[contains(translate(text(),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'tax liabilities')]",
+                "//li[contains(@class,'open')]//a[contains(text(),'Tax')]",
+                "//*[contains(@class,'dropdown-menu')]//a[contains(text(),'Tax')]",
+            ]
+            for xp in tax_xpaths:
+                try:
+                    tax_el = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, xp)))
+                    tax_el.click()
+                    log.info(f"    [TAX] Clicked: {tax_el.text.strip()} ✓")
+                    time.sleep(2)
+                    log.info(f"    [TAX] URL: {driver.current_url}")
+                    if "comparison" in driver.current_url.lower():
+                        return True
+                    break
+                except Exception: continue
+
+            # -- Scan all links as fallback --------------------
+            for el in driver.find_elements(By.TAG_NAME, "a"):
+                try:
+                    if "tax liabilities" in el.text.lower() and el.is_displayed():
+                        el.click()
+                        log.info(f"    [TAX] Scan click: {el.text.strip()}")
+                        time.sleep(2)
+                        if "comparison" in driver.current_url.lower():
+                            return True
+                except Exception: continue
+
+            # -- Retry once more -------------------------------
+            log.info("    [TAX] Retry from Services...")
+            for _ in range(2):
+                try:
+                    svc_el = WebDriverWait(driver, 6).until(
+                        EC.element_to_be_clickable((By.XPATH, "//a[normalize-space(text())='Services']")))
+                    svc_el.click()
+                    time.sleep(0.5)
+                    for xp in ["//a[normalize-space(text())='Returns']",
+                               "//li//a[normalize-space()='Returns']"]:
+                        try:
+                            ret_el = WebDriverWait(driver, 4).until(
+                                EC.visibility_of_element_located((By.XPATH, xp)))
+                            ActionChains(driver).move_to_element(ret_el).perform()
+                            time.sleep(2)
+                            break
+                        except Exception: continue
+                    for el in driver.find_elements(By.TAG_NAME, "a"):
+                        try:
+                            if "tax liabilities" in el.text.lower() and el.is_displayed():
+                                el.click()
+                                log.info(f"    [TAX] Retry click: {el.text.strip()}")
+                                time.sleep(2)
+                                if "comparison" in driver.current_url.lower():
+                                    return True
+                        except Exception: continue
+                except Exception as _re:
+                    log.warning(f"    [TAX] Retry error: {_re}")
+
+            log.warning("    [TAX] ✗ Could not reach Tax Liability page")
+            try:
+                vis=[e.text.strip() for e in driver.find_elements(By.TAG_NAME,"a")
+                     if e.is_displayed() and e.text.strip()]
+                log.warning(f"    [TAX] Visible links: {vis[:20]}")
+            except Exception: pass
+            return False
+
+        def download_tax_fy(fy_label, file_suffix):
+            """
+            On /comparison page:
+              1. Select FY from dropdown  (dropdown starts EMPTY)
+              2. Click SEARCH  →  wait for all 6 sections to load
+              3. Scroll through page to find DOWNLOAD button
+              4. Click DOWNLOAD COMPARISON REPORTS (EXCEL)
+              5. Wait for file → rename
+            """
+            log.info(f"\n    -- Tax Liability Download: FY {fy_label} --")
+            log.info(f"    URL: {driver.current_url}")
+            time.sleep(2)
+
+            # -- 1. Select FY ----------------------------------
+            fy_set = False
+            for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+                try:
+                    driver.execute_script("arguments[0].click();", sel_el)
+                    time.sleep(0.8)
+                    s = Select(sel_el)
+                    opts = [o.text.strip() for o in s.options if o.text.strip()]
+                    log.info(f"    FY dropdown options: {opts}")
+                    for opt in s.options:
+                        if fy_label in opt.text.strip():
+                            s.select_by_visible_text(opt.text)
+                            log.info(f"    FY selected: {opt.text} ✓")
+                            fy_set = True; break
+                    if fy_set: break
+                except Exception: continue
+
+            if not fy_set:
+                try:
+                    driver.execute_script(f"""
+                        var sels=document.querySelectorAll('select');
+                        for(var s of sels){{
+                            for(var o of s.options){{
+                                if(o.text && o.text.trim().indexOf('{fy_label}')>-1){{
+                                    s.value=o.value;
+                                    s.dispatchEvent(new Event('change',{{bubbles:true}}));
+                                    s.dispatchEvent(new Event('input',{{bubbles:true}}));
+                                    break;
+                                }}
+                            }}
+                        }}
+                    """)
+                    time.sleep(1.5); log.info("    FY set via JS ✓"); fy_set = True
+                except Exception as _jse:
+                    log.warning(f"    JS FY select failed: {_jse}")
+
+            if not fy_set:
+                log.warning(f"    ✗ Could not select FY {fy_label}"); return False
+            time.sleep(1)
+
+            # -- 2. Click SEARCH -------------------------------
+            searched = try_click(driver, [
+                "//button[normalize-space()='SEARCH']",
+                "//button[normalize-space()='Search']",
+                "//button[contains(text(),'SEARCH')]",
+                "//input[@value='SEARCH' or @value='Search']",
+                "//button[@type='submit']",
+            ], timeout=8, log=log)
+            if not searched:
+                driver.execute_script("""
+                    var btns=document.querySelectorAll('button,input[type=submit]');
+                    for(var b of btns){
+                        if((b.innerText||b.value||'').toUpperCase().includes('SEARCH')){b.click();break;}
+                    }
+                """)
+            time.sleep(4)
+            log.info(f"    After SEARCH — URL: {driver.current_url}")
+
+            # -- 3. Find and click DOWNLOAD button ------------
+            log.info("    Scanning page for DOWNLOAD button...")
+            dl_clicked = False
+            save_ext   = ".xlsx"
+
+            DOWNLOAD_XPATHS = [
+                "//button[contains(text(),'DOWNLOAD COMPARISON REPORTS (EXCEL)')]",
+                "//button[contains(text(),'DOWNLOAD COMPARISON REPORTS')]",
+                "//button[contains(text(),'Download Comparison Reports')]",
+                "//button[contains(translate(text(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'DOWNLOAD COMPARISON')]",
+                "//a[contains(text(),'DOWNLOAD COMPARISON')]",
+                "//button[contains(text(),'DOWNLOAD') and contains(text(),'EXCEL')]",
+            ]
+
+            # Scroll to bottom first
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+
+            # Log ALL buttons on page (critical for diagnosis)
+            try:
+                all_btns = [b.text.strip() for b in driver.find_elements(By.TAG_NAME,"button") if b.text.strip()]
+                log.info(f"    ALL buttons: {all_btns}")
+                vis_btns = [b.text.strip() for b in driver.find_elements(By.TAG_NAME,"button") if b.is_displayed() and b.text.strip()]
+                log.info(f"    VISIBLE buttons: {vis_btns}")
+            except Exception: pass
+
+            # Try xpaths at current position (bottom)
+            dl_clicked = try_click(driver, DOWNLOAD_XPATHS, timeout=5, log=log)
+
+            # Scroll 90%, 75%, 50% and try again
+            if not dl_clicked:
+                for pct in [0.9, 0.75, 0.5, 1.0]:
+                    driver.execute_script(f"window.scrollTo(0, document.body.scrollHeight*{pct});")
+                    time.sleep(1)
+                    dl_clicked = try_click(driver, DOWNLOAD_XPATHS, timeout=3, log=log)
+                    if dl_clicked:
+                        log.info(f"    Button found at {int(pct*100)}% scroll ✓")
+                        break
+
+            # JS: deep scan including hidden/ng-click buttons
+            if not dl_clicked:
+                log.info("    JS deep scan for DOWNLOAD button...")
+                try:
+                    found_info = driver.execute_script("""
+                        var elems = Array.from(document.querySelectorAll('button, a, input[type=button]'));
+                        var found = [];
+                        for(var el of elems){
+                            var t = (el.innerText||el.textContent||el.value||el.getAttribute('title')||'')
+                                      .toUpperCase().replace(/[\n\r\t]+/g,' ').trim();
+                            if(t.length > 2) found.push(t.substring(0,60));
+                            if(t.includes('DOWNLOAD') && (t.includes('COMPARISON')||t.includes('EXCEL')||t.includes('REPORT'))){
+                                el.scrollIntoView({behavior:'instant',block:'center'});
+                                el.click();
+                                return {clicked:true, text:t};
+                            }
+                        }
+                        return {clicked:false, all_texts: found};
+                    """)
+                    log.info(f"    JS scan result: {found_info}")
+                    if found_info and found_info.get("clicked"):
+                        dl_clicked = True; log.info("    JS DOWNLOAD click ✓")
+                        time.sleep(3)
+                except Exception as _je:
+                    log.warning(f"    JS deep scan error: {_je}")
+
+            # CSV fallback
+            if not dl_clicked:
+                log.info("    Trying CSV fallback...")
+                dl_clicked = try_click(driver, [
+                    "//button[contains(text(),'DOWNLOAD (CSV)')]",
+                    "//button[contains(text(),'CSV')]",
+                    "//a[contains(text(),'CSV')]",
+                ], timeout=5, log=log)
+                if dl_clicked: save_ext = ".csv"
+
+            if not dl_clicked:
+                log.warning(f"    ✗ No download button found. URL: {driver.current_url}")
+                return False
+
+            log.info("    Download button clicked ✓ — waiting 15s for file...")
+            time.sleep(3)
+            save_name = f"TaxLiability_{file_suffix}{save_ext}"
+            if rename_latest(client_dir, save_name, [".xlsx",".xls",".csv"], log):
+                log.info(f"    ✓ Saved: {save_name}"); return True
+            log.warning("    Clicked but no file found in output folder")
+            return False
+
+        # -- Download Tax Liability for each FY ----------
+        # Navigate ONCE to Tax Liability page, then loop FY years on same page
+        tl_results = {}
+        log.info("    Navigating to Tax Liability page (once)...")
+        relogin_if_needed(driver, log)
+        ok_nav = go_to_tax_liabilities()
+        if not ok_nav:
+            log.warning("    Tax Liability navigation failed — skipping")
+            triggered["TAX_LIABILITY"] = "NAV_FAIL"
+        else:
+            for fy in TAX_FY_YEARS:
+                try:
+                    log.info(f"\n    Downloading Tax Liability: FY {fy}")
+                    suffix = fy.replace("-","_")
+                    save_name = f"TaxLiability_{suffix}.xlsx"
+                    # KEY FIX: skip if already downloaded (exact FY file exists)
+                    if (client_path / save_name).exists():
+                        log.info(f"    ✓ {save_name} already exists — skip")
+                        tl_results[fy] = "OK"; continue
+                    # KEY FIX: re-navigate to Tax Liabilities page before each FY.
+                    # Staying on same page causes the dropdown to retain the previous
+                    # FY selection → portal downloads the same file twice.
+                    if tl_results:  # not the first iteration
+                        log.info(f"    Re-navigating to Tax Liability page for FY {fy}...")
+                        relogin_if_needed(driver, log)
+                        ok_nav2 = go_to_tax_liabilities()
+                        if not ok_nav2:
+                            log.warning(f"    Re-nav failed for FY {fy} — skip")
+                            tl_results[fy] = "NAV_FAIL"; continue
+                    ok = download_tax_fy(fy, suffix)
+                    tl_results[fy] = "OK" if ok else "DOWNLOAD_FAIL"
+                except Exception as e:
+                    log.warning(f"    Tax Liability FY {fy} error: {e}")
+                    tl_results[fy] = f"ERR:{e}"
+
+        ok_tl = sum(1 for v in tl_results.values() if v == "OK")
+        log.info(f"\n  Tax Liability: {ok_tl}/{len(TAX_FY_YEARS)} downloaded")
+        for fy, st in tl_results.items():
+            log.info(f"    FY {fy}: {st}")
+        triggered["TAX_LIABILITY"] = "OK" if ok_tl > 0 else "FAIL"
+
+        ok_count = sum(1 for v in triggered.values() if v in ("TRIGGERED", "OK"))
+    # Guard: ok_count may be unset if TAX_LIABILITY block was skipped
+    if "ok_count" not in dir():
+        ok_count = sum(1 for v in triggered.values() if v in ("TRIGGERED", "OK"))
+    log.info(f"\n  Phase 1 done — {ok_count} items triggered/downloaded")
+    return triggered
+
+    # ════════════════════════════════════════════════════════════════
+    # PHASE 5 — Trigger GENERATE for GSTR-2A (all months)
+    # Done AFTER 2B/3B/TAX so portal has had time to prepare GSTR-1/1A
+    # links — which can now be collected in phase2_download_all below.
+    # ════════════════════════════════════════════════════════════════
+    if "GSTR2A" in returns_todo:
+        log.info(f"\n  ══ Phase 5 — Trigger GENERATE: GSTR-2A ══")
+        for month_name, month_num, year in months_to_run:
+            key = f"{month_name}_{year}"
+            zip_name = f"GSTR2A_{month_name}_{year}.zip"
+            if (client_path / zip_name).exists():
+                log.info(f"    ✓ GSTR2A {month_name} already exists — skip")
+                triggered[f"{key}_GSTR2A"] = "TRIGGERED"
+                continue
+            try:
+                safe_go_to_dashboard(driver, log)
+                select_and_search(driver, month_name, log)
+                if click_tile_download(driver, "GSTR2A", log):
+                    time.sleep(0.4)
+                    gen_clicked = False
+                    try:
+                        driver.execute_script("""
+                            var btns=document.querySelectorAll('button,a');
+                            for(var i=0;i<btns.length;i++){
+                                var t=(btns[i].innerText||'').toUpperCase();
+                                if(t.includes('GENERATE')&&t.includes('EXCEL')){
+                                    btns[i].click(); break;
+                                }
+                            }
+                        """)
+                        gen_clicked = True
+                    except Exception: pass
+                    if not gen_clicked:
+                        gen_clicked = try_click(driver, EXCEL_GENERATE_XPATHS, timeout=5, log=log)
+                    if gen_clicked:
+                        log.info(f"    ✓ GSTR2A {month_name}: generate triggered")
+                        triggered[f"{key}_GSTR2A"] = "TRIGGERED"
+                        time.sleep(0.3)
+                    else:
+                        triggered[f"{key}_GSTR2A"] = "GEN_FAIL"
+                else:
+                    triggered[f"{key}_GSTR2A"] = "TILE_FAIL"
+            except Exception as e:
+                log.warning(f"    GSTR2A trigger failed [{month_name}]: {e}")
+                triggered[f"{key}_GSTR2A"] = f"ERR:{e}"
+
+    ok_count = sum(1 for v in triggered.values()
+                   if v in ("TRIGGERED", "OK"))
+    log.info(f"\n  Phase 1 done — {ok_count} items triggered/downloaded")
+    return triggered
+
+
+
+# ==========================================================
+# PHASE 2 — DOWNLOAD GENERATED FILES (after portal wait)
+#
+# CORRECT PORTAL FLOW (confirmed from logs + screenshots):
+#   1. Navigate to dashboard → select month → SEARCH
+#   2. Click tile DOWNLOAD  → lands on offlinedownload page
+#   3. Click GENERATE again (JSON for GSTR1/1A, EXCEL for 2B/2A)
+#      → portal shows "Your request acknowledged..." banner
+#      → after a few seconds the "Click here to download" link appears
+#   4. Click that download link → file downloads
+#
+# GSTR-3B is already downloaded in Phase 1 (PDF is immediate).
+# Returns dict  key="{Month}_{Year}_{RetType}" → status string
+# ==========================================================
+
+def verify_gstr1_zip(zip_path, expected_month_num, expected_year, log=None):
+    """
+    Open a GSTR-1 portal ZIP, read the JSON inside, and confirm the
+    filing period (fp field) matches the expected month.
+
+    fp format in GST portal JSON:  MMYYYY   e.g. "012026" for Jan 2026
+    Returns True if correct period, False if wrong or unreadable.
+
+    WHY THIS IS NEEDED:
+    The portal ZIP filename contains the DOWNLOAD DATE (DDMMYYYY of the
+    day you clicked download), NOT the return period.
+    e.g. returns_23042026_R1_33AXKPV8837H1ZT_offline_others_0.zip
+          ↑ 23042026 = 23rd April 2026 (download date)
+    The ONLY reliable way to know which month's GSTR-1 is inside
+    is to read the fp field from the JSON.
+    """
+    try:
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            json_files = [n for n in zf.namelist() if n.lower().endswith(".json")]
+            if not json_files:
+                if log: log.warning(f"    [verify] No JSON in {zip_path.name}")
+                return False
+            data = json.loads(zf.read(json_files[0]))
+            fp   = str(data.get("fp", "")).strip()          # e.g. "012026"
+            expected_fp = str(expected_month_num).zfill(2) + str(expected_year)
+            if fp == expected_fp:
+                if log: log.info(
+                    f"    [verify] ✅ {zip_path.name}: fp={fp} ✓ correct period")
+                return True
+            else:
+                if log: log.warning(
+                    f"    [verify] ❌ {zip_path.name}: fp={fp!r} ≠ expected {expected_fp!r}"
+                    f" (portal download-date in filename ≠ return period in JSON)")
+                return False
+    except Exception as e:
+        if log: log.warning(f"    [verify] Could not read {zip_path.name}: {e}")
+        return False   # unreadable → treat as wrong so it is retried
+
+
+def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
+    """
+    Phase 2 — Download generated GSTR-1 and GSTR-2A links.
+
+    GSTR-1 approach (parallel setup + sequential download):
+    ─────────────────────────────────────────────────────────
+    Phase 1 (PARALLEL): Open 6 tabs simultaneously, each navigates to its
+      month and clicks the GSTR-1 tile. All 6 land on the generate page at once.
+    Phase 2 (SEQUENTIAL): One tab at a time — click GENERATE JSON, fast-poll
+      for file (GSTR-1 is instant when already generated), rename, move to next tab.
+
+    This saves ~90s per batch (6 tabs × 15s navigation = 90s parallel vs sequential).
+    GSTR-1A is downloaded when TRIGGERED in Phase 1A (same flow as GSTR-1).
+    """
+    if returns_todo is None:
+        returns_todo = {"GSTR1", "GSTR2A"}
+
+    dl_results  = {}
+    client_path = Path(client_dir)
+
+    GENERATE_JSON_XP = [
+        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE JSON')]",
+        "//button[contains(text(),'Generate JSON')]",
+        "//a[contains(text(),'GENERATE JSON')]",
+    ]
+    GENERATE_EXCEL_XP = [
+        "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE EXCEL')]",
+        "//button[contains(text(),'Generate Excel')]",
+        "//a[contains(text(),'GENERATE EXCEL')]",
+        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'Generate JSON')]",
+    ]
+    DOWNLOAD_LINK_XP = [
+        "//a[contains(text(),'Click here to download')]",
+        "//a[contains(text(),'click here to download')]",
+        "//a[contains(text(),'File 1')]",
+        "//a[contains(text(),'File 2')]",
+        "//a[contains(@href,'.zip')]",
+        "//a[contains(@href,'filedownload')]",
+        "//a[contains(@href,'download') and string-length(@href) > 50]",
+    ]
+
+    def _snap():
+        """
+        Snapshot of files in client_path that we care about tracking.
+
+        ★ KEY: Portal-named ZIPs (returns_DDMMYYYY_R1_..._offline_others_0.zip)
+        are EXCLUDED from the snap baseline. Here's why:
+
+        The portal ALWAYS uses the same filename for every month's download.
+        If month N's portal zip was not deleted after rename, it sits in
+        client_path. When month N+1 downloads, Chrome overwrites or creates
+        the same filename. If the old zip was in _snap as a known file with
+        a prev mtime, the new arrival may not be detected as "newer" (OS
+        may preserve mtime on overwrite on some systems, or the difference
+        is < 0.1s). By excluding portal ZIPs from snap we guarantee that
+        ANY portal zip found after the download is treated as "newly arrived".
+        """
+        exts = {".zip", ".json", ".xlsx", ".pdf"}
+        result = {}
+        for f in client_path.iterdir():
+            if f.suffix.lower() not in exts: continue
+            if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+            if f.suffix.lower() == ".zip":
+                nm = f.name.upper()
+                # ★ EXCLUDE portal-named ZIPs from baseline snap
+                # Strict regex: returns_DDMMYYYY_R1_GSTIN_offline_others_N.zip
+                # This is the ONLY filename pattern the GST portal produces for GSTR-1.
+                # Excludes GSTR7_NIL_Automation.zip, other project zips, etc.
+                import re as _re_snap
+                _PORTAL_SNAP = _re_snap.compile(
+                    r"^returns_\d{8}_R\d_[A-Z0-9]+_offline_others_\d+\.zip$",
+                    _re_snap.IGNORECASE
+                )
+                if _PORTAL_SNAP.match(f.name):
+                    continue   # intentionally excluded — portal zip is transient
+                # Include correctly-named output ZIPs and other known formats
+                is_named = any(nm.startswith(p) for p in [
+                    "GSTR1_","GSTR2_","GSTR3_","GSTR1A_","GSTR2A_","GSTR2B_",
+                    "GST_ALL_OUTPUTS"
+                ])
+                if not is_named:
+                    continue   # skip unknown ZIPs (GSTR7, automation tools, etc.)
+            result[str(f)] = f.stat().st_mtime
+        return result
+
+    def _wait_file(snap_before, timeout=120):
+        """Poll for new portal zip — matches base name AND Chrome duplicate renames.
+
+        ROOT CAUSE FIX (April/August/October/January etc. consistently failing):
+        Chrome saves all GSTR-1 zips with the SAME base filename each time:
+          returns_23042026_R1_GSTIN_offline_others_0.zip   ← first download
+        When a second one is saved, Chrome auto-renames to avoid overwriting:
+          returns_23042026_R1_GSTIN_offline_others_0 (1).zip
+          returns_23042026_R1_GSTIN_offline_others_0 (2).zip  etc.
+        The old strict regex  ^returns_..._0\\.zip$  only matched the BASE name.
+        ALL duplicate-renamed files (..._0 (1).zip, ..._0 (2).zip) were INVISIBLE
+        → _wait_file returned None after full timeout → NOT_FOUND every time.
+
+        Fix: extended portal pattern to also match the Chrome ' (N)' suffix.
+        """
+        import re as _re_wf
+        # Matches both the base file AND Chrome-renamed duplicates:
+        #   returns_DDMMYYYY_R1_GSTIN_offline_others_N.zip
+        #   returns_DDMMYYYY_R1_GSTIN_offline_others_N (1).zip
+        #   returns_DDMMYYYY_R1_GSTIN_offline_others_N (2).zip  etc.
+        _PORTAL_PAT_W = _re_wf.compile(
+            r"^returns_\d{8}_R\d_[A-Z0-9]+_offline_others_\d+(\s*\(\d+\))?\.zip$",
+            _re_wf.IGNORECASE
+        )
+
+        deadline = time.time() + timeout
+        crdownload_seen = False
+        while time.time() < deadline:
+            interval = 0.5 if (deadline - time.time()) > (timeout - 30) else 1
+            time.sleep(interval)
+            # Extend deadline while Chrome is actively writing a .crdownload
+            active_crd = [f for f in client_path.iterdir()
+                          if f.name.endswith(".crdownload") and f.stat().st_size > 0]
+            if active_crd:
+                if not crdownload_seen:
+                    log.info(f"    Download in progress ({active_crd[0].name[:50]})...")
+                crdownload_seen = True
+                deadline = max(deadline, time.time() + 30)
+                continue
+            # Scan most-recent-first — find any portal zip (base OR ' (N)' renamed)
+            for f in sorted(client_path.iterdir(),
+                            key=lambda x: x.stat().st_mtime, reverse=True):
+                if f.suffix.lower() != ".zip": continue
+                if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                if f.stat().st_size < 500: continue
+                if _PORTAL_PAT_W.match(f.name):
+                    time.sleep(0.3)  # let Chrome finish flushing
+                    log.info(f"    Portal zip detected: {f.name} ({f.stat().st_size} B)")
+                    return f
+        return None
+
+
+    def _find_download_link():
+        for xp in DOWNLOAD_LINK_XP:
+            try:
+                for el in driver.find_elements(By.XPATH, xp):
+                    if el.is_displayed():
+                        href = el.get_attribute("href") or ""
+                        if len(href) > 20:
+                            return el
+            except Exception: continue
+        return None
+
+    def _handle_download_link_click(link, snap, month_name, timeout=45):
+        """
+        Click a portal download link safely.
+        Portal behaviour: clicking "Click here to download" opens a NEW TAB,
+        triggers the browser download in that tab, then the tab closes itself.
+        We must:
+          1. Record current tab handles BEFORE clicking
+          2. Click the link
+          3. Detect any new tab that opened → wait for it to close (download started)
+          4. Ensure driver focus returns to the ORIGINAL tab
+          5. Poll client_path for the new file
+        """
+        import time as _t
+        from pathlib import Path as _Path
+        orig_handle  = driver.current_window_handle
+        orig_handles = set(driver.window_handles)
+        href = link.get_attribute("href") or ""
+        txt  = (link.text.strip() or href[:60])
+        log.info(f"    [{month_name}] Clicking download link: '{txt[:60]}'")
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", link)
+            driver.execute_script("arguments[0].click();", link)
+        except Exception as _ce:
+            log.warning(f"    [{month_name}] Link click error: {_ce}")
+            return None
+
+        # Wait up to 5s for a new tab to appear
+        new_tab = None
+        tab_wait = _t.time() + 5
+        while _t.time() < tab_wait:
+            _t.sleep(0.3)
+            current_handles = set(driver.window_handles)
+            new_tabs = current_handles - orig_handles
+            if new_tabs:
+                new_tab = new_tabs.pop()
+                log.info(f"    [{month_name}] New download tab detected — waiting for it to close...")
+                break
+
+        if new_tab:
+            # ★ FIX: IMMEDIATELY set download dir on the new tab
+            # before it starts downloading — otherwise Chrome uses
+            # its default Downloads folder instead of client_path
+            try:
+                driver.switch_to.window(new_tab)
+                driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                    "behavior": "allow",
+                    "downloadPath": str(client_path)
+                })
+                log.info(f"    [{month_name}] Download dir set on new tab ✓")
+                driver.switch_to.window(orig_handle)
+            except Exception as _cdpe:
+                log.info(f"    [{month_name}] CDP on new tab: {_cdpe}")
+                try: driver.switch_to.window(orig_handle)
+                except Exception: pass
+
+            # Wait for tab to close — means download was triggered
+            # April/Jan can take 60-90s for large files. Poll folder
+            # in parallel so we catch the file as soon as it appears.
+            close_wait = _t.time() + 90
+            tab_closed = False
+            early_file = None
+            while _t.time() < close_wait:
+                _t.sleep(0.5)
+                if new_tab not in driver.window_handles:
+                    log.info(f"    [{month_name}] Download tab closed ✓")
+                    tab_closed = True
+                    break
+                # Poll for file while tab is still open (crdownload → zip)
+                for _fp in _Path(client_path).iterdir():
+                    if _fp.suffix.lower() != ".zip": continue
+                    if _fp.name.endswith((".crdownload",".tmp",".part")): continue
+                    if _fp.stat().st_size < 10000: continue
+                    _fprev = snap.get(str(_fp))
+                    if (_fprev is None or _fp.stat().st_mtime > _fprev + 0.1):
+                        early_file = _fp
+                        log.info(f"    [{month_name}] File appeared while tab open: {_fp.name}")
+                        break
+                if early_file:
+                    break
+            if not tab_closed and not early_file:
+                log.warning(f"    [{month_name}] Download tab still open after 90s")
+            # Ensure we're back on original tab
+            try:
+                if driver.current_window_handle != orig_handle:
+                    driver.switch_to.window(orig_handle)
+            except Exception: pass
+            # If we caught the file early, return it directly
+            if early_file:
+                return early_file
+        else:
+            log.info(f"    [{month_name}] No new tab opened — direct download triggered")
+
+        # Poll for the file
+        result = _wait_file(snap, timeout=timeout)
+        if result:
+            return result
+
+        # Wider scan: any new zip regardless of mtime (portal may have cached mtime)
+        log.info(f"    [{month_name}] Poll found nothing — scanning folder for any new portal zip")
+        for _pf in client_path.iterdir():
+            if _pf.suffix.lower() != ".zip": continue
+            if _pf.name.endswith((".crdownload",".tmp",".part")): continue
+            prev = snap.get(str(_pf))
+            if (prev is None or _pf.stat().st_mtime > prev + 0.1) and _pf.stat().st_size > 1500:
+                return _pf
+
+        # ★ FIX 4: Chrome may have downloaded to PARENT folder despite CDP
+        # Scan parent dir and user Downloads for any new R1 zip
+        log.info(f"    [{month_name}] Scanning for portal zip in client/Downloads (strict pattern only)...")
+        import os as _os, shutil as _shu2b, re as _re2b
+        _PORTAL2 = _re2b.compile(
+            r"^returns_\d{8}_R\d_[A-Z0-9]+_offline_others_\d+\.zip$", _re2b.IGNORECASE
+        )
+        scan_dirs = [client_path]
+        try: scan_dirs.append(client_path.parent)
+        except Exception: pass
+        try:
+            _udl = Path(_os.path.expanduser("~")) / "Downloads"
+            if _udl.exists(): scan_dirs.append(_udl)
+        except Exception: pass
+        _seen2 = set()
+        for _scan_dir in scan_dirs:
+            try:
+                for _pf in _scan_dir.iterdir():
+                    if str(_pf) in _seen2: continue
+                    _seen2.add(str(_pf))
+                    if _pf.suffix.lower() != ".zip": continue
+                    if _pf.name.endswith((".crdownload",".tmp",".part")): continue
+                    # ★ STRICT: portal pattern only — rejects GSTR7, other automation zips
+                    if not _PORTAL2.match(_pf.name): continue
+                    if _pf.stat().st_size < 3000: continue
+                    prev = snap.get(str(_pf))
+                    if prev is None or _pf.stat().st_mtime > prev + 0.1:
+                        log.info(f"    [{month_name}] Portal zip found in {_scan_dir.name}/: {_pf.name}")
+                        if _pf.parent != client_path:
+                            try:
+                                _dst2 = client_path / _pf.name
+                                _shu2b.move(str(_pf), str(_dst2))
+                                return _dst2
+                            except Exception: pass
+                        return _pf
+            except Exception: pass
+
+        # Final fallback: driver.get(href) to force-download
+        if href and len(href) > 20:
+            log.info(f"    [{month_name}] Trying direct GET fallback...")
+            try:
+                driver.get(href)
+                _t.sleep(2)
+                result = _wait_file(snap, timeout=20)
+                if result:
+                    log.info(f"    [{month_name}] File arrived via direct GET ✓")
+                    return result
+            except Exception as _dge:
+                log.warning(f"    [{month_name}] GET fallback error: {_dge}")
+        return None
+
+    def _click_gen_and_wait(gen_xpaths, save_name, snap_before=None, max_wait=120, month_name=""):
+        """
+        Click GENERATE, poll for file, then try download link. Returns file path or None.
+
+        snap_before: snapshot taken BEFORE tile click. Pass this from outside so any file
+          that downloads instantly (portal already generated it) is detected as NEW.
+          If None, takes snap internally (after GENERATE click — less reliable).
+        """
+        snap = snap_before if snap_before is not None else _snap()
+
+        # JS-first GENERATE click
+        gen_done = False
+        try:
+            driver.execute_script("""
+                var btns = document.querySelectorAll('button,a');
+                for (var i = 0; i < btns.length; i++) {
+                    var t = (btns[i].innerText || '').toUpperCase();
+                    if (t.includes('GENERATE') && (t.includes('JSON') || t.includes('EXCEL'))) {
+                        btns[i].click(); break;
+                    }
+                }
+            """)
+            gen_done = True
+        except Exception: pass
+        if not gen_done:
+            gen_done = try_click(driver, gen_xpaths, timeout=8, log=log)
+        if gen_done:
+            log.info(f"    GENERATE clicked ✓")
+        else:
+            log.warning(f"    GENERATE button not found — checking for existing link")
+
+        # Fast poll for instant download (if already generated)
+        # ★ Only accept: portal-named zips OR correctly named GSTR1_* files
+        # Rejects zips from other projects (GSTR7, automation tools, etc.)
+        import re as _re_fp2
+        _PORTAL_FP = _re_fp2.compile(
+            r"^returns_\d{8}_R\d_[A-Z0-9]+_offline_others_\d+\.zip$", _re_fp2.IGNORECASE
+        )
+        fast_dl = time.time() + 30
+        while time.time() < fast_dl:
+            time.sleep(0.5)
+            for f in client_path.iterdir():
+                if f.suffix.lower() not in {".zip", ".json", ".xlsx"}: continue
+                if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                if f.stat().st_size < 1000: continue
+                nm = f.name
+                # Accept portal-named zip (strict pattern) or correctly named output
+                is_portal_zip = f.suffix.lower() == ".zip" and _PORTAL_FP.match(nm)
+                is_named_file = (nm.startswith("GSTR1_") or nm.startswith("GSTR2") or
+                                 nm.startswith("GSTR3") or nm.endswith(".xlsx") or
+                                 nm.endswith(".json"))
+                if not (is_portal_zip or is_named_file): continue
+                prev = snap.get(str(f))
+                if prev is None or f.stat().st_mtime > prev + 0.1:
+                    return f
+
+        # Slower poll + link check
+        elapsed = 0
+        while elapsed < max_wait:
+            link = _find_download_link()
+            if link:
+                # ★ FIX: use new tab-aware handler instead of bare click
+                result = _handle_download_link_click(link, snap, month_name or save_name)
+                if result:
+                    return result
+                return None  # tried everything — caller will retry
+
+            for f in client_path.iterdir():
+                if f.suffix.lower() not in {".zip", ".json", ".xlsx"}: continue
+                if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                prev = snap.get(str(f))
+                if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 1000:
+                    return f
+
+            if elapsed > 0 and elapsed % 30 == 0:
+                log.info(f"    Waiting for generate link ({elapsed}s)... refreshing")
+                try:
+                    driver.refresh(); time.sleep(2)
+                except Exception: pass
+            else:
+                time.sleep(3)
+            elapsed += 3
+
+        return None
+
+    def _rename_file(src, dest, month_name):
+        """
+        Move portal ZIP to final destination name.
+        Always deletes source after successful save (even if copy2 was used).
+        If dest already exists, overwrites it — the fp check upstream ensures
+        we only reach here with the correct month's data.
+        """
+        try:
+            import shutil as _sh_rf
+            src_str  = str(src)
+            dest_str = str(dest)
+            if src_str == dest_str:
+                sz = dest.stat().st_size // 1024
+                log.info(f"    ✅ Already in place: {dest.name} ({sz} KB)")
+                return True
+            # If dest exists and src is different file — overwrite with new data
+            if dest.exists():
+                try: dest.unlink()
+                except Exception: pass
+            try:
+                src.rename(dest)          # fast move (same drive)
+            except Exception:
+                _sh_rf.copy2(src_str, dest_str)   # cross-drive fallback
+                try: src.unlink()         # delete source after copy
+                except Exception: pass
+            if dest.exists() and dest.stat().st_size > 500:
+                sz = dest.stat().st_size // 1024
+                log.info(f"    ✅ Saved: {dest.name} ({sz} KB)")
+                return True
+            log.warning(f"    Rename produced empty/missing file for {month_name}")
+            return False
+        except Exception as e:
+            log.warning(f"    Rename failed {month_name}: {e}")
+            return False
+
+    # ── GSTR-1: Parallel-tab pipeline ──────────────────────────────────
+    if "GSTR1" in returns_todo:
+        log.info(f"\n  ══ Phase 2 — GSTR-1 Download (parallel setup + sequential DL) ══")
+        log.info("     Open 6 tabs in parallel → each navigates to month → sequential download")
+
+        BATCH_SIZE = 6
+        DASH_URL   = "https://return.gst.gov.in/returns/auth/dashboard"
+        main_window = driver.current_window_handle
+
+        # Only months that were triggered and not yet downloaded
+        pending_gstr1 = []
+        for month_name, month_num, year in MONTHS:
+            key      = f"{month_name}_{year}_GSTR1"
+            save_name = f"GSTR1_{month_name}_{year}.zip"
+            p1_status = triggered.get(key, "SKIPPED")
+            if (client_path / save_name).exists():
+                dl_results[key] = "OK"
+                log.info(f"    ✓ GSTR1 {month_name} already downloaded — skip")
+                continue
+            if p1_status not in ("TRIGGERED", "OK"):
+                dl_results[key] = p1_status
+                log.info(f"    GSTR1 {month_name}: skip (Phase1={p1_status})")
+                continue
+            pending_gstr1.append((month_name, month_num, year, save_name, key))
+
+        total_g1      = len(pending_gstr1)
+        total_batches = -(-total_g1 // BATCH_SIZE)
+
+        for batch_idx in range(0, total_g1, BATCH_SIZE):
+            batch     = pending_gstr1[batch_idx : batch_idx + BATCH_SIZE]
+            batch_num = batch_idx // BATCH_SIZE + 1
+            log.info(f"\n  ── GSTR-1 Batch {batch_num}/{total_batches}: {[m[0] for m in batch]} ──")
+
+            # Ensure on dashboard before opening tabs
+            if "return.gst.gov.in" not in driver.current_url or "dashboard" not in driver.current_url:
+                safe_go_to_dashboard(driver, log)
+            main_window = driver.current_window_handle
+
+            # ── PHASE 1: Open all tabs simultaneously ─────────────────
+            tab_map = {}  # tab → (month_name, month_num, year, save_name, key)
+            for item in batch:
+                month_name = item[0]
+                try:
+                    driver.execute_script("window.open(arguments[0]);", DASH_URL)
+                    time.sleep(0.25)
+                    new_tab = driver.window_handles[-1]
+                    tab_map[new_tab] = item
+                    driver.switch_to.window(main_window)
+                    log.info(f"    Opened tab: {month_name}")
+                except Exception as e:
+                    log.warning(f"    Tab open failed {month_name}: {e}")
+
+            # ── PHASE 1B: Navigate + select month on all tabs (parallel) ─
+            # ★ Fix 3a: set download dir on every tab opened above
+            try: set_download_dir_all_tabs(driver, client_path)
+            except Exception: pass
+            nav_ok = {}
+            log.info(f"    Navigating {len(tab_map)} tabs to their month simultaneously...")
+            for tab, (month_name, month_num, year, save_name, key) in tab_map.items():
+                try:
+                    driver.switch_to.window(tab)
+                    try:
+                        WebDriverWait(driver, 12).until(
+                            lambda d: "dashboard" in d.current_url or "login" in d.current_url)
+                    except Exception: pass
+                    if "login" in driver.current_url or "denied" in driver.current_url:
+                        safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    # Scroll to ensure tiles load
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(0.2)
+                    nav_ok[tab] = True
+                    log.info(f"    ✓ Tab ready: {month_name}")
+                except Exception as e:
+                    log.warning(f"    Tab setup failed {month_name}: {e}")
+                    nav_ok[tab] = False
+
+            # Wait for tiles on all tabs
+            tile_deadline = time.time() + 15
+            tiles_ok = set()
+            while time.time() < tile_deadline:
+                for tab in tab_map:
+                    if not nav_ok.get(tab) or tab in tiles_ok: continue
+                    try:
+                        driver.switch_to.window(tab)
+                        body = driver.find_element(By.TAG_NAME, "body").text
+                        if any(g in body for g in ["GSTR-1", "DOWNLOAD", "VIEW"]):
+                            tiles_ok.add(tab)
+                    except Exception: pass
+                if len(tiles_ok) >= sum(1 for t in tab_map if nav_ok.get(t)): break
+                time.sleep(0.6)
+            driver.switch_to.window(main_window)
+            log.info(f"    {len(tiles_ok)}/{len(tab_map)} tabs have tiles — clicking tile DOWNLOAD on all...")
+
+            # (Tile wait already done above — duplicate removed by FIX 6)
+
+            # ── PHASE 2: Per-tab: snap → tile → generate → wait → rename ──
+            # KEY FIX: Snap is taken BEFORE tile click for each tab.
+            # Old code: clicked tiles simultaneously → settle → then generate
+            #   → portal delivered file during settle → snap taken after → file not detected
+            # New code: one tab at a time, snap first, then everything else
+            log.info(f"    Phase 2: tile+generate one tab at a time...")
+            for tab, (month_name, month_num, year, save_name, key) in tab_map.items():
+                if not nav_ok.get(tab):
+                    dl_results[key] = "NAV_FAIL"; continue
+                try:
+                    # ① Purge ALL portal ZIPs + stale _ex folder for this month BEFORE snap.
+                    # Portal always uses same filename every month — must be clean slate.
+                    purge_month_artifacts(client_path, month_name, year, log)
+                    snap_before = _snap()
+
+                    # ★ FIX 3: Re-acquire tab handle — download link may have
+                    # opened+closed a new tab, shifting window focus
+                    if tab not in driver.window_handles:
+                        log.warning(f"    [{month_name}] Tab was closed unexpectedly — skip")
+                        dl_results[key] = "TAB_CLOSED"; continue
+                    driver.switch_to.window(tab)
+
+                    # ② Re-confirm month (tabs may have drifted)
+                    select_and_search(driver, month_name, log)
+                    # Wait for tiles
+                    try:
+                        WebDriverWait(driver, 10).until(
+                            lambda d: any(g in d.find_element(By.TAG_NAME,"body").text
+                                         for g in ["GSTR-1","DOWNLOAD","VIEW"]))
+                    except Exception: pass
+
+                    # ③ Click tile DOWNLOAD
+                    if not click_tile_download(driver, "GSTR1", log):
+                        log.warning(f"    [{month_name}] ✗ Tile not found")
+                        dl_results[key] = "TILE_FAIL"; continue
+
+                    # ④ Wait for generate/offline download page to load
+                    # FIX: Portal uses different URL patterns per month —
+                    #   some land on /offlinedownload, others on /gstr1/auth/download
+                    #   or /returns/auth/offlinedownload etc.
+                    #   We wait for the page to NOT be the dashboard (i.e. tile click worked)
+                    #   rather than checking for a specific URL keyword.
+                    try:
+                        WebDriverWait(driver, 15).until(
+                            lambda d: "dashboard" not in d.current_url.lower()
+                            or "offline" in d.current_url.lower()
+                            or "download" in d.current_url.lower()
+                            or "gstr1" in d.current_url.lower())
+                    except Exception:
+                        pass
+                    time.sleep(0.5)  # small settle for Angular render
+                    log.info(f"    [{month_name}] Generate page: {driver.current_url[:70]}")
+
+                    # ⑤ FIX: Check if download link ALREADY present on page
+                    # (portal previously generated this file — link shown immediately,
+                    #  no second GENERATE click needed).
+                    # IMPORTANT: Do NOT wait 60-90s after clicking — that kills the session.
+                    # Fast path: click → poll 15s → if no new file, scan folder for portal-named zip.
+                    existing_link = _find_download_link()
+                    if existing_link:
+                        # ★ FIX 4: Use tab-aware handler — portal link opens new tab
+                        log.info(f"    [{month_name}] Link already present — using tab-aware click")
+                        new_f = _handle_download_link_click(existing_link, snap_before, month_name, timeout=45)
+                        # Additional portal-named file scan if still not found
+                        # FIX v6: use fp verification — filename date ≠ return period
+                        if not new_f:
+                            for _pf in sorted(client_path.iterdir(),
+                                              key=lambda ff: ff.stat().st_mtime, reverse=True):
+                                if _pf.suffix.lower() != ".zip": continue
+                                if _pf.name.endswith((".crdownload",".tmp",".part")): continue
+                                if _pf.stat().st_size < 500: continue
+                                if _pf.name.startswith("GSTR1_"): continue  # already named
+                                if verify_gstr1_zip(_pf, month_num, year, log):
+                                    new_f = _pf
+                                    log.info(f"    [{month_name}] fp-verified match: {_pf.name}")
+                                    break
+                    else:
+                        # ⑥ Click GENERATE JSON — snap was taken BEFORE, so any file that
+                        #    arrives (even instantly) will be detected as newer than snap
+                        new_f = _click_gen_and_wait(GENERATE_JSON_XP, save_name, snap_before, month_name=month_name)
+
+                    if new_f:
+                        dest = client_path / save_name
+                        # ★ FIX: fp-verify BEFORE renaming — if portal gave wrong
+                        # month's data (same filename collision), reject it now
+                        # so the month gets retried rather than saving corrupt data.
+                        _fp_ok = True
+                        if new_f.suffix.lower() == ".zip":
+                            _fp_ok = verify_gstr1_zip(new_f, month_num, year, log)
+                            if not _fp_ok:
+                                log.warning(
+                                    f"    [{month_name}] ⚠ fp mismatch — "
+                                    f"portal returned wrong month ZIP. Deleting and retrying."
+                                )
+                                try: new_f.unlink()
+                                except Exception: pass
+                                purge_portal_stubs(client_path, log, purge_full_size=True)
+                                dl_results[key] = "FP_MISMATCH"
+                        if _fp_ok:
+                            if _rename_file(new_f, dest, month_name):
+                                dl_results[key] = "OK"
+                            else:
+                                dl_results[key] = "RENAME_FAIL"
+                        # Purge portal ZIPs after each month (clean for next month)
+                        purge_month_artifacts(client_path, month_name, year, log)
+                    else:
+                        log.warning(f"    [{month_name}] ✗ No file received after all attempts")
+                        dl_results[key] = "NOT_FOUND"
+
+                    # ★ FIX 5: Close this tab immediately after download attempt
+                    # Prevents stale tabs accumulating and confusing window handles
+                    try:
+                        if tab in driver.window_handles:
+                            driver.switch_to.window(tab)
+                            driver.close()
+                        driver.switch_to.window(main_window)
+                    except Exception: pass
+
+                except Exception as e:
+                    log.warning(f"    GSTR1 download error [{month_name}]: {e}")
+                    dl_results[key] = f"ERR:{e}"
+                    # Close tab even on error
+                    try:
+                        if tab in driver.window_handles:
+                            driver.switch_to.window(tab)
+                            driver.close()
+                        driver.switch_to.window(main_window)
+                    except Exception: pass
+
+            # Batch tabs already closed individually above
+            # Just ensure we're on main_window
+            try:
+                driver.switch_to.window(main_window)
+            except Exception: pass
+            log.info(f"    GSTR-1 Batch {batch_num} complete ✓")
+            time.sleep(0.5)
+
+        # ── Pre-retry: scan for portal-named GSTR-1 zips ─────────────────
+        # Portal names files like: returns_21042026_R1_33ABLFM7918H1ZZ_offline_others_0.zip
+        # Also scan parent/Downloads in case CDP missed and Chrome saved there
+        import os as _os2
+        _extra_scan = []
+        try: _extra_scan.append(client_path.parent)
+        except Exception: pass
+        try:
+            _udl2 = Path(_os2.path.expanduser("~")) / "Downloads"
+            if _udl2.exists(): _extra_scan.append(_udl2)
+        except Exception: pass
+        for _xs in _extra_scan:
+            try:
+                for _xf in _xs.iterdir():
+                    if _xf.suffix.lower() != ".zip": continue
+                    if _xf.name.endswith((".crdownload",".tmp",".part")): continue
+                    if "_R1_" not in _xf.name.upper(): continue
+                    if _xf.stat().st_size < 1500:
+                        # Stub file — delete it, don't move
+                        try: _xf.unlink()
+                        except Exception: pass
+                        log.info(f"    Deleted stub zip: {_xf.name} ({_xf.stat().st_size if _xf.exists() else 0}B)")
+                        continue
+                    # Move it to client_path
+                    _dest_x = client_path / _xf.name
+                    if not _dest_x.exists():
+                        try:
+                            import shutil as _shu2
+                            _shu2.move(str(_xf), str(_dest_x))
+                            log.info(f"    Moved stray R1 zip from {_xs.name}/: {_xf.name}")
+                        except Exception: pass
+            except Exception: pass
+
+        # ── FIX v6: fp-verified portal file scan ─────────────────────────────
+        # Portal ZIP filename contains the DOWNLOAD DATE, not the return period.
+        # e.g. returns_23042026_R1_33AXKPV8837H1ZT_offline_others_0.zip
+        #        ↑ 23042026 = 23 Apr 2026 (download date), NOT Jan/Apr period.
+        # Old code matched "012026" in filename — that never appears there!
+        # Fix: open every _R1_ zip and read the fp field inside the JSON.
+        for month_name, month_num, year in MONTHS:
+            key = f"{month_name}_{year}_GSTR1"
+            if dl_results.get(key) == "OK": continue
+            save_name = f"GSTR1_{month_name}_{year}.zip"
+            dest = client_path / save_name
+            if dest.exists():
+                # Verify the existing file is actually the right period
+                if verify_gstr1_zip(dest, month_num, year, log):
+                    dl_results[key] = "OK"
+                    log.info(f"    ✓ GSTR1 {month_name}: existing file verified OK")
+                else:
+                    log.warning(f"    ⚠ GSTR1 {month_name}: existing file WRONG period — deleting")
+                    try: dest.unlink()
+                    except Exception: pass
+                continue
+            # Scan all portal-named zips — check fp inside each one
+            # (filename date is irrelevant — only fp matters)
+            for f in sorted(client_path.iterdir(),
+                            key=lambda ff: ff.stat().st_mtime, reverse=True):
+                if f.suffix.lower() != ".zip": continue
+                if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                if f.stat().st_size < 500: continue
+                # Skip already-correctly-named files
+                if f.name.startswith("GSTR1_") and f != dest: continue
+                # Verify fp field inside the zip
+                if verify_gstr1_zip(f, month_num, year, log):
+                    try:
+                        import shutil as _sh_v6
+                        if not dest.exists():
+                            _sh_v6.copy2(str(f), str(dest))
+                        dl_results[key] = "OK"
+                        log.info(f"    ✅ GSTR1 {month_name}: fp-verified match → {save_name}")
+                    except Exception as _ce:
+                        log.warning(f"    Copy failed {month_name}: {_ce}")
+                    break
+
+        # Retry failed GSTR-1 months sequentially
+        failed_g1 = [(mn, mm, yr, f"GSTR1_{mn}_{yr}.zip", f"{mn}_{yr}_GSTR1")
+                     for mn, mm, yr in MONTHS
+                     if dl_results.get(f"{mn}_{yr}_GSTR1") not in ("OK", "SKIPPED")
+                     and f"{mn}_{yr}_GSTR1" in dl_results]
+        if failed_g1:
+            log.info(f"\n  Retrying {len(failed_g1)} failed GSTR-1 months...")
+            for month_name, month_num, year, save_name, key in failed_g1:
+                purge_month_artifacts(client_path, month_name, year, log)  # clean slate before retry
+                _retry_dest = client_path / save_name
+                # Verify existing file before accepting — reject bad/wrong-period zips
+                if _retry_dest.exists():
+                    if verify_gstr1_zip(_retry_dest, month_num, year, log):
+                        dl_results[key] = "OK"; continue
+                    else:
+                        log.warning(f"    ⚠ Retry {month_name}: existing zip INVALID — deleting and re-downloading")
+                        try: _retry_dest.unlink()
+                        except Exception: pass
+                for attempt, wait_s in enumerate([0, 30, 60], 1):
+                    if wait_s: time.sleep(wait_s)
+                    try:
+                        safe_go_to_dashboard(driver, log)
+                        select_and_search(driver, month_name, log)
+                        if click_tile_download(driver, "GSTR1", log):
+                            time.sleep(0.5)
+                            new_f = _click_gen_and_wait(GENERATE_JSON_XP, save_name, month_name=month_name)
+                            if new_f:
+                                dest = client_path / save_name
+                                if _rename_file(new_f, dest, month_name):
+                                    dl_results[key] = "OK"; break
+                        log.warning(f"    [T{attempt}] ✗ GSTR1 {month_name}")
+                    except Exception as e:
+                        log.warning(f"    [T{attempt}] Error {month_name}: {e}")
+                log.info(f"    {'✅' if dl_results.get(key)=='OK' else '❌'} GSTR1 {month_name}: {dl_results.get(key)}")
+
+
+    # ── GSTR-1A: PDF already downloaded in Phase 1A — just tally results ─
+    if "GSTR1A" in returns_todo:
+        gstr1a_ok  = sum(1 for mn,_,yr in MONTHS
+                         if (client_path/f"GSTR1A_{mn}_{yr}.pdf").exists())
+        gstr1a_na  = sum(1 for mn,_,yr in MONTHS
+                         if triggered.get(f"{mn}_{yr}_GSTR1A") == "NOT_AVAILABLE")
+        # Retry any that failed in Phase 1A (tile found but PDF not saved)
+        gstr1a_retry = [(mn, mm, yr) for mn, mm, yr in MONTHS
+                        if not (client_path/f"GSTR1A_{mn}_{yr}.pdf").exists()
+                        and triggered.get(f"{mn}_{yr}_GSTR1A") not in ("NOT_AVAILABLE", "OK", "")]
+        if gstr1a_retry:
+            log.info(f"\n  ── GSTR-1A Retry: {len(gstr1a_retry)} month(s) ──")
+            for month_name, month_num, year in gstr1a_retry:
+                key1a = f"{month_name}_{year}_GSTR1A"
+                try:
+                    safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    time.sleep(1)
+                    if is_gstr1a_available(driver, log):
+                        _pdf = download_gstr1a_pdf(driver, client_path, month_name, year, log)
+                        if _pdf:
+                            triggered[key1a] = "OK"
+                            gstr1a_ok += 1
+                            log.info(f"    ✅ GSTR1A {month_name}: retry OK")
+                        else:
+                            log.warning(f"    ✗ GSTR1A {month_name}: retry failed")
+                    else:
+                        triggered[key1a] = "NOT_AVAILABLE"
+                        gstr1a_na += 1
+                except Exception as e:
+                    log.warning(f"    GSTR1A {month_name} retry error: {e}")
+        log.info(f"\n  GSTR-1A: {gstr1a_ok} PDF(s) saved | {gstr1a_na} N/A (PREPARE ONLINE)")
+
+    # ── GSTR-2A: Sequential (generate-then-download, one month at a time) ─
+    if "GSTR2A" in returns_todo:
+        log.info(f"\n  ══ Phase 2 — GSTR-2A Download ══")
+        for month_name, month_num, year in MONTHS:
+            key       = f"{month_name}_{year}_GSTR2A"
+            save_name = f"GSTR2A_{month_name}_{year}.zip"
+            p1_status = triggered.get(key, "SKIPPED")
+            if (client_path / save_name).exists():
+                dl_results[key] = "OK"
+                log.info(f"    ✓ GSTR2A {month_name} already downloaded")
+                continue
+            if p1_status not in ("TRIGGERED", "OK"):
+                dl_results[key] = p1_status
+                log.info(f"    GSTR2A {month_name}: skip (Phase1={p1_status})")
+                continue
+            log.info(f"\n  [{month_name} {year}] GSTR-2A downloading...")
+            try:
+                safe_go_to_dashboard(driver, log)
+                select_and_search(driver, month_name, log)
+                if click_tile_download(driver, "GSTR2A", log):
+                    time.sleep(0.5)
+                    new_f = _click_gen_and_wait(GENERATE_EXCEL_XP, save_name, month_name=month_name)
+                    if new_f:
+                        dest = client_path / save_name
+                        if _rename_file(new_f, dest, month_name):
+                            dl_results[key] = "OK"
+                        else:
+                            dl_results[key] = "RENAME_FAIL"
+                    else:
+                        dl_results[key] = "NOT_FOUND"
+                else:
+                    dl_results[key] = "TILE_FAIL"
+            except Exception as e:
+                log.warning(f"    GSTR2A download failed [{month_name}]: {e}")
+                dl_results[key] = f"ERR:{e}"
+
+    ok_g1  = sum(1 for k,v in dl_results.items() if "GSTR1" in k and v=="OK")
+    ok_2a  = sum(1 for k,v in dl_results.items() if "GSTR2A" in k and v=="OK")
+    log.info(f"\n  Phase 2 complete — GSTR-1: {ok_g1} downloaded | GSTR-2A: {ok_2a} downloaded")
+    return dl_results
+
+
+
+# ── Excel formula helpers ──────────────────────────────────────────
+def _is_formula(v): return isinstance(v, str) and v.startswith("=")
+
+def _fsum(col_letter, row_start, row_end):
+    """=SUM(B3:B14)"""
+    return f"=SUM({col_letter}{row_start}:{col_letter}{row_end})"
+
+def _fdiff(col_a, col_b, row):
+    """=D14-C14"""
+    return f"={col_a}{row}-{col_b}{row}"
+
+def extract_json_to_excel(client_dir, client_name, log):
+    """
+    Extract GSTR-1 JSON ZIPs → multi-sheet Excel workbooks.
+
+    Per-ZIP workbook sheets:
+      1. B2B_Invoices        — invoice-level B2B detail
+      2. B2CS_Summary        — B2C Small (state+rate level, no invoice number)
+      3. B2CL_Invoices       — B2C Large inter-state invoices
+      4. CDNR_CreditNotes    — Credit Notes to registered buyers (ntty=C)
+      5. CDNR_DebitNotes     — Debit Notes to registered buyers  (ntty=D)
+      6. CDNUR_Notes         — Credit/Debit Notes to unregistered buyers
+      7. Exports             — Export invoices (WOPAY / WPAY)
+      8. GSTR1A_Amendments   — Amended invoices (b2ba, cdnra etc.) if present
+      9. Summary             — Grand totals per type for this month
+    """
+    log.info("\n  Extracting GSTR-1 JSON → Excel (multi-sheet)...")
+    extracted = 0
+
+    # Style helpers (module-level constants already defined)
+    def _mk_sheet(wb, title, headers, widths, title_cols, bg_color=None):
+        ws = wb.create_sheet(title)
+        ws.sheet_view.showGridLines = False
+        ncols = int(title_cols) if not isinstance(title_cols, int) else title_cols
+        ws.merge_cells(f"A1:{get_column_letter(ncols)}1")
+        tc = ws["A1"]
+        tc.value = title.replace("_"," ")
+        tc.font = Font(name="Arial", bold=True, color="FFFFFF", size=11)
+        hdr_color = bg_color if bg_color else DARK_BLUE
+        tc.fill = fill(hdr_color); tc.alignment = aln()
+        ws.row_dimensions[1].height = 26
+        for ci,(h,w) in enumerate(zip(headers, widths), 1):
+            c = ws.cell(row=2, column=ci, value=h)
+            sc(c, bold=True, fg="FFFFFF", bg=MED_BLUE, size=9)
+            ws.column_dimensions[get_column_letter(ci)].width = w
+        ws.row_dimensions[2].height = 20
+        ws.freeze_panes = "A3"
+        return ws, [3]   # mutable row counter
+
+    def _wr(ws, ri_ref, vals, type_col=None, type_bg=None):
+        ri = ri_ref[0]
+        bg = GREY_BG if ri%2==0 else WHITE
+        for ci,v in enumerate(vals, 1):
+            cell = ws.cell(row=ri, column=ci, value=v)
+            cell.font = Font(name="Arial", size=9)
+            cell.fill = fill(type_bg if (type_col and ci==type_col) else bg)
+            cell.alignment = aln(h="right" if isinstance(v,(int,float)) else "left")
+            cell.border = bdr()
+            if isinstance(v,(int,float)):
+                cell.number_format = "#,##0.00"
+        ws.row_dimensions[ri].height = 15
+        ri_ref[0] += 1
+
+    def _totrow(ws, ri_ref, vals):
+        ri = ri_ref[0]
+        for ci,v in enumerate(vals, 1):
+            c = ws.cell(row=ri, column=ci, value=v)
+            c.font = Font(name="Arial", bold=True, size=9)
+            c.fill = fill("D6DCE4")
+            c.alignment = aln(h="right" if isinstance(v,(int,float)) else "left")
+            c.border = bdr()
+            if isinstance(v,(int,float)): c.number_format = "#,##0.00"
+        ws.row_dimensions[ri].height = 17
+        ri_ref[0] += 1
+
+    # FIX: Process both GSTR-1 and GSTR-1A ZIPs (both contain JSON in same format)
+    import shutil as _shutil_ex
+    _all_zips = sorted(list(Path(client_dir).glob("GSTR1_*.zip")) +
+                       list(Path(client_dir).glob("GSTR1A_*.zip")))
+    for zip_path in _all_zips:
+        try:
+            extract_dir = Path(str(zip_path).replace(".zip","_ex"))
+
+            # ★ FIX: Always delete stale _ex folder before re-extracting.
+            # The portal names every ZIP with today's date — not the return month.
+            # If April's ZIP was overwritten by January's download (same portal filename),
+            # the _ex folder would contain April's JSON but the ZIP now has January's data.
+            # Deleting and re-extracting guarantees _ex always matches the current ZIP.
+            if extract_dir.exists():
+                try:
+                    _shutil_ex.rmtree(str(extract_dir))
+                    log.info(f"    Cleared stale folder: {extract_dir.name}")
+                except Exception as _re:
+                    log.warning(f"    Could not clear {extract_dir.name}: {_re}")
+
+            # Delete ALL _ex* variants for this month (including _ex2, _ex3, old runs)
+            for _old_ex in Path(client_dir).glob(f"{zip_path.stem}_ex*"):
+                try: _shutil_ex.rmtree(str(_old_ex))
+                except Exception: pass
+
+            extract_dir.mkdir(exist_ok=True)
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(extract_dir)
+
+            json_files = list(extract_dir.glob("*.json")) + list(extract_dir.glob("**/*.json"))
+
+            # ★ FIX: Handle nested ZIP (portal wraps JSON in inner ZIP for some months)
+            if not json_files:
+                inner_zips = list(extract_dir.glob("*.zip")) + list(extract_dir.glob("**/*.zip"))
+                if inner_zips:
+                    log.info(f"    {zip_path.name}: nested ZIP found — extracting inner layer")
+                    for _iz in inner_zips:
+                        try:
+                            with zipfile.ZipFile(_iz, "r") as _izf:
+                                _izf.extractall(extract_dir)
+                        except Exception as _ize:
+                            log.warning(f"    Inner ZIP extract error: {_ize}")
+                    json_files = list(extract_dir.glob("*.json")) + list(extract_dir.glob("**/*.json"))
+
+            if not json_files:
+                log.warning(f"    No JSON inside {zip_path.name} (checked nested ZIPs too)"); continue
+
+            with open(json_files[0], "r", encoding="utf-8") as f:
+                d = json.load(f)
+
+            # ★ FIX: Validate fp (filing period) — reject if wrong month data inside
+            # Portal ZIP filename has download DATE not return period.
+            # The fp field inside JSON is the ONLY reliable month identifier.
+            _MONTH_MM = {
+                "April":"04","May":"05","June":"06","July":"07",
+                "August":"08","September":"09","October":"10","November":"11",
+                "December":"12","January":"01","February":"02","March":"03",
+            }
+            _stem_parts = zip_path.stem.split("_")  # ["GSTR1","April","2025"]
+            if len(_stem_parts) == 3:
+                _mon_nm, _yr_s = _stem_parts[1], _stem_parts[2]
+                _mm = _MONTH_MM.get(_mon_nm, "")
+                _expected_fp = f"{_mm}{_yr_s}"
+                _inner_d = d.get("gstr1", d) if isinstance(d.get("gstr1"), dict) else d
+                _actual_fp = str(_inner_d.get("fp", d.get("fp", ""))).strip()
+                if _actual_fp and _expected_fp and _actual_fp != _expected_fp:
+                    log.warning(
+                        f"    ⚠ fp MISMATCH in {zip_path.name}: "
+                        f"expected {_expected_fp} but JSON says {_actual_fp}. "
+                        f"ZIP contains WRONG MONTH data — deleting corrupt file."
+                    )
+                    # Delete the bad ZIP and its _ex folder so it gets re-downloaded
+                    try: _shutil_ex.rmtree(str(extract_dir))
+                    except Exception: pass
+                    try: zip_path.unlink()
+                    except Exception: pass
+                    continue
+                elif _actual_fp:
+                    log.info(f"    {zip_path.name}: fp verified ({_actual_fp}) ✓")
+            # Unwrap gstr1 envelope if present
+            if isinstance(d.get("gstr1"), dict):
+                d = d["gstr1"]
+
+            stem      = zip_path.stem
+            month_lbl = stem.replace("GSTR1_","").replace("_"," ")
+            wb = Workbook(); wb.remove(wb.active)
+            log.info(f"    Processing: {stem}")
+
+            # --- Counters for Summary sheet ----------------
+            totals = {}  # type → {tx,ig,cg,sg,cnt}
+            def acc(t, tx, ig, cg, sg, n=1):
+                if t not in totals: totals[t]={"tx":0.,"ig":0.,"cg":0.,"sg":0.,"cnt":0}
+                totals[t]["tx"]+=tx; totals[t]["ig"]+=ig
+                totals[t]["cg"]+=cg; totals[t]["sg"]+=sg; totals[t]["cnt"]+=n
+
+            # -- Sheet 1: B2B Invoices ---------------------
+            HDR_B2B = ["GSTIN Receiver","Trade Name","Invoice No","Invoice Date",
+                       "Invoice Value ₹","Place of Supply","Reverse Charge",
+                       "Rate %","Taxable Value ₹","IGST ₹","CGST ₹","SGST ₹"]
+            WID_B2B = [22,26,18,12,15,16,10,8,15,12,12,12]
+            ws1, ri1 = _mk_sheet(wb,"B2B_Invoices",HDR_B2B,WID_B2B,len(HDR_B2B))
+            ws1["A1"].value = f"GSTR-1 B2B Invoices — {client_name} — {month_lbl}"
+
+            for entry in d.get("b2b",[]):
+                ctin = entry.get("ctin",""); trdnm = entry.get("trdnm","")
+                for inv in entry.get("inv",[]):
+                    rc = inv.get("rchrg","N")
+                    for it in inv.get("itms",[]):
+                        det = it.get("itm_det",{})
+                        rt  = det.get("rt",0)
+                        tv  = float(det.get("txval",0) or 0)
+                        ig  = float(det.get("iamt",0) or 0)
+                        cg  = float(det.get("camt",0) or 0)
+                        sg  = float(det.get("samt",0) or 0)
+                        _wr(ws1, ri1, [ctin, trdnm,
+                            inv.get("inum",""), inv.get("idt",""),
+                            round(float(inv.get("val",0) or 0),2),
+                            inv.get("pos",""), rc, rt,
+                            round(tv,2), round(ig,2), round(cg,2), round(sg,2)])
+                        acc("B2B", tv, ig, cg, sg)
+
+            # -- Sheet 2: B2CS Summary ---------------------
+            HDR_B2CS = ["Place of Supply","Supply Type","Rate %",
+                        "Taxable Value ₹","IGST ₹","CGST ₹","SGST ₹"]
+            ws2, ri2 = _mk_sheet(wb,"B2CS_Summary",HDR_B2CS,[16,14,8,15,12,12,12],len(HDR_B2CS))
+            ws2["A1"].value = f"GSTR-1 B2CS Summary — {client_name} — {month_lbl}"
+            for rec in d.get("b2cs",[]):
+                tv=float(rec.get("txval",0) or 0); ig=float(rec.get("iamt",0) or 0)
+                cg=float(rec.get("camt",0) or 0);  sg=float(rec.get("samt",0) or 0)
+                _wr(ws2, ri2, [rec.get("pos",""), rec.get("sply_ty","INTRA"),
+                               rec.get("rt",0), round(tv,2),round(ig,2),round(cg,2),round(sg,2)])
+                acc("B2CS", tv, ig, cg, sg)
+
+            # -- Sheet 3: B2CL Invoices --------------------
+            HDR_B2CL = ["Place of Supply","Invoice No","Invoice Date",
+                        "Invoice Value ₹","Rate %","Taxable Value ₹","IGST ₹"]
+            ws3, ri3 = _mk_sheet(wb,"B2CL_Invoices",HDR_B2CL,[16,18,12,15,8,15,12],len(HDR_B2CL))
+            ws3["A1"].value = f"GSTR-1 B2CL Invoices — {client_name} — {month_lbl}"
+            for rec in d.get("b2cl",[]):
+                pos=rec.get("pos","")
+                for inv in rec.get("inv",[]):
+                    for it in inv.get("itms",[]):
+                        det=it.get("itm_det",{})
+                        tv=float(det.get("txval",0) or 0); ig=float(det.get("iamt",0) or 0)
+                        _wr(ws3, ri3, [pos, inv.get("inum",""), inv.get("idt",""),
+                                       round(float(inv.get("val",0) or 0),2),
+                                       det.get("rt",0), round(tv,2), round(ig,2)])
+                        acc("B2CL", tv, ig, 0, 0)
+
+            # -- Sheet 4+5: CDNR Credit Notes / Debit Notes -
+            HDR_CDN = ["Note Type","GSTIN Receiver","Trade Name",
+                       "Note Number","Note Date","Note Value ₹",
+                       "Place of Supply","Pre-GST","Rate %",
+                       "Taxable Value ₹","IGST ₹","CGST ₹","SGST ₹"]
+            WID_CDN = [10,22,24,18,12,14,14,8,8,15,12,12,12]
+            wsCR, riCR = _mk_sheet(wb,"CDNR_CreditNotes",HDR_CDN,WID_CDN,len(HDR_CDN))
+            wsCR["A1"].value = f"GSTR-1 CDNR Credit Notes — {client_name} — {month_lbl}"
+            wsDR, riDR = _mk_sheet(wb,"CDNR_DebitNotes", HDR_CDN,WID_CDN,len(HDR_CDN))
+            wsDR["A1"].value = f"GSTR-1 CDNR Debit Notes — {client_name} — {month_lbl}"
+
+            for entry in d.get("cdnr",[]):
+                ctin=entry.get("ctin",""); trdnm=entry.get("trdnm","")
+                for note in entry.get("nt",[]):
+                    ntty = note.get("ntty","C")   # C=Credit  D=Debit
+                    for it in note.get("itms",[]):
+                        det=it.get("itm_det",{})
+                        tv=float(det.get("txval",0) or 0); ig=float(det.get("iamt",0) or 0)
+                        cg=float(det.get("camt",0) or 0);  sg=float(det.get("samt",0) or 0)
+                        row=[ntty, ctin, trdnm,
+                             note.get("nt_num",""), note.get("nt_dt",""),
+                             round(float(note.get("val",0) or 0),2),
+                             note.get("pos",""), note.get("p_gst","N"),
+                             det.get("rt",0), round(tv,2),round(ig,2),round(cg,2),round(sg,2)]
+                        if ntty=="D": _wr(wsDR, riDR, row); acc("CDNR-Debit", tv,ig,cg,sg)
+                        else:         _wr(wsCR, riCR, row); acc("CDNR-Credit",tv,ig,cg,sg)
+
+            # -- Sheet 6: CDNUR (Unregistered CDN) --------
+            HDR_CDNUR = ["Note Type","Supply Type","Note Number","Note Date",
+                         "Note Value ₹","Rate %","Taxable Value ₹","IGST ₹"]
+            wsCU, riCU = _mk_sheet(wb,"CDNUR_Unregistered",HDR_CDNUR,
+                                   [10,12,18,12,14,8,15,12],len(HDR_CDNUR))
+            wsCU["A1"].value = f"GSTR-1 CDNUR (Unregistered) — {client_name} — {month_lbl}"
+            for note in d.get("cdnur",[]):
+                ntty=note.get("ntty","C"); spty=note.get("typ","")
+                tv=float(note.get("txval",0) or 0); ig=float(note.get("iamt",0) or 0)
+                _wr(wsCU, riCU, [ntty, spty,
+                    note.get("nt_num",""), note.get("nt_dt",""),
+                    round(float(note.get("val",0) or 0),2),
+                    note.get("rt",0), round(tv,2), round(ig,2)])
+                acc("CDNUR", tv, ig, 0, 0)
+
+            # -- Sheet 7: Exports --------------------------
+            HDR_EXP = ["Export Type","Invoice No","Invoice Date",
+                       "Invoice Value ₹","Port Code","Shipping Bill No",
+                       "Shipping Bill Date","Rate %",
+                       "Taxable Value ₹","IGST ₹"]
+            wsEX, riEX = _mk_sheet(wb,"Exports",HDR_EXP,
+                                   [14,18,12,15,12,18,16,8,15,12],len(HDR_EXP))
+            wsEX["A1"].value = f"GSTR-1 Exports — {client_name} — {month_lbl}"
+            for exp in d.get("exp",[]):
+                etype = exp.get("exp_typ","")
+                for inv in exp.get("inv",[]):
+                    for it in inv.get("itms",[]):
+                        det=it.get("itm_det",{})
+                        tv=float(det.get("txval",0) or 0); ig=float(det.get("iamt",0) or 0)
+                        _wr(wsEX, riEX, [etype,
+                            inv.get("inum",""), inv.get("idt",""),
+                            round(float(inv.get("val",0) or 0),2),
+                            inv.get("pcode",""), inv.get("sbnum",""),
+                            inv.get("sbdt",""), det.get("rt",0),
+                            round(tv,2), round(ig,2)])
+                        acc("Exports", tv, ig, 0, 0)
+
+            # -- Sheet 8: GSTR-1A Amendments --------------
+            # Portal returns amended invoices in b2ba, b2cla, cdnra, expа
+            has_amendments = any(d.get(k) for k in ["b2ba","cdnra","b2cla","expa"])
+            if has_amendments:
+                HDR_AMD = ["Section","GSTIN","Original Inv/Note","Amended Inv/Note",
+                           "Date","Value ₹","Rate %","Taxable ₹","IGST ₹","CGST+SGST ₹"]
+                wsAM, riAM = _mk_sheet(wb,"GSTR1A_Amendments",HDR_AMD,
+                                       [12,22,18,18,12,14,8,14,12,14],len(HDR_AMD))
+                wsAM["A1"].value = f"GSTR-1A Amendments — {client_name} — {month_lbl}"
+
+                for entry in d.get("b2ba",[]):
+                    ctin=entry.get("ctin","")
+                    for inv in entry.get("inv",[]):
+                        for it in inv.get("itms",[]):
+                            det=it.get("itm_det",{})
+                            tv=float(det.get("txval",0) or 0); ig=float(det.get("iamt",0) or 0)
+                            csgst=float(det.get("camt",0) or 0)+float(det.get("samt",0) or 0)
+                            _wr(wsAM, riAM, ["B2BA", ctin,
+                                inv.get("oinum",""), inv.get("inum",""),
+                                inv.get("idt",""),
+                                round(float(inv.get("val",0) or 0),2),
+                                det.get("rt",0), round(tv,2), round(ig,2), round(csgst,2)])
+                            acc("Amended-B2B", tv, ig, 0, 0)
+
+                for entry in d.get("cdnra",[]):
+                    ctin=entry.get("ctin","")
+                    for note in entry.get("nt",[]):
+                        for it in note.get("itms",[]):
+                            det=it.get("itm_det",{})
+                            tv=float(det.get("txval",0) or 0); ig=float(det.get("iamt",0) or 0)
+                            csgst=float(det.get("camt",0) or 0)+float(det.get("samt",0) or 0)
+                            _wr(wsAM, riAM, ["CDNRA", ctin,
+                                note.get("ont_num",""), note.get("nt_num",""),
+                                note.get("nt_dt",""),
+                                round(float(note.get("val",0) or 0),2),
+                                0, round(tv,2), round(ig,2), round(csgst,2)])
+                            acc("Amended-CDN", tv, ig, 0, 0)
+
+            # -- Sheet 8b: Nil Rated / Exempt -------------
+            HDR_NIL = ["Supply Type","Nil Rated ₹","Exempt ₹","Non-GST ₹","Total ₹"]
+            wsNL, riNL = _mk_sheet(wb,"Nil_Rated",HDR_NIL,[20,16,16,16,14],len(HDR_NIL))
+            wsNL["A1"].value = f"Nil/Exempt/Non-GST — {client_name} — {month_lbl}"
+            nil_recs_xj = []
+            ns_xj = d.get("nil_sup", d.get("nil", None))
+            if isinstance(ns_xj, list): nil_recs_xj = ns_xj
+            elif isinstance(ns_xj, dict): nil_recs_xj = ns_xj.get("inv", ns_xj.get("details",[]))
+            nil_total_xj = 0.0
+            for rec in nil_recs_xj:
+                if not isinstance(rec, dict): continue
+                stype=rec.get("sply_ty","")
+                nil_v_xj =float(rec.get("nil_amt", rec.get("nil",  0)) or 0)
+                expt_v_xj=float(rec.get("expt_amt",rec.get("expt", 0)) or 0)
+                ngsup_xj =float(rec.get("ngsup_amt",rec.get("ngsup",0)) or 0)
+                tot_xj = nil_v_xj+expt_v_xj+ngsup_xj
+                if tot_xj == 0: continue
+                _wr(wsNL, riNL, [stype, round(nil_v_xj,2), round(expt_v_xj,2), round(ngsup_xj,2), round(tot_xj,2)])
+                acc("NIL/EXEMPT", tot_xj, 0, 0, 0)
+                nil_total_xj += tot_xj
+
+            # -- Sheet 9: Summary --------------------------
+            HDR_SUM = ["Type","Count","Taxable Value ₹",
+                       "IGST ₹","CGST ₹","SGST ₹","Total Tax ₹"]
+            wsS, riS = _mk_sheet(wb,"Summary",HDR_SUM,[20,8,16,12,12,12,14],len(HDR_SUM))
+            wsS["A1"].value = f"GSTR-1 Summary — {client_name} — {month_lbl}"
+            tot_tx=tot_ig=tot_cg=tot_sg=tot_cnt=0
+            for t,v in sorted(totals.items()):
+                _wr(wsS, riS, [t, v["cnt"],
+                    round(v["tx"],2), round(v["ig"],2),
+                    round(v["cg"],2), round(v["sg"],2),
+                    round(v["ig"]+v["cg"]+v["sg"],2)])
+                tot_tx+=v["tx"]; tot_ig+=v["ig"]
+                tot_cg+=v["cg"]; tot_sg+=v["sg"]; tot_cnt+=v["cnt"]
+            _totrow(wsS, riS, ["GRAND TOTAL", _fsum("B",3,riS[0]-1),
+                               _fsum("C",3,riS[0]-1), _fsum("D",3,riS[0]-1),
+                               _fsum("E",3,riS[0]-1), _fsum("F",3,riS[0]-1),
+                               f"=SUM(D{riS[0]}:F{riS[0]})"])
+
+            xl_name = stem + "_detail.xlsx"
+            xl_path = Path(client_dir) / xl_name
+            # FIX: wrap save in explicit try so any formula/style error
+            # is caught but the file still gets written with what we have
+            try:
+                wb.save(str(xl_path))
+                total_rows = sum(v["cnt"] for v in totals.values())
+                log.info(f"    ✓ Saved: {xl_name}  ({total_rows} records across all types)")
+                extracted += 1
+            except Exception as _save_err:
+                log.warning(f"    Excel save error [{xl_name}]: {_save_err} — retrying without formulas")
+                # Remove formula cells and replace with plain 0 to allow save
+                try:
+                    for ws_obj in wb.worksheets:
+                        for row in ws_obj.iter_rows():
+                            for cell in row:
+                                if isinstance(cell.value, str) and cell.value.startswith("="):
+                                    cell.value = 0
+                    wb.save(str(xl_path))
+                    log.info(f"    ✓ Saved (no formulas): {xl_name}")
+                    extracted += 1
+                except Exception as _save_err2:
+                    log.warning(f"    ✗ Could not save {xl_name}: {_save_err2}")
+
+        except zipfile.BadZipFile:
+            log.warning(f"    Bad ZIP: {zip_path.name}")
+        except Exception as e:
+            log.warning(f"    JSON extract error [{zip_path.name}]: {e}")
+            import traceback; log.warning(traceback.format_exc())
+        finally:
+            # ★ Always delete _ex folder after processing.
+            # Prevents stale extracted JSON from being read on the next run
+            # if the ZIP was re-downloaded (e.g. corrected April/January data).
+            try:
+                _ex_done = Path(str(zip_path).replace(".zip", "_ex"))
+                if _ex_done.exists():
+                    import shutil as _sh_fin
+                    _sh_fin.rmtree(str(_ex_done))
+            except Exception: pass
+
+    log.info(f"  GSTR-1 extraction done — {extracted} Excel file(s) created")
+
+
+# ==========================================================
+# ANNUAL RECONCILIATION REPORT
+# Based on actual GST portal report format (from sample files):
+#   Sheet 1: GSTR-1 Sales Summary (B2B + B2CS monthwise)
+#   Sheet 2: GSTR-2B ITC Summary (confirmed ITC from purchases)
+#   Sheet 3: GSTR-2A Purchase Summary (all inward supplies)
+#   Sheet 4: GSTR-3B Monthly Summary (tax paid)
+#   Sheet 5: GSTR-3B vs GSTR-1 Reconciliation (R1 vs 3B)
+#   Sheet 6: Tax Liability & ITC Comparison (final reconciliation)
+# ==========================================================
+# ================================================================
+# RECONCILIATION — EXACT FORMAT MATCHING PORTAL DOWNLOADED FILES
+#
+# FILE 1: GSTR-3B vs GSTR-2A  (GSTR3BR2A_RECONCILED)
+#   Sheets: Read me | Q1-APR-JUN | Q2-JUL-SEP | Q3-OCT-DEC | Q4-JAN-MAR | Annual-APR-MAR
+#   Section A: GSTR-3B ITC Details   (4A(5) All other ITC, 4B ITC Reversed, Total A)
+#   Section B: GSTR-2A ITC Details   (B2B, CDNR, TDS, TCS, Total B)
+#   Row:       Difference (A - B)
+#   Columns per month: IGST | CGST | SGST | Cess | Total
+#
+# FILE 2: GSTR-3B vs GSTR-1  (GSTR1R3B_RECONCILED)
+#   Same sheet structure
+#   Section A: GSTR-3B Supply Details (3.1(a)…3.2, Total A)
+#   Section B: GSTR-1 Supply Details  (B2B, B2CS, B2CL, Exports, CDN-R, CDN-U, Total B)
+#   Row:       Difference (A - B)
+#   Columns per month: Taxable | IGST | CGST | SGST | Cess | Total
+# ================================================================
+
+
+# Module-level GSTR-3B PDF extractor
+def extract_3b_pdf(pdf_path):
+    """
+    Robust GSTR-3B PDF extraction — line-by-line scan.
+    Handles portal PDF quirks: 'L0', 'I0', split rows, stray chars.
+    Returns ALL fields from Tables 3.1, 3.1(c), 4, 5.1, 6.1.
+    """
+    result = {
+        # Meta
+        "gstin":"","legal_name":"","trade_name":"","period":"","year":"","arn":"","arn_date":"",
+        # 3.1(a) Outward taxable
+        "taxable":0.,"o_igst":0.,"o_cgst":0.,"o_sgst":0.,"o_cess":0.,
+        # 3.1(b) Zero rated
+        "zero_taxable":0.,"zero_igst":0.,
+        # 3.1(c) Nil / Exempt
+        "nil_exempt":0.,
+        # 3.1(d) RCM inward
+        "rcm_taxable":0.,"rcm_igst":0.,"rcm_cgst":0.,"rcm_sgst":0.,
+        # 3.1(e) Non-GST
+        "non_gst":0.,
+        # 4A ITC available
+        "itc_import_goods":0.,"itc_import_svc":0.,"itc_rcm":0.,"itc_isd":0.,
+        "itc_igst":0.,"itc_cgst":0.,"itc_sgst":0.,"itc_cess":0.,
+        # 4B ITC reversed
+        "rev_igst":0.,"rev_cgst":0.,"rev_sgst":0.,
+        # 4C Net ITC
+        "net_itc_igst":0.,"net_itc_cgst":0.,"net_itc_sgst":0.,
+        # 5.1
+        "interest_igst":0.,"interest_cgst":0.,"interest_sgst":0.,
+        "late_fee_cgst":0.,"late_fee_sgst":0.,
+        # 6.1 Tax paid (use -1 as "not yet captured" sentinel)
+        "tax_paid_igst":-1.,"tax_paid_cgst":-1.,"tax_paid_sgst":-1.,
+    }
+    if not pdf_path.exists():
+        return result
+    import re
+    text = ""
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(pdf_path)) as pdf2:
+            text = "\n".join(p.extract_text() or "" for p in pdf2.pages)
+    except ImportError:
+        try:
+            import PyPDF2
+            with open(str(pdf_path),"rb") as f2:
+                r2 = PyPDF2.PdfReader(f2)
+                text = "\n".join(p.extract_text() or "" for p in r2.pages)
+        except Exception: pass
+    except Exception: pass
+    if not text:
+        return result
+
+    def _n(s):
+        """Convert string to float, handling L0/I0 portal artifacts."""
+        try:
+            return float(re.sub(r"[^\d.\-]","",str(s).replace("L","").replace("I","").replace(",","")))
+        except Exception: return 0.0
+
+    def nums_on_line(line):
+        """Extract all decimal numbers from a single PDF line."""
+        clean = re.sub(r"[LI](\d)", r"\1", line)
+        return [_n(n) for n in re.findall(r"-?\d[\d,]*\.\d*", clean)]
+
+    lines = text.split("\n")
+    # State flags
+    in_section_4  = False   # inside Table 4 (ITC)
+    in_section_6  = False   # inside Table 6.1
+    past_51_header = False  # seen "5.1 Interest and Late fee" heading
+
+    for i, line in enumerate(lines):
+        lo   = line.lower().strip()
+        nums = nums_on_line(line)
+
+        # -- Meta fields --------------------------------------------
+        if "gstin of the supplier" in lo:
+            parts = re.split(r"supplier\s*", line, flags=re.I)
+            if len(parts) > 1: result["gstin"] = parts[-1].strip()
+        elif "2(a)." in line and "legal name" in lo:
+            result["legal_name"] = re.sub(r"2\(a\)\..*?person\s*","",line,flags=re.I).strip()
+        elif "2(b)." in line and "trade name" in lo:
+            result["trade_name"] = re.sub(r"2\(b\)\.\s*Trade name,?\s*if any\s*","",line,flags=re.I).strip()
+        elif re.match(r"Year\s+\d{4}", line):
+            result["year"] = line.replace("Year","").strip()
+        elif re.match(r"Period\s+[A-Za-z]", line) and "supply" not in lo and "tax" not in lo and "nature" not in lo:
+            result["period"] = line.replace("Period","").strip()
+        elif "2(c)." in line and "arn" in lo and "nil" not in lo and "exempt" not in lo:
+            result["arn"] = re.sub(r"2\(c\)\.\s*ARN\s*","",line,flags=re.I).strip()
+        elif "2(d)." in line and "date of arn" in lo:
+            result["arn_date"] = re.sub(r"2\(d\)\.\s*Date of ARN\s*","",line,flags=re.I).strip()
+
+        # -- Section flags ------------------------------------------
+        elif re.search(r"4\.?\s*eligible itc|table.*4|^4\.\s", lo):
+            in_section_4 = True; in_section_6 = False
+        elif re.search(r"6\.?1.*payment of tax|payment of tax", lo):
+            in_section_6 = True; in_section_4 = False
+        elif re.search(r"5\.?1.*interest.*late fee|interest.*late fee.*previous", lo):
+            past_51_header = True   # next "late fee" line will be actual data
+
+        # -- 3.1(a) Outward taxable (other than zero/nil/exempt) ----
+        elif re.search(r"\(a\).*outward taxable", lo) and "(b)" not in lo:
+            # Line may be split: numbers on same line or next
+            combined = line
+            if len(nums) < 4 and i+1 < len(lines):
+                combined = line + " " + lines[i+1]
+                nums = nums_on_line(combined)
+            if len(nums) >= 4:
+                result["taxable"] = nums[0]
+                result["o_igst"]  = nums[1]
+                result["o_cgst"]  = nums[2]
+                result["o_sgst"]  = nums[3]
+                if len(nums) >= 5: result["o_cess"] = nums[4]
+
+        # -- 3.1(b) Zero rated --------------------------------------
+        elif re.search(r"\(b\).*zero rated", lo):
+            if len(nums) >= 1: result["zero_taxable"] = nums[0]
+            if len(nums) >= 2: result["zero_igst"]    = nums[1]
+
+        # -- 3.1(c) Nil / Exempt ------------------------------------
+        # CRITICAL: Must NOT match "2(c). ARN" line.
+        # Correct line starts with "(c " or "(c)" and contains nil/exempt
+        elif re.search(r"^\(c[\s\)]", lo) and re.search(r"nil|exempt", lo):
+            if nums: result["nil_exempt"] = nums[0]
+
+        # -- 3.1(d) Inward supplies liable to RCM -------------------
+        elif re.search(r"\(d\).*inward.*reverse charge|\(d\).*reverse charge.*inward", lo):
+            if len(nums) >= 4:
+                result["rcm_taxable"] = nums[0]
+                result["rcm_igst"]    = nums[1]
+                result["rcm_cgst"]    = nums[2]
+                result["rcm_sgst"]    = nums[3]
+
+        # -- 3.1(e) Non-GST -----------------------------------------
+        elif re.search(r"\(e\).*non.?gst", lo):
+            if nums: result["non_gst"] = nums[0]
+
+        # -- 3.1.1 ECO supplies — skip, just track -----------------
+        # (i) ECO operator pays: adds to output tax but already in 3.1(a) aggregate
+
+        # -- Table 4: ITC -------------------------------------------
+        elif re.search(r"\(1\).*import of goods", lo):
+            if len(nums) >= 1: result["itc_import_goods"] = nums[0]
+        elif re.search(r"\(2\).*import of services", lo):
+            if len(nums) >= 1: result["itc_import_svc"] = nums[0]
+        elif re.search(r"\(3\).*reverse charge.*other than.*1.*2|\(3\).*inward.*reverse charge.*other", lo):
+            if len(nums) >= 1: result["itc_rcm"] = nums[0]
+        elif re.search(r"\(4\).*isd|\(4\).*inward.*isd", lo):
+            if len(nums) >= 1: result["itc_isd"] = nums[0]
+        elif re.search(r"\(5\).*all other itc", lo):
+            # Columns: IGST | CGST | SGST | Cess
+            if len(nums) >= 3:
+                result["itc_igst"] = nums[0]
+                result["itc_cgst"] = nums[1]
+                result["itc_sgst"] = nums[2]
+                if len(nums) >= 4: result["itc_cess"] = nums[3]
+
+        elif re.search(r"\(1\).*rules 38.*42|\(1\).*as per rules", lo):
+            if len(nums) >= 3:
+                result["rev_igst"] = nums[0]
+                result["rev_cgst"] = nums[1]
+                result["rev_sgst"] = nums[2]
+
+        elif re.search(r"net itc available|^c\..*net itc", lo):
+            if len(nums) >= 3:
+                result["net_itc_igst"] = nums[0]
+                result["net_itc_cgst"] = nums[1]
+                result["net_itc_sgst"] = nums[2]
+
+        # -- 5.1 Interest Paid --------------------------------------
+        elif re.search(r"^interest paid|interest paid\s", lo):
+            # "Interest Paid 1.15 8.31 8.31 0.00"
+            if len(nums) >= 3:
+                result["interest_igst"] = nums[0]
+                result["interest_cgst"] = nums[1]
+                result["interest_sgst"] = nums[2]
+            elif len(nums) == 2:
+                result["interest_cgst"] = nums[0]
+                result["interest_sgst"] = nums[1]
+
+        # -- 5.1 Late fee --------------------------------------------
+        # CRITICAL: Skip the section heading "5.1 Interest and Late fee..."
+        # Only capture the data row "Late fee  -  25.00  25.00  -"
+        elif re.search(r"late fee", lo) and "5.1" not in lo and "interest and late" not in lo:
+            # Filter out the heading — only take lines with actual decimal values
+            late_nums = [n for n in nums if n > 0]
+            if len(late_nums) >= 2:
+                result["late_fee_cgst"] = late_nums[0]
+                result["late_fee_sgst"] = late_nums[1]
+            elif len(late_nums) == 1:
+                result["late_fee_cgst"] = late_nums[0]
+
+        # -- 6.1 Tax paid rows --------------------------------------
+        elif in_section_6:
+            # Section 6.1 has two sub-sections:
+            #   (A) Other than reverse charge  — the main tax payment row
+            #   (B) Reverse charge and supplies u/s 9(5) — RCM cash paid
+            # We capture (A) only — identified by "(a)" appearing before the tax type
+            # and by only taking the FIRST occurrence of each tax type.
+            # Row format: "Central tax  75331.00  0.00  75331.00  75331.00  0.00  -  -  0.00  0.00  0.00"
+            #   cols: Taxable | Adj | Net | ITC_IGST | ITC_CGST | ITC_SGST | ITC_Cess | CashPaid | Int | LateFee
+            # We want "Tax paid in cash" = 8th number = nums[7] when present
+            if re.match(r"central\s*(tax)?", lo) and len(nums) >= 3 and result["tax_paid_cgst"] == -1:
+                # Take cash paid = nums[7] if available, else fallback to first positive < payable
+                tp = nums[0]
+                if len(nums) >= 8:
+                    result["tax_paid_cgst"] = nums[7]
+                else:
+                    candidates = [n for n in nums[2:] if 0 < n <= tp]
+                    result["tax_paid_cgst"] = candidates[0] if candidates else 0.0
+            elif re.match(r"state|ut\s*(tax)?", lo) and len(nums) >= 3 and result["tax_paid_sgst"] == -1:
+                tp = nums[0]
+                if len(nums) >= 8:
+                    result["tax_paid_sgst"] = nums[7]
+                else:
+                    candidates = [n for n in nums[2:] if 0 < n <= tp]
+                    result["tax_paid_sgst"] = candidates[0] if candidates else 0.0
+            elif re.match(r"integrated\s*(tax)?", lo) and len(nums) >= 3 and result["tax_paid_igst"] == -1:
+                tp = nums[0]
+                if len(nums) >= 8:
+                    result["tax_paid_igst"] = nums[7]
+                else:
+                    candidates = [n for n in nums[2:] if 0 < n <= tp]
+                    result["tax_paid_igst"] = candidates[0] if candidates else 0.0
+
+    # -- Fallback: derive ITC from net if 4A(5) was zero ------------
+    if result["itc_cgst"] == 0 and result["net_itc_cgst"] > 0:
+        result["itc_cgst"] = result["net_itc_cgst"]
+        result["itc_igst"] = result["net_itc_igst"]
+        result["itc_sgst"] = result["net_itc_sgst"]
+
+    # -- Normalize tax_paid sentinels to 0 -------------------------
+    for k in ("tax_paid_igst", "tax_paid_cgst", "tax_paid_sgst"):
+        if result[k] == -1.:
+            result[k] = 0.
+
+    return result
+
+
+def _gstr1a_clean_line(text):
+    """Normalise unicode dashes and Indian thousand-commas."""
+    text = re.sub(
+        "[–—‒―‐﹘﹣－]",
+        "-", text,
+    )
+    # Remove FILED watermark artifacts embedded inside numbers (e.g. "1E,59,900" → "159,900")
+    # The portal PDF renders D/E/L/I/F as floating letters; sometimes they land inside number strings
+    text = re.sub(r"(\d)([DELIF])(?=[,\d])", r"\1", text)
+    # Remove remaining standalone watermark letters (not part of a word)
+    text = re.sub(r"(?<![A-Za-z0-9])([DELIF])(?![A-Za-z0-9])", " ", text)
+    # Strip Indian thousand-commas: 1,59,900 → 159900
+    while re.search(r"\d,\d", text):
+        text = re.sub(r"(\d),(\d)", r"\1\2", text)
+    return text
+
+
+def _gstr1a_extract_5vals(line):
+    """
+    Extract the last 5 decimal numbers from a cleaned GST portal summary line.
+    Column order: Taxable | IGST | CGST | SGST | Cess
+    Returns a 5-tuple of floats, or None if no numbers found.
+    """
+    c = _gstr1a_clean_line(line)
+    nums = [float(t) for t in re.findall(r"-?\d+\.\d+", c)]
+    if not nums:
+        nums = [float(t) for t in re.findall(r"-?\d+", c) if len(t) > 0]
+    if len(nums) >= 5: return tuple(nums[-5:])
+    if len(nums) == 4: return (nums[0], nums[1], nums[2], nums[3], 0.0)
+    if len(nums) == 3: return (nums[0], 0.0, nums[1], nums[2], 0.0)
+    if len(nums) == 2: return (nums[0], nums[1], 0.0, 0.0, 0.0)
+    if len(nums) == 1: return (nums[0], 0.0, 0.0, 0.0, 0.0)
+    return None
+
+
+def extract_gstr1a_pdf(pdf_path):
+    """
+    GSTR-1A PDF Extractor v3 — ALL table headers extracted per GST portal layout.
+    ============================================================================
+    Extracts each table section header exactly as it appears in the filed PDF:
+
+      Table 4A  — B2B Regular (direct supply in GSTR-1A)
+      Table 4B  — B2B Reverse Charge
+      Table 5   — B2CL Large (inter-state unregistered > ₹1L)
+      Table 6A  — Exports (EXPWP/EXPWOP)
+      Table 6B  — SEZ (SEZWP/SEZWOP)
+      Table 6C  — Deemed Exports (DE)
+      Table 7   — B2CS Small (unregistered, net of CDN)
+      Table 8   — Nil / Exempt / Non-GST
+      Table 9A  — B2B Regular Amended   ← KEY: this is the amended B2B value
+      Table 9A  — B2B RCM Amended
+      Table 9A  — B2CL Amended
+      Table 9A  — Exports Amended
+      Table 9A  — SEZ Amended
+      Table 9A  — DE Amended
+      Table 9B  — CDNR Credit/Debit Notes (Registered)  ← signed, credit = negative
+      Table 9B  — CDNUR Credit/Debit Notes (Unregistered)
+      Table 9C  — CDNRA Amended Credit/Debit (Registered)
+      Total Liability (Outward supplies other than Reverse charge)
+
+    Logic for backward-compat keys used by reconciliation sheet:
+      b2b_tx = t9a_b2b_tx + t4a_b2b_tx   (9A amendment first; 4A only if no 9A)
+      cdn_cr = abs(t9b_cdnr_tx)            (9B CDNR net, always positive here)
+
+    PDF artifacts handled:
+      • "FILED" watermark letters D/E/L/I/F appear inline with numbers
+        e.g. "1E,59,900.00" → "159,900.00" (E was watermark, not exponent)
+        e.g. "LInvoice" → "Invoice" (L was watermark letter)
+        e.g. "E0.00" → "0.00"
+      • Indian comma format: 1,59,900 → 159900
+      • Unicode dashes → ASCII hyphen
+
+    Fallbacks:
+      • Table 12 HSN line used as B2B fallback when 4A and 9A both zero
+      • Total Liability used as cross-check / CDNR fallback
+
+    Returns dict with all table keys + backward-compat b2b_tx/cdn_cr keys.
+    Returns all-zero dict on read failure.
+    """
+    # ── Zero template ────────────────────────────────────────────────────────
+    result = {
+        # Table 4
+        "t4a_b2b_tx": 0.0, "t4a_b2b_ig": 0.0, "t4a_b2b_cg": 0.0, "t4a_b2b_sg": 0.0,
+        "t4b_rcm_tx": 0.0, "t4b_rcm_ig": 0.0, "t4b_rcm_cg": 0.0, "t4b_rcm_sg": 0.0,
+        # Table 5
+        "t5_b2cl_tx": 0.0, "t5_b2cl_ig": 0.0,
+        # Table 6
+        "t6a_exp_tx": 0.0, "t6a_exp_ig": 0.0,
+        "t6b_sez_tx": 0.0, "t6b_sez_ig": 0.0,
+        "t6c_de_tx":  0.0, "t6c_de_ig":  0.0, "t6c_de_cg": 0.0, "t6c_de_sg": 0.0,
+        # Table 7
+        "t7_b2cs_tx": 0.0, "t7_b2cs_ig": 0.0, "t7_b2cs_cg": 0.0, "t7_b2cs_sg": 0.0,
+        # Table 8
+        "t8_nil_tx":    0.0, "t8_exempt_tx": 0.0, "t8_nongst_tx": 0.0,
+        # Table 9A amendments
+        "t9a_b2b_tx": 0.0, "t9a_b2b_ig": 0.0, "t9a_b2b_cg": 0.0, "t9a_b2b_sg": 0.0,
+        "t9a_rcm_tx": 0.0, "t9a_rcm_ig": 0.0, "t9a_rcm_cg": 0.0, "t9a_rcm_sg": 0.0,
+        "t9a_b2cl_tx":0.0, "t9a_b2cl_ig":0.0,
+        "t9a_exp_tx": 0.0, "t9a_exp_ig": 0.0,
+        "t9a_sez_tx": 0.0, "t9a_sez_ig": 0.0,
+        "t9a_de_tx":  0.0, "t9a_de_ig":  0.0, "t9a_de_cg": 0.0, "t9a_de_sg": 0.0,
+        # Table 9B CDNR (signed — negative = credit note issued)
+        "t9b_cdnr_tx":  0.0, "t9b_cdnr_ig":  0.0, "t9b_cdnr_cg":  0.0, "t9b_cdnr_sg":  0.0,
+        "t9b_cdnur_tx": 0.0, "t9b_cdnur_ig": 0.0,
+        # Table 9C CDNRA
+        "t9c_cdnra_tx": 0.0, "t9c_cdnra_ig": 0.0, "t9c_cdnra_cg": 0.0, "t9c_cdnra_sg": 0.0,
+        # Total Liability (authoritative net)
+        "total_liab_tx": 0.0, "total_liab_ig": 0.0, "total_liab_cg": 0.0, "total_liab_sg": 0.0,
+        # Backward-compat keys used by reconciliation sheet builder
+        "b2b_tx": 0.0, "b2b_ig": 0.0, "b2b_cg": 0.0, "b2b_sg": 0.0,
+        "cdn_cr": 0.0, "cdn_ig": 0.0, "cdn_cg": 0.0, "cdn_sg": 0.0,
+    }
+
+    # ── Read PDF text: pdfplumber → pypdf → PyPDF2 ──────────────────────────
+    text = ""
+    for lib in ("pdfplumber", "pypdf", "PyPDF2"):
+        try:
+            if lib == "pdfplumber":
+                import pdfplumber
+                with pdfplumber.open(str(pdf_path)) as doc:
+                    text = "\n".join(pg.extract_text() or "" for pg in doc.pages)
+            elif lib == "pypdf":
+                from pypdf import PdfReader
+                with open(str(pdf_path), "rb") as f:
+                    text = "\n".join(pg.extract_text() or "" for pg in PdfReader(f).pages)
+            else:
+                import PyPDF2
+                with open(str(pdf_path), "rb") as f:
+                    text = "\n".join(pg.extract_text() or ""
+                                     for pg in PyPDF2.PdfReader(f).pages)
+            if text.strip():
+                break
+        except Exception:
+            pass
+
+    if not text.strip():
+        return result
+
+    # Normalise all unicode dashes before line-splitting
+    text = re.sub(
+        "[\u2013\u2014\u2012\u2015\u2010\ufe58\ufe63\uff0d]", "-", text,
+    )
+    lines = [ln.strip() for ln in text.split("\n")]
+
+    # ── Section header patterns → section name ──────────────────────────────
+    SECTION_PATTERNS = [
+        (r"^4A\s+-",                                                         "4A"),
+        (r"^4B\s+-",                                                         "4B"),
+        (r"^5\s+-\s+Taxable outward inter-state",                           "5"),
+        (r"^6A\s",                                                            "6A"),
+        (r"^6B\s+-",                                                          "6B"),
+        (r"^6C\s+-",                                                          "6C"),
+        (r"^7-\s+Taxable supplies",                                           "7"),
+        (r"^8\s+-\s+Nil rated",                                              "8"),
+        (r"^9A\s+-.*table 4.*B2B Regular",                                    "9A_b2b"),
+        (r"^9A\s+-.*reverse charge",                                          "9A_rcm"),
+        (r"^9A\s+-.*table 5.*B2CL",                                           "9A_b2cl"),
+        (r"^9A\s+-.*table 6A.*EXPWP",                                         "9A_exp"),
+        (r"^9A\s+-.*table 6B.*SEZWP",                                         "9A_sez"),
+        (r"^9A\s+-.*table 6C.*DE",                                            "9A_de"),
+        (r"^9B\s+-\s+Credit/Debit Notes \(Registered\)\s*[–-]\s*CDNR",  "9B_cdnr"),
+        (r"^9B\s+-\s+Credit/Debit Notes \(Unregistered\)",                 "9B_cdnur"),
+        (r"^9C\s+-\s+Amended Credit.*Registered.*CDNRA",                     "9C_cdnra"),
+        (r"^10\s+-\s+Amendment",                                             "10"),
+    ]
+
+    def _match_section(ls):
+        for pat, name in SECTION_PATTERNS:
+            if re.search(pat, ls, re.IGNORECASE):
+                return name
+        return None
+
+    def _is_total_line(ls):
+        return bool(re.match(r"^(Total|Amended amount\s+-\s+Total)", ls, re.IGNORECASE))
+
+    def _store(sec, nums):
+        """Route 5-tuple to correct result keys."""
+        if nums is None:
+            return
+        tx, ig, cg, sg, _ = nums
+        if sec == "4A":
+            result["t4a_b2b_tx"] = abs(tx); result["t4a_b2b_ig"] = abs(ig)
+            result["t4a_b2b_cg"] = abs(cg); result["t4a_b2b_sg"] = abs(sg)
+        elif sec == "4B":
+            result["t4b_rcm_tx"] = abs(tx); result["t4b_rcm_ig"] = abs(ig)
+            result["t4b_rcm_cg"] = abs(cg); result["t4b_rcm_sg"] = abs(sg)
+        elif sec == "5":
+            result["t5_b2cl_tx"] = abs(tx); result["t5_b2cl_ig"] = abs(ig)
+        elif sec == "6A":
+            result["t6a_exp_tx"] = abs(tx); result["t6a_exp_ig"] = abs(ig)
+        elif sec == "6B":
+            result["t6b_sez_tx"] = abs(tx); result["t6b_sez_ig"] = abs(ig)
+        elif sec == "6C":
+            result["t6c_de_tx"] = abs(tx); result["t6c_de_ig"] = abs(ig)
+            result["t6c_de_cg"] = abs(cg); result["t6c_de_sg"] = abs(sg)
+        elif sec == "7":
+            result["t7_b2cs_tx"] = abs(tx); result["t7_b2cs_ig"] = abs(ig)
+            result["t7_b2cs_cg"] = abs(cg); result["t7_b2cs_sg"] = abs(sg)
+        elif sec == "9A_b2b":
+            result["t9a_b2b_tx"] = abs(tx); result["t9a_b2b_ig"] = abs(ig)
+            result["t9a_b2b_cg"] = abs(cg); result["t9a_b2b_sg"] = abs(sg)
+        elif sec == "9A_rcm":
+            result["t9a_rcm_tx"] = abs(tx); result["t9a_rcm_ig"] = abs(ig)
+            result["t9a_rcm_cg"] = abs(cg); result["t9a_rcm_sg"] = abs(sg)
+        elif sec == "9A_b2cl":
+            result["t9a_b2cl_tx"] = abs(tx); result["t9a_b2cl_ig"] = abs(ig)
+        elif sec == "9A_exp":
+            result["t9a_exp_tx"] = abs(tx); result["t9a_exp_ig"] = abs(ig)
+        elif sec == "9A_sez":
+            result["t9a_sez_tx"] = abs(tx); result["t9a_sez_ig"] = abs(ig)
+        elif sec == "9A_de":
+            result["t9a_de_tx"] = abs(tx); result["t9a_de_ig"] = abs(ig)
+            result["t9a_de_cg"] = abs(cg); result["t9a_de_sg"] = abs(sg)
+        elif sec == "9B_cdnr":
+            # Keep sign — credit notes are negative in portal
+            result["t9b_cdnr_tx"] = tx; result["t9b_cdnr_ig"] = ig
+            result["t9b_cdnr_cg"] = cg; result["t9b_cdnr_sg"] = sg
+        elif sec == "9B_cdnur":
+            result["t9b_cdnur_tx"] = tx; result["t9b_cdnur_ig"] = ig
+        elif sec == "9C_cdnra":
+            result["t9c_cdnra_tx"] = tx; result["t9c_cdnra_ig"] = ig
+            result["t9c_cdnra_cg"] = cg; result["t9c_cdnra_sg"] = sg
+
+    # ── Line-by-line state machine ───────────────────────────────────────────
+    section         = None
+    stored_sections = set()   # prevent double-storing first Total of each section
+    hsn_vals        = None    # Fallback: Table 12 HSN B2B line
+
+    for idx, ls in enumerate(lines):
+        if not ls or ls in ("D", "E", "L", "I", "F"):
+            continue
+
+        # ── Section header detection ─────────────────────────────────────────
+        new_sec = _match_section(ls)
+        if new_sec:
+            section = new_sec
+            continue
+
+        # ── Total Liability (authoritative net) ──────────────────────────────
+        if "Total Liability" in ls and "Reverse charge" in ls:
+            p = _gstr1a_extract_5vals(ls)
+            if p:
+                result["total_liab_tx"] = p[0]; result["total_liab_ig"] = p[1]
+                result["total_liab_cg"] = p[2]; result["total_liab_sg"] = p[3]
+            continue
+
+        # ── Table 8: single-value Nil/Exempt/Non-GST lines ──────────────────
+        if section == "8":
+            c8 = _gstr1a_clean_line(ls)
+            nums8 = re.findall(r"-?\d+\.\d+", c8)
+            if ls.startswith("- Nil") and nums8:
+                result["t8_nil_tx"] = float(nums8[0])
+            elif ls.startswith("- Exempted") and nums8:
+                result["t8_exempt_tx"] = float(nums8[0])
+            elif ls.startswith("- Non-GST") and nums8:
+                result["t8_nongst_tx"] = float(nums8[0])
+            continue
+
+        # ── Table 12 HSN fallback line ───────────────────────────────────────
+        if re.match(r"^Total\s+\d+\s+NA\b", ls) and hsn_vals is None:
+            p = _gstr1a_extract_5vals(ls)
+            if p and abs(p[0]) > 0:
+                hsn_vals = p
+
+        # ── 9B CDNR: special key line is "Total - Net off debit/credit notes"
+        if section == "9B_cdnr" and "Net off debit" in ls and "9B_cdnr" not in stored_sections:
+            combined = ls
+            if idx + 1 < len(lines) and lines[idx + 1].strip():
+                nxt = lines[idx + 1].strip()
+                if (not _match_section(nxt) and not _is_total_line(nxt)
+                        and not nxt.startswith("Net differential")
+                        and not nxt.startswith("Credit / Debit")):
+                    combined = combined + " " + nxt
+            p = _gstr1a_extract_5vals(combined)
+            if p:
+                _store("9B_cdnr", p)
+                stored_sections.add("9B_cdnr")
+            continue
+
+        # ── 9B CDNUR: "Total - Net off debit/credit notes" line
+        if section == "9B_cdnur" and "Net off debit" in ls and "9B_cdnur" not in stored_sections:
+            p = _gstr1a_extract_5vals(ls)
+            if p:
+                _store("9B_cdnur", p)
+                stored_sections.add("9B_cdnur")
+            continue
+
+        # ── All other sections: first "Total" or "Amended amount - Total" line
+        if section and section not in stored_sections and _is_total_line(ls):
+            combined = ls
+            if idx + 1 < len(lines):
+                nxt = lines[idx + 1].strip()
+                # Do NOT join next line if it is a "Net differential" row (9A amendment sections)
+                # or another total/section line — joining would pollute last-5 extraction
+                _skip_join = (
+                    not nxt
+                    or _match_section(nxt)
+                    or _is_total_line(nxt)
+                    or nxt.startswith("Net differential")
+                    or nxt.startswith("Net Differential")
+                )
+                if not _skip_join:
+                    combined = combined + " " + nxt
+            p = _gstr1a_extract_5vals(combined)
+            if p and any(abs(x) > 0 for x in p[:4]):
+                _store(section, p)
+                stored_sections.add(section)
+
+    # ── Fallback: use Table 12 HSN when both 4A and 9A B2B are zero ─────────
+    # IMPORTANT: Only use HSN when value is POSITIVE (= supply, not CDNR-only return)
+    # If HSN total is negative (e.g. November RK Enterprises: only CDNR filed),
+    # do NOT store as B2B — that would be wrong (CDNR value ≠ B2B supply).
+    if result["t4a_b2b_tx"] == 0 and result["t9a_b2b_tx"] == 0:
+        if hsn_vals is not None and hsn_vals[0] > 0:   # must be positive supply
+            result["t4a_b2b_tx"] = hsn_vals[0]
+            result["t4a_b2b_ig"] = abs(hsn_vals[1])
+            result["t4a_b2b_cg"] = abs(hsn_vals[2])
+            result["t4a_b2b_sg"] = abs(hsn_vals[3])
+
+    # ── Derive backward-compat keys ──────────────────────────────────────────
+    # b2b_tx: 9A amended B2B takes priority (current-period amendment)
+    #         4A direct B2B is added if present (both can coexist)
+    result["b2b_tx"] = round(result["t9a_b2b_tx"] + result["t4a_b2b_tx"], 2)
+    result["b2b_ig"] = round(result["t9a_b2b_ig"] + result["t4a_b2b_ig"], 2)
+    result["b2b_cg"] = round(result["t9a_b2b_cg"] + result["t4a_b2b_cg"], 2)
+    result["b2b_sg"] = round(result["t9a_b2b_sg"] + result["t4a_b2b_sg"], 2)
+
+    # cdn_cr: 9B CDNR net (portal shows negative for credit notes; we store absolute)
+    result["cdn_cr"] = abs(result["t9b_cdnr_tx"])
+    result["cdn_ig"] = abs(result["t9b_cdnr_ig"])
+    result["cdn_cg"] = abs(result["t9b_cdnr_cg"])
+    result["cdn_sg"] = abs(result["t9b_cdnr_sg"])
+
+    # Intra-state CGST=SGST correction (pdfplumber sometimes garbles SGST)
+    if result["b2b_ig"] == 0 and result["b2b_cg"] > 0:
+        if abs(result["b2b_sg"] - result["b2b_cg"]) > 0.02:
+            result["b2b_sg"] = result["b2b_cg"]
+    if result["cdn_ig"] == 0 and result["cdn_cg"] > 0:
+        if abs(result["cdn_sg"] - result["cdn_cg"]) > 0.02:
+            result["cdn_sg"] = result["cdn_cg"]
+
+    return result
+
+
+def _parse_gst_rate(raw):
+    """
+    Safely parse a GST tax-rate value that may be:
+      • A plain number:        18  /  18.0  /  '18'  /  '18.0'
+      • A compound rate:       '18/28'  /  '5/12'   (GST portal uses this for
+                               items attracting multiple rate slabs — take first)
+      • None / empty string:   → 0
+
+    Returns an int (the primary rate), defaulting to 0 on any failure.
+    """
+    if raw is None:
+        return 0
+    s = str(raw).strip()
+    if not s:
+        return 0
+    # Handle compound rates like '18/28' — take the first part
+    s = s.split("/")[0].split("\\")[0].strip()
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return 0
+
+
+def write_annual_reconciliation(client_dir, client_name, gstin, log):
+    """
+    Builds ANNUAL_RECONCILIATION Excel with 7 sheets modelled on
+    BHAVANI ELECTRICAL 2024-25.xlsm  Summary Report format.
+
+    Sheets:
+      1. Summary_Report       — GSTR-3B monthwise (matches xlsm Summary Report)
+      2. GSTR1_Sales          — B2B + B2CS invoice detail from JSON ZIPs
+      3. GSTR2B_ITC           — ITC detail from GSTR-2B ZIPs
+      4. GSTR2A_Purchases     — Purchase detail from GSTR-2A ZIPs
+      5. GSTR3B_Status        — PDF download status for each month
+      6. R1_vs_3B_Recon       — GSTR-1 output tax vs 3B liability comparison
+      7. Tax_Liability_Compare— Portal Tax Liabilities & ITC Comparison report
+    """
+    log.info(f"\n  Building Annual Reconciliation for {client_name}...")
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    # -- colour/style helpers ------------------------------
+    HDR_BG   = "1F3864"; HDR_FG = "FFFFFF"
+    SEC_BG   = "2E75B6"; SEC_FG = "FFFFFF"
+    TOT_BG   = "D6DCE4"; TOT_FG = "000000"
+    IGST_BG  = "DEEAF1"; CGST_BG = "E2EFDA"; SGST_BG = "FFF2CC"
+    ALT1     = "FFFFFF"; ALT2 = "F2F2F2"
+    NUM_FMT  = "#,##0.00"
+    NUM_FMT0 = "#,##0"
+
+    def _f(h): return PatternFill("solid", fgColor=h)
+    def _font(bold=False, color="000000", size=9):
+        return Font(name="Arial", bold=bold, color=color, size=size)
+    def _bdr():
+        s = Side(style="thin")
+        return Border(left=s, right=s, top=s, bottom=s)
+    def _aln(h="left", wrap=False):
+        return Alignment(horizontal=h, vertical="center", wrap_text=wrap)
+
+    def title(ws, text, ncols, bg=HDR_BG):
+        ws.merge_cells(f"A1:{get_column_letter(ncols)}1")
+        c = ws["A1"]
+        c.value = text
+        c.font = Font(name="Arial", bold=True, color=HDR_FG, size=12)
+        c.fill = _f(bg); c.alignment = _aln("center"); c.border = _bdr()
+        ws.row_dimensions[1].height = 28
+
+    def hdr(ws, labels_widths, row=2, bg=SEC_BG):
+        for ci, (lbl, w) in enumerate(labels_widths, 1):
+            c = ws.cell(row=row, column=ci, value=lbl)
+            c.font = _font(True, HDR_FG, 9)
+            c.fill = _f(bg)
+            c.alignment = _aln("center")
+            c.border = _bdr()
+            ws.column_dimensions[get_column_letter(ci)].width = w
+        ws.row_dimensions[row].height = 20
+
+    def cell(ws, r, c, v, bg=ALT1, bold=False, fg="000000", numfmt=None, align="left"):
+        cl = ws.cell(row=r, column=c, value=v)
+        cl.font = _font(bold, fg, 9)
+        cl.fill = _f(bg)
+        cl.alignment = _aln(align)
+        cl.border = _bdr()
+        is_num = isinstance(v, (int, float))
+        is_fml = isinstance(v, str) and v.startswith("=")
+        if numfmt and (is_num or is_fml):
+            cl.number_format = numfmt
+        elif is_fml and not numfmt:
+            cl.number_format = NUM_FMT  # default fmt for formula cells
+        return cl
+
+    def totrow(ws, r, vals, bg=TOT_BG, fg=TOT_FG):
+        for ci, v in enumerate(vals, 1):
+            cl = ws.cell(row=r, column=ci, value=v)
+            cl.font = _font(True, fg, 9)
+            cl.fill = _f(bg)
+            is_num = isinstance(v, (int, float))
+            is_fml = isinstance(v, str) and v.startswith("=")
+            cl.alignment = _aln("right" if (is_num or is_fml) else "left")
+            cl.border = _bdr()
+            if is_num or is_fml:
+                cl.number_format = NUM_FMT
+        ws.row_dimensions[r].height = 18
+
+    def secrow(ws, r, label, ncols, bg=SEC_BG):
+        ws.merge_cells(f"A{r}:{get_column_letter(ncols)}{r}")
+        c = ws.cell(row=r, column=1, value=label)
+        c.font = _font(True, SEC_FG, 9)
+        c.fill = _f(bg)
+        c.alignment = _aln("left")
+        c.border = _bdr()
+        ws.row_dimensions[r].height = 16
+
+    # -- DATA READERS -------------------------------------
+
+    def _find_col(cl_dict, patterns):
+        for p in patterns:
+            for k, v in cl_dict.items():
+                if p in k: return v
+        return None
+
+    def _read_xl(path, prefix):
+        """
+        Read GST portal Excel with multi-row merged header support.
+        Portal GSTR-2A/2B Excel format:
+          Row N  : GSTIN | Trade Name | Invoice details (merged) | Taxable Value | IGST | CGST | SGST
+          Row N+1: (blank)| (blank)   | Inv No | Date | Inv Value | (same cols cont.)
+        Combines both rows to get flat unique column names.
+        """
+        try:
+            xl = pd.ExcelFile(path)
+            preferred = ["b2b","gstr","data","sheet1"]
+            sheet = next((s for s in xl.sheet_names
+                          if any(p in s.lower() for p in preferred)), xl.sheet_names[0])
+            log.info(f"    {prefix} sheet='{sheet}'")
+
+            raw = pd.read_excel(path, sheet_name=sheet, header=None, dtype=str)
+
+            # Find row containing GSTIN/supplier
+            hdr_idx = None
+            for i in range(min(25, len(raw))):
+                rvals = [str(v).lower().strip() for v in raw.iloc[i]
+                         if pd.notna(v) and str(v).strip() not in ("nan","")]
+                if any("gstin" in v or "ctin" in v or "supplier" in v for v in rvals):
+                    hdr_idx = i
+                    break
+
+            if hdr_idx is None:
+                log.warning(f"    {prefix} GSTIN header not found")
+                return None, {}
+
+            # Build column names from row hdr_idx, forward-filling merged cells,
+            # then combine with sub-header row hdr_idx+1 for tax column names
+            def row_to_list(ridx):
+                if ridx >= len(raw): return []
+                return [str(v).strip() if pd.notna(v) and str(v).strip() not in ("nan","") else ""
+                        for v in raw.iloc[ridx]]
+
+            top  = row_to_list(hdr_idx)
+            sub  = row_to_list(hdr_idx + 1)
+
+            # Forward-fill merged cells in top row
+            last = ""
+            ff_top = []
+            for v in top:
+                if v and not v.startswith("Unnamed"):
+                    last = v
+                ff_top.append(last)
+
+            # Combine: prefer sub if it has content and looks like a column name
+            combined = []
+            for parent, s in zip(ff_top, sub + [""]*(len(ff_top)-len(sub))):
+                s_clean = s if s and not s.startswith("Unnamed") else ""
+                if s_clean and s_clean.lower() != parent.lower():
+                    col = f"{parent} {s_clean}".strip() if parent else s_clean
+                else:
+                    col = parent or s_clean or f"col_{len(combined)}"
+                combined.append(col)
+
+            log.info(f"    {prefix} header_row={hdr_idx}, cols={combined[:8]}")
+
+            # Data starts after sub-header row
+            data_start = hdr_idx + 2
+            df = raw.iloc[data_start:].copy().reset_index(drop=True)
+            # Assign combined column names
+            ncols = len(df.columns)
+            df.columns = (combined[:ncols] +
+                          [f"_extra_{i}" for i in range(max(0, ncols - len(combined)))])
+
+            cl = {str(c).lower().strip(): c for c in df.columns}
+            return df, cl
+
+        except Exception as e:
+            log.warning(f"    {prefix} Excel read error: {e}")
+        return None, {}
+
+    def read_gstr1(month_name, year):
+        """Returns (totals_dict, rows_list).
+        rows_list: each row = (inv_type, gstin, receiver_name, inv_no, inv_date,
+                               inv_value, place_of_supply, rate, taxable, igst, cgst, sgst)
+        """
+        t = {"inv":0,"b2b_tx":0.0,"b2cs_tx":0.0,"b2cl_tx":0.0,"igst":0.0,"cgst":0.0,"sgst":0.0,"val":0.0,
+                 "cdn_cr":0.0,"cdn_dr":0.0,"cdn_ig":0.0,"cdn_cg":0.0,"cdn_sg":0.0,
+                 "cdn_1a_cr":0.0,"cdn_1a_ig":0.0,"cdn_1a_cg":0.0,"cdn_1a_sg":0.0,
+                 "b2b_1a_tx":0.0,"b2b_1a_ig":0.0,"b2b_1a_cg":0.0,"b2b_1a_sg":0.0,
+                 "p1a_t4a_b2b_tx":0.0,
+                 "p1a_t4a_b2b_ig":0.0,
+                 "p1a_t4a_b2b_cg":0.0,
+                 "p1a_t4a_b2b_sg":0.0,
+                 "p1a_t4b_rcm_tx":0.0,
+                 "p1a_t4b_rcm_ig":0.0,
+                 "p1a_t4b_rcm_cg":0.0,
+                 "p1a_t4b_rcm_sg":0.0,
+                 "p1a_t5_b2cl_tx":0.0,
+                 "p1a_t5_b2cl_ig":0.0,
+                 "p1a_t6a_exp_tx":0.0,
+                 "p1a_t6a_exp_ig":0.0,
+                 "p1a_t6b_sez_tx":0.0,
+                 "p1a_t6b_sez_ig":0.0,
+                 "p1a_t6c_de_tx":0.0,
+                 "p1a_t6c_de_ig":0.0,
+                 "p1a_t6c_de_cg":0.0,
+                 "p1a_t6c_de_sg":0.0,
+                 "p1a_t7_b2cs_tx":0.0,
+                 "p1a_t7_b2cs_ig":0.0,
+                 "p1a_t7_b2cs_cg":0.0,
+                 "p1a_t7_b2cs_sg":0.0,
+                 "p1a_t8_nil_tx":0.0,
+                 "p1a_t8_exempt_tx":0.0,
+                 "p1a_t8_nongst_tx":0.0,
+                 "p1a_t9a_b2b_tx":0.0,
+                 "p1a_t9a_b2b_ig":0.0,
+                 "p1a_t9a_b2b_cg":0.0,
+                 "p1a_t9a_b2b_sg":0.0,
+                 "p1a_t9a_rcm_tx":0.0,
+                 "p1a_t9a_rcm_ig":0.0,
+                 "p1a_t9a_rcm_cg":0.0,
+                 "p1a_t9a_rcm_sg":0.0,
+                 "p1a_t9a_b2cl_tx":0.0,
+                 "p1a_t9a_b2cl_ig":0.0,
+                 "p1a_t9a_exp_tx":0.0,
+                 "p1a_t9a_exp_ig":0.0,
+                 "p1a_t9a_sez_tx":0.0,
+                 "p1a_t9a_sez_ig":0.0,
+                 "p1a_t9a_de_tx":0.0,
+                 "p1a_t9a_de_ig":0.0,
+                 "p1a_t9a_de_cg":0.0,
+                 "p1a_t9a_de_sg":0.0,
+                 "p1a_t9b_cdnr_tx":0.0,
+                 "p1a_t9b_cdnr_ig":0.0,
+                 "p1a_t9b_cdnr_cg":0.0,
+                 "p1a_t9b_cdnr_sg":0.0,
+                 "p1a_t9b_cdnur_tx":0.0,
+                 "p1a_t9b_cdnur_ig":0.0,
+                 "p1a_t9c_cdnra_tx":0.0,
+                 "p1a_t9c_cdnra_ig":0.0,
+                 "p1a_t9c_cdnra_cg":0.0,
+                 "p1a_t9c_cdnra_sg":0.0,
+                 "p1a_total_liab_tx":0.0,
+                 "p1a_total_liab_ig":0.0,
+                 "p1a_total_liab_cg":0.0,
+                 "p1a_total_liab_sg":0.0,
+                 "cdn_amend_cr":0.0,"cdn_amend_dr":0.0,  # CDNRA amendments
+                 "exp_tx":0.0,"exp_igst":0.0,
+                 "rcm_tx":0.0,"rcm_igst":0.0,"rcm_cgst":0.0,"rcm_sgst":0.0,
+                 "rate_0":0.0,"rate_3":0.0,"rate_5":0.0,"rate_12":0.0,
+                 "rate_18":0.0,"rate_28":0.0,"rate_other":0.0,
+                 "nil_exempt":0.0,"nil_rated":0.0,"exempted":0.0,"non_gst":0.0}
+        rows = []
+        cdn_rows = []
+        zp = Path(client_dir)/f"GSTR1_{month_name}_{year}.zip"
+        # ── GSTR-1A: Load separately if filed ─────────────────────────
+        # v20 FIX: PDF is the authoritative summary source for GSTR-1A.
+        # The GSTR-1A JSON (zip) stores:
+        #   b2b txval = 0 for pure-tax amendments (only camt/samt differ)
+        #   cdnr tax  = DIFFERENTIAL only (amended − original), not full value
+        # The GSTR-1A PDF summary always shows the CORRECT full values.
+        # Strategy:
+        #   1. If ONLY PDF exists (no zip)  → use PDF values directly (unchanged).
+        #   2. If ONLY zip exists (no PDF)  → use JSON values (best available).
+        #   3. If BOTH exist                → use JSON for invoice count/detail
+        #      rows, but OVERRIDE b2b_1a_tx and cdn_1a_* with PDF values because
+        #      the PDF is authoritative and avoids the differential-vs-full problem.
+        zp_1a = Path(client_dir)/f"GSTR1A_{month_name}_{year}.zip"
+        pdf_1a_path = Path(client_dir)/f"GSTR1A_{month_name}_{year}.pdf"
+        # Parse PDF whenever it exists (used as primary or override source)
+        _pdf1a_vals = {}
+        if pdf_1a_path.exists():
+            try:
+                _pdf1a_vals = extract_gstr1a_pdf(str(pdf_1a_path))
+            except Exception:
+                _pdf1a_vals = {}
+        if not zp_1a.exists() and _pdf1a_vals:
+            # ── PDF-only path: PDF is the sole source ──────────────────
+            # FIX v27: Use = (assign) not += (accumulate).
+            # Using += would add PDF values on top of any cdnra values
+            # that were accumulated from the main GSTR-1 JSON above,
+            # causing inflated/wrong cdn_1a_* values in the Excel.
+            t["b2b_1a_tx"] = _pdf1a_vals.get("b2b_tx", 0.0)
+            t["b2b_1a_ig"] = _pdf1a_vals.get("b2b_ig", 0.0)
+            t["b2b_1a_cg"] = _pdf1a_vals.get("b2b_cg", 0.0)
+            t["b2b_1a_sg"] = _pdf1a_vals.get("b2b_sg", 0.0)
+            t["cdn_1a_cr"] = _pdf1a_vals.get("cdn_cr", 0.0)
+            t["cdn_1a_ig"] = _pdf1a_vals.get("cdn_ig", 0.0)
+            t["cdn_1a_cg"] = _pdf1a_vals.get("cdn_cg", 0.0)
+            t["cdn_1a_sg"] = _pdf1a_vals.get("cdn_sg", 0.0)
+
+            # Store ALL per-header GSTR-1A PDF values (prefixed p1a_)
+            for _k in ['t4a_b2b_tx', 't4a_b2b_ig', 't4a_b2b_cg', 't4a_b2b_sg', 't4b_rcm_tx', 't4b_rcm_ig', 't4b_rcm_cg', 't4b_rcm_sg', 't5_b2cl_tx', 't5_b2cl_ig', 't6a_exp_tx', 't6a_exp_ig', 't6b_sez_tx', 't6b_sez_ig', 't6c_de_tx', 't6c_de_ig', 't6c_de_cg', 't6c_de_sg', 't7_b2cs_tx', 't7_b2cs_ig', 't7_b2cs_cg', 't7_b2cs_sg', 't8_nil_tx', 't8_exempt_tx', 't8_nongst_tx', 't9a_b2b_tx', 't9a_b2b_ig', 't9a_b2b_cg', 't9a_b2b_sg', 't9a_rcm_tx', 't9a_rcm_ig', 't9a_rcm_cg', 't9a_rcm_sg', 't9a_b2cl_tx', 't9a_b2cl_ig', 't9a_exp_tx', 't9a_exp_ig', 't9a_sez_tx', 't9a_sez_ig', 't9a_de_tx', 't9a_de_ig', 't9a_de_cg', 't9a_de_sg', 't9b_cdnr_tx', 't9b_cdnr_ig', 't9b_cdnr_cg', 't9b_cdnr_sg', 't9b_cdnur_tx', 't9b_cdnur_ig', 't9c_cdnra_tx', 't9c_cdnra_ig', 't9c_cdnra_cg', 't9c_cdnra_sg', 'total_liab_tx', 'total_liab_ig', 'total_liab_cg', 'total_liab_sg']:
+                t[f"p1a_{_k}"] = _pdf1a_vals.get(_k, 0.0)
+        if zp_1a.exists():
+            try:
+                ed_1a = Path(client_dir)/f"GSTR1A_{month_name}_{year}_ex"
+                ed_1a.mkdir(exist_ok=True)
+                with zipfile.ZipFile(zp_1a) as z_1a: z_1a.extractall(ed_1a)
+                jf_1a = list(ed_1a.glob("*.json")) + list(ed_1a.glob("**/*.json"))
+                if jf_1a:
+                    with open(jf_1a[0], encoding="utf-8") as f_1a:
+                        d_1a = json.load(f_1a)
+                    # ── SAFETY CHECK: verify this JSON is actually a GSTR-1A ──
+                    # GSTR-1A JSON top-level key is "docDtls" with "typ":"GSTR1A"
+                    # OR the filename contains GSTR1A. Guard against accidentally
+                    # reading the main GSTR-1 JSON (same "b2b" key structure).
+                    _typ = str(d_1a.get("docDtls", {}).get("typ", "") or "").upper()
+                    _is_gstr1a = ("1A" in _typ) or ("GSTR1A" in jf_1a[0].name.upper())
+                    if not _is_gstr1a:
+                        # Wrong JSON loaded — skip silently; treat as no 1A data
+                        d_1a = {}
+
+                    # GSTR-1A 9B CDNR: credit/debit notes to registered persons
+                    # NOTE: JSON stores DIFFERENTIAL tax (amended − original).
+                    # We accumulate here for row-detail purposes, but the final
+                    # cdn_1a_* totals will be OVERRIDDEN by PDF values below
+                    # (if PDF exists) to get the correct full tax amounts.
+                    for entry_1a in d_1a.get("cdnr", []):
+                        for note_1a in entry_1a.get("nt", []):
+                            ntype_1a = note_1a.get("ntty", "")
+                            ig_1a = cg_1a = sg_1a = tv_1a = 0.0
+                            for it_1a in note_1a.get("itms", []):
+                                x_1a = it_1a.get("itm_det", {})
+                                tv_1a += float(x_1a.get("txval", 0) or 0)
+                                ig_1a += float(x_1a.get("iamt", 0) or 0)
+                                cg_1a += float(x_1a.get("camt", 0) or 0)
+                                sg_1a += float(x_1a.get("samt", 0) or 0)
+                            if ntype_1a != "D":  # Credit note
+                                t["cdn_1a_cr"] += tv_1a
+                                t["cdn_1a_ig"] += ig_1a
+                                t["cdn_1a_cg"] += cg_1a
+                                t["cdn_1a_sg"] += sg_1a
+                    # GSTR-1A B2B: amended invoices
+                    # NOTE: JSON txval=0 for pure-tax amendments (rate corrections).
+                    # We accumulate for row-detail, but b2b_1a_tx will be
+                    # OVERRIDDEN by PDF value below when PDF exists.
+                    # IMPORTANT: only read if _is_gstr1a confirmed above
+                    for entry_b2ba in d_1a.get("b2b", []):   # GSTR-1A B2B uses same "b2b" key
+                        for inv_b2ba in entry_b2ba.get("inv", []):
+                            for it_b2ba in inv_b2ba.get("itms", []):
+                                x_b2ba = it_b2ba.get("itm_det", {})
+                                t["b2b_1a_tx"] += float(x_b2ba.get("txval", 0) or 0)
+                                t["b2b_1a_ig"] += float(x_b2ba.get("iamt", 0) or 0)
+                                t["b2b_1a_cg"] += float(x_b2ba.get("camt", 0) or 0)
+                                t["b2b_1a_sg"] += float(x_b2ba.get("samt", 0) or 0)
+                    # Also check b2ba key (amended invoices format)
+                    for entry_b2ba in d_1a.get("b2ba", []):
+                        for inv_b2ba in entry_b2ba.get("inv", []):
+                            for it_b2ba in inv_b2ba.get("itms", []):
+                                x_b2ba = it_b2ba.get("itm_det", {})
+                                t["b2b_1a_tx"] += float(x_b2ba.get("txval", 0) or 0)
+                                t["b2b_1a_ig"] += float(x_b2ba.get("iamt", 0) or 0)
+                                t["b2b_1a_cg"] += float(x_b2ba.get("camt", 0) or 0)
+                                t["b2b_1a_sg"] += float(x_b2ba.get("samt", 0) or 0)
+            except Exception as _e1a:
+                pass  # GSTR-1A parse error — ignore, continue with GSTR-1 data only
+            # ── v20 FIX: PDF OVERRIDE when BOTH zip and PDF exist ─────────
+            # The PDF summary is always authoritative for:
+            #   (a) b2b_1a_tx: JSON stores 0 for pure-tax amendments; PDF has full value
+            #   (b) cdn_1a_*:  JSON stores DIFFERENTIAL tax; PDF has full correct values
+            # Override totals with PDF values so the reconciliation row is accurate.
+            if _pdf1a_vals:
+                # B2B: override ALL four fields from PDF.
+                # JSON txval=0 for pure-tax amendments; JSON ig/cg/sg may also be
+                # wrong (differential only). PDF always has the correct full values.
+                t["b2b_1a_tx"] = _pdf1a_vals.get("b2b_tx", t["b2b_1a_tx"])
+                t["b2b_1a_ig"] = _pdf1a_vals.get("b2b_ig", t["b2b_1a_ig"])
+                t["b2b_1a_cg"] = _pdf1a_vals.get("b2b_cg", t["b2b_1a_cg"])
+                t["b2b_1a_sg"] = _pdf1a_vals.get("b2b_sg", t["b2b_1a_sg"])
+                # CDN totals: reset to PDF values (PDF = full, JSON = differential)
+                t["cdn_1a_cr"] = _pdf1a_vals.get("cdn_cr", t["cdn_1a_cr"])
+                t["cdn_1a_ig"] = _pdf1a_vals.get("cdn_ig", t["cdn_1a_ig"])
+                t["cdn_1a_cg"] = _pdf1a_vals.get("cdn_cg", t["cdn_1a_cg"])
+                t["cdn_1a_sg"] = _pdf1a_vals.get("cdn_sg", t["cdn_1a_sg"])
+
+                # Store ALL per-header GSTR-1A PDF values (prefixed p1a_)
+                for _k in ['t4a_b2b_tx', 't4a_b2b_ig', 't4a_b2b_cg', 't4a_b2b_sg', 't4b_rcm_tx', 't4b_rcm_ig', 't4b_rcm_cg', 't4b_rcm_sg', 't5_b2cl_tx', 't5_b2cl_ig', 't6a_exp_tx', 't6a_exp_ig', 't6b_sez_tx', 't6b_sez_ig', 't6c_de_tx', 't6c_de_ig', 't6c_de_cg', 't6c_de_sg', 't7_b2cs_tx', 't7_b2cs_ig', 't7_b2cs_cg', 't7_b2cs_sg', 't8_nil_tx', 't8_exempt_tx', 't8_nongst_tx', 't9a_b2b_tx', 't9a_b2b_ig', 't9a_b2b_cg', 't9a_b2b_sg', 't9a_rcm_tx', 't9a_rcm_ig', 't9a_rcm_cg', 't9a_rcm_sg', 't9a_b2cl_tx', 't9a_b2cl_ig', 't9a_exp_tx', 't9a_exp_ig', 't9a_sez_tx', 't9a_sez_ig', 't9a_de_tx', 't9a_de_ig', 't9a_de_cg', 't9a_de_sg', 't9b_cdnr_tx', 't9b_cdnr_ig', 't9b_cdnr_cg', 't9b_cdnr_sg', 't9b_cdnur_tx', 't9b_cdnur_ig', 't9c_cdnra_tx', 't9c_cdnra_ig', 't9c_cdnra_cg', 't9c_cdnra_sg', 'total_liab_tx', 'total_liab_ig', 'total_liab_cg', 'total_liab_sg']:
+                    t[f"p1a_{_k}"] = _pdf1a_vals.get(_k, 0.0)
+        if not zp.exists(): return t, rows, cdn_rows
+        try:
+            ed = Path(client_dir)/f"GSTR1_{month_name}_{year}_ex"
+            import shutil as _shex9
+            for _oed in Path(client_dir).glob(f"GSTR1_{month_name}_{year}_ex*"):
+                try: _shex9.rmtree(str(_oed))
+                except Exception: pass
+            ed.mkdir(exist_ok=True)
+            with zipfile.ZipFile(zp) as z: z.extractall(ed)
+            jf = list(ed.glob("*.json")) + list(ed.glob("**/*.json"))
+            if not jf:
+                log.warning(f"    Bad ZIP (no JSON): {zp.name} — deleting corrupt file")
+                try: zp.unlink()
+                except Exception: pass
+                return t, rows, cdn_rows
+            # Validate JSON is not a stub/null response
+            try:
+                _jsz = jf[0].stat().st_size
+                if _jsz < 100:
+                    log.warning(f"    Stub JSON ({_jsz}B) in {zp.name} — deleting for re-download")
+                    try: zp.unlink()
+                    except Exception: pass
+                    return t, rows, cdn_rows
+                with open(jf[0], encoding="utf-8", errors="ignore") as _jh2:
+                    _head2 = _jh2.read(60)
+                if '"data":null' in _head2 or _head2.strip() in ('{}','[]',''):
+                    log.warning(f"    Null/empty JSON in {zp.name} — deleting for re-download")
+                    try: zp.unlink()
+                    except Exception: pass
+                    return t, rows, cdn_rows
+            except Exception: pass
+            with open(jf[0], encoding="utf-8") as f: d = json.load(f)
+
+            # B2B invoices
+            for p in d.get("b2b",[]):
+                ctin = p.get("ctin","")
+                rname = p.get("trdnm","")
+                for inv in p.get("inv",[]):
+                    t["inv"]+=1
+                    inv_val = float(inv.get("val",0) or 0)
+                    t["val"]+=inv_val
+                    inv_tx = inv_ig = inv_cg = inv_sg = 0.0
+                    rates_seen = []   # collect ALL rates in this invoice
+                    for it in inv.get("itms",[]):
+                        x=it.get("itm_det",{})
+                        rt_v = x.get("rt", 0)
+                        if rt_v and rt_v not in rates_seen:
+                            rates_seen.append(rt_v)
+                        inv_tx+=float(x.get("txval",0) or 0)
+                        inv_ig+=float(x.get("iamt",0) or 0)
+                        inv_cg+=float(x.get("camt",0) or 0)
+                        inv_sg+=float(x.get("samt",0) or 0)
+                    # Build rate label: "18" or "5/18" or "0/5/18"
+                    if len(rates_seen)==0:
+                        rate_label = 0
+                    elif len(rates_seen)==1:
+                        rate_label = rates_seen[0]
+                    else:
+                        rate_label = "/".join(str(int(r) if r==int(r) else r)
+                                              for r in sorted(rates_seen))
+                    t["b2b_tx"]+=inv_tx; t["igst"]+=inv_ig
+                    t["cgst"]+=inv_cg; t["sgst"]+=inv_sg
+                    # Accumulate rate-wise
+                    for it_r in inv.get("itms",[]):
+                        x_r=it_r.get("itm_det",{})
+                        rt_r=x_r.get("rt",0); tx_r=float(x_r.get("txval",0) or 0)
+                        key_r = {0:"rate_0",3:"rate_3",5:"rate_5",12:"rate_12",
+                                 18:"rate_18",28:"rate_28"}.get(rt_r,"rate_other")
+                        t[key_r]+=tx_r
+                    rows.append(("B2B", ctin, rname,
+                                 inv.get("inum",""), inv.get("idt",""),
+                                 round(inv_val,2), inv.get("pos",""), rate_label,
+                                 round(inv_tx,2), round(inv_ig,2),
+                                 round(inv_cg,2), round(inv_sg,2)))
+
+            # B2CS (small consumers — unregistered, no invoice detail)
+            for r in d.get("b2cs",[]):
+                tv=float(r.get("txval",0) or 0)
+                ig=float(r.get("iamt",0) or 0)
+                cg=float(r.get("camt",0) or 0)
+                sg=float(r.get("samt",0) or 0)
+                t["b2cs_tx"]+=tv; t["igst"]+=ig; t["cgst"]+=cg; t["sgst"]+=sg
+                rt_b2cs=r.get("rt",0)
+                key_r={0:"rate_0",3:"rate_3",5:"rate_5",12:"rate_12",
+                       18:"rate_18",28:"rate_28"}.get(rt_b2cs,"rate_other")
+                t[key_r]+=tv
+                rows.append(("B2CS","","(Small Consumers)",
+                             "-","-", round(tv+ig+cg+sg,2),
+                             r.get("pos",""), r.get("rt",0),
+                             round(tv,2), round(ig,2), round(cg,2), round(sg,2)))
+
+            # B2CL (large consumers — unregistered, inter-state)
+            for r in d.get("b2cl",[]):
+                for inv in r.get("inv",[]):
+                    t["inv"]+=1
+                    inv_val=float(inv.get("val",0) or 0)
+                    t["val"]+=inv_val
+                    inv_tx=inv_ig=0.0; b2cl_rates=[]
+                    for it in inv.get("itms",[]):
+                        x=it.get("itm_det",{})
+                        rt_v=x.get("rt",0)
+                        if rt_v and rt_v not in b2cl_rates: b2cl_rates.append(rt_v)
+                        inv_tx+=float(x.get("txval",0) or 0)
+                        inv_ig+=float(x.get("iamt",0) or 0)
+                    b2cl_rate = (b2cl_rates[0] if len(b2cl_rates)==1
+                                 else "/".join(str(int(r) if r==int(r) else r)
+                                               for r in sorted(b2cl_rates)) if b2cl_rates else 0)
+                    t["b2cl_tx"]+=inv_tx; t["igst"]+=inv_ig  # B2CL is separate from B2B
+                    rows.append(("B2CL","","(Large Consumer)",
+                                 inv.get("inum",""),inv.get("idt",""),
+                                 round(inv_val,2),r.get("pos",""),b2cl_rate,
+                                 round(inv_tx,2),round(inv_ig,2),0.0,0.0))
+
+            # CDNR — Credit/Debit Notes (Registered)
+            for p in d.get("cdnr",[]):
+                ctin=p.get("ctin",""); rname=p.get("trdnm","")
+                for note in p.get("nt",[]):
+                    nv=float(note.get("val",0) or 0)
+                    nt_tx=nt_ig=nt_cg=nt_sg=0.0
+                    for it in note.get("itms",[]):
+                        x=it.get("itm_det",{})
+                        nt_tx+=float(x.get("txval",0) or 0)
+                        nt_ig+=float(x.get("iamt",0) or 0)
+                        nt_cg+=float(x.get("camt",0) or 0)
+                        nt_sg+=float(x.get("samt",0) or 0)
+                    ntype=note.get("ntty","CDN")
+                    rows.append((f"CDN-{ntype}", ctin, rname,
+                                 note.get("nt_num",""), note.get("nt_dt",""),
+                                 round(nv,2), note.get("pos",""), 0,
+                                 round(nt_tx,2),round(nt_ig,2),round(nt_cg,2),round(nt_sg,2)))
+
+            log.info(f"    GSTR1 {month_name}: {t['inv']} invoices, taxable ₹{t['b2b_tx']+t['b2cs_tx']:,.0f}")
+            # -- CDNR — Credit/Debit Notes (Registered buyers) --
+            for entry in d.get("cdnr",[]):
+                ctin = entry.get("ctin","")
+                rnm  = entry.get("trdnm","")
+                for note in entry.get("nt",[]):
+                    ntype = note.get("ntty","")   # C=Credit, D=Debit
+                    nt_num = note.get("nt_num","")
+                    nt_dt  = note.get("nt_dt","")
+                    val    = float(note.get("val",0) or 0)
+                    ig=cg=sg=tv=0.0
+                    for it in note.get("itms",[]):
+                        x=it.get("itm_det",{})
+                        tv+=float(x.get("txval",0) or 0)
+                        ig+=float(x.get("iamt",0) or 0)
+                        cg+=float(x.get("camt",0) or 0)
+                        sg+=float(x.get("samt",0) or 0)
+                    label = "CDNR-Credit" if ntype in ("C","") else "CDNR-Debit"
+                    if ntype == "D":
+                        t["cdn_dr"] += tv
+                    else:
+                        t["cdn_cr"] += tv
+                    t["cdn_ig"]+=ig; t["cdn_cg"]+=cg; t["cdn_sg"]+=sg
+                    cdn_rows.append((label, ctin, rnm, nt_num, nt_dt,
+                                     round(val,2), "", 0,
+                                     round(tv,2), round(ig,2), round(cg,2), round(sg,2)))
+                    rows.append((label, ctin, rnm, nt_num, nt_dt,
+                                 round(val,2), "", 0,
+                                 round(tv,2), round(ig,2), round(cg,2), round(sg,2)))
+
+            # -- CDNUR — Credit/Debit Notes (Unregistered buyers) --
+            for entry in d.get("cdnur",[]):
+                ntype  = entry.get("ntty","")
+                nt_num = entry.get("nt_num","")
+                nt_dt  = entry.get("nt_dt","")
+                val    = float(entry.get("val",0) or 0)
+                ig=cg=sg=tv=0.0
+                for it in entry.get("itms",[]):
+                    x=it.get("itm_det",{})
+                    tv+=float(x.get("txval",0) or 0)
+                    ig+=float(x.get("iamt",0) or 0)
+                    cg+=float(x.get("camt",0) or 0)
+                    sg+=float(x.get("samt",0) or 0)
+                label = "CDNUR-Cr" if ntype in ("C","") else "CDNUR-Dr"
+                if ntype == "D":
+                    t["cdn_dr"] += tv
+                else:
+                    t["cdn_cr"] += tv
+                t["cdn_ig"]+=ig; t["cdn_cg"]+=cg; t["cdn_sg"]+=sg
+                cdn_rows.append((label,"(Unregistered)","(B2CL unregistered)",
+                                 nt_num, nt_dt, round(val,2),"",0,
+                                 round(tv,2),round(ig,2),round(cg,2),round(sg,2)))
+                rows.append((label,"(Unregistered)","(B2CL unregistered)",
+                             nt_num, nt_dt, round(val,2),"",0,
+                             round(tv,2),round(ig,2),round(cg,2),round(sg,2)))
+
+            # -- CDNRA — Amended Credit/Debit Notes inside GSTR-1 JSON ------
+            # NOTE v27 FIX: cdnra here comes from the MAIN GSTR-1 JSON (not GSTR-1A).
+            # These are amended credit/debit notes filed as part of GSTR-1 itself.
+            # They belong in cdn_amend_* accumulators ONLY.
+            # They must NOT go into cdn_1a_* which is reserved exclusively for
+            # GSTR-1A PDF/ZIP data (separate amended return).
+            for entry in d.get("cdnra",[]):
+                ctin  = entry.get("ctin","")
+                rnm   = gstin_name_map.get(ctin,"") or entry.get("trdnm","")
+                for note in entry.get("nt",[]):
+                    ntype  = note.get("ntty","")
+                    nt_num = note.get("nt_num","")
+                    nt_dt  = note.get("nt_dt","")
+                    val    = float(note.get("val",0) or 0)
+                    ig=cg=sg=tv=0.0
+                    for it in note.get("itms",[]):
+                        x=it.get("itm_det",{})
+                        tv+=float(x.get("txval",0) or 0)
+                        ig+=float(x.get("iamt",0) or 0)
+                        cg+=float(x.get("camt",0) or 0)
+                        sg+=float(x.get("samt",0) or 0)
+                    label_a = "CDNRA-Credit" if ntype in ("C","") else "CDNRA-Debit"
+                    if ntype == "D":
+                        t["cdn_amend_dr"] += tv
+                    else:
+                        t["cdn_amend_cr"] += tv
+                    # FIX v27: DO NOT accumulate into cdn_1a_* here.
+                    # cdn_1a_* is populated ONLY from GSTR-1A PDF/ZIP below.
+                    # Putting GSTR-1 cdnra values into cdn_1a_* causes the
+                    # 9B CDNR via GSTR-1A row to show GSTR-1 amended CDN values
+                    # instead of the actual GSTR-1A credit note values.
+                    cdn_rows.append((label_a, ctin, rnm, nt_num, nt_dt,
+                                     round(val,2), "", 0,
+                                     round(tv,2), round(ig,2), round(cg,2), round(sg,2)))
+                    rows.append((label_a, ctin, rnm, nt_num, nt_dt,
+                                 round(val,2), "", 0,
+                                 round(tv,2), round(ig,2), round(cg,2), round(sg,2)))
+
+            # -- SEZ Supplies (with/without tax payment) ------------------
+            # JSON keys: sezwp = SEZ with payment, sezwop = SEZ without payment
+            for sez_key in ("sezwp", "sezwop"):
+                for sez_entry in d.get(sez_key, []):
+                    for sez_inv in sez_entry.get("inv", []):
+                        sez_val = float(sez_inv.get("val", 0) or 0)
+                        sez_tx = sez_ig = sez_cg = sez_sg = 0.0
+                        for it in sez_inv.get("itms", []):
+                            det = it.get("itm_det", {})
+                            sez_tx += float(det.get("txval", 0) or 0)
+                            sez_ig += float(det.get("iamt", 0) or 0)
+                            sez_cg += float(det.get("camt", 0) or 0)
+                            sez_sg += float(det.get("samt", 0) or 0)
+                        ctin_s = sez_entry.get("ctin", "")
+                        nm_s   = gstin_name_map.get(ctin_s, "") or sez_entry.get("trdnm", "")
+                        t["b2b_tx"] += sez_tx   # SEZ is IGST-liable outward supply
+                        t["igst"]   += sez_ig
+                        t["val"]    += sez_val
+                        t["inv"]    += 1
+                        rows.append((f"SEZ-{sez_key.upper()}", ctin_s, nm_s,
+                                     sez_inv.get("inum",""), sez_inv.get("idt",""),
+                                     round(sez_val,2), sez_inv.get("pos",""), 0,
+                                     round(sez_tx,2), round(sez_ig,2),
+                                     round(sez_cg,2), round(sez_sg,2)))
+
+            # -- Nil-rated, Exempted, Non-GST supplies ----------------------
+            # GST portal JSON uses multiple possible structures:
+            #   {"nil_sup": [{"sply_ty":"INTRB2B","nil_amt":0,"expt_amt":0,"ngsup_amt":0}]}
+            #   {"nil": {"inv": [{"sply_ty":"INTRB2B","nil":0,"expt":0,"ngsup":0}]}}
+            #   {"exp": [...]}  for exports
+            # Collect nil records from all known keys
+            nil_records = []
+            # Form 1: nil_sup as list
+            ns = d.get("nil_sup", d.get("nil", None))
+            if isinstance(ns, list):
+                nil_records = ns
+            elif isinstance(ns, dict):
+                nil_records = ns.get("inv", ns.get("details", []))
+            # Also check alternate keys used by different portal versions
+            for alt_key in ["expt","nil_details","nil_rated"]:
+                alt = d.get(alt_key)
+                if isinstance(alt, list): nil_records += alt
+                elif isinstance(alt, dict): nil_records += alt.get("inv",[])
+
+            for rec in nil_records:
+                if not isinstance(rec, dict): continue
+                stype = rec.get("sply_ty","")
+                # Field names vary: nil_amt vs nil, expt_amt vs expt, ngsup_amt vs ngsup
+                nil_v  = float(rec.get("nil_amt", rec.get("nil",  0)) or 0)
+                expt_v = float(rec.get("expt_amt",rec.get("expt", 0)) or 0)
+                ngsup_v= float(rec.get("ngsup_amt",rec.get("ngsup",0)) or 0)
+                total_nil = nil_v + expt_v + ngsup_v
+                if total_nil == 0: continue
+                t["nil_exempt"] += nil_v + expt_v
+                t["nil_rated"]  += nil_v
+                t["exempted"]   += expt_v
+                t["non_gst"]    += ngsup_v
+                rows.append(("NIL/EXEMPT", stype, f"Nil={nil_v:.0f} Expt={expt_v:.0f} NonGST={ngsup_v:.0f}",
+                             "-", "-", round(total_nil,2), "", 0,
+                             round(total_nil,2), 0, 0, 0))
+            log.info(f"    GSTR1 {month_name}: nil_exempt={t['nil_exempt']:.0f} non_gst={t['non_gst']:.0f}")
+
+        except Exception as e:
+            log.warning(f"    GSTR1 read [{month_name}]: {e}")
+        return t, rows, cdn_rows
+
+    def read_gstr2b(month_name, year):
+        """Read GSTR-2B Excel.
+        Portal downloads as direct .xlsx per month.
+        Confirmed column layout from sample file:
+          Col 0=GSTIN, 1=TradeName, 2=InvNo, 3=InvType, 4=InvDate,
+          5=InvValue, 6=POS, 7=ReverseCharge, 8=Rate, 9=TaxableValue,
+          10=IGST, 11=CGST, 12=SGST, 13=Cess, 14=Period, 15=FilingDate,
+          16=ITCAvailability
+        Header rows: row index 4 (main) + row index 5 (sub-headers), data from row 6.
+        """
+        itc={"igst":0.0,"cgst":0.0,"sgst":0.0}; rows=[]
+        # GSTR-2B downloads as direct Excel (.xlsx) OR inside a ZIP
+        direct_xl = Path(client_dir)/f"GSTR2B_{month_name}_{year}.xlsx"
+        zp         = Path(client_dir)/f"GSTR2B_{month_name}_{year}.zip"
+
+        # Also scan for portal-named files like: 082024_33AAHFE3141K1ZN_GSTR2B_*.xlsx
+        if not direct_xl.exists():
+            # Try month number pattern
+            mnum = {"April":"04","May":"05","June":"06","July":"07","August":"08",
+                    "September":"09","October":"10","November":"11","December":"12",
+                    "January":"01","February":"02","March":"03"}.get(month_name,"")
+            yr2 = year[2:]  # 2024→24
+            matches = (list(Path(client_dir).glob(f"{mnum}{year[-4:]}*GSTR2B*.xlsx")) +
+                       list(Path(client_dir).glob(f"*GSTR2B*{mnum}{year[-4:]}*.xlsx")) +
+                       list(Path(client_dir).glob(f"*{mnum}{yr2}*GSTR*2B*.xlsx")))
+            if matches:
+                direct_xl = matches[0]
+                log.info(f"    GSTR2B {month_name}: found portal-named file {direct_xl.name}")
+
+        # If direct Excel exists, use it directly
+        if direct_xl.exists():
+            try:
+                log.info(f"    GSTR2B {month_name}: reading {direct_xl.name}")
+                # Read raw to handle multi-row merged headers
+                raw = pd.read_excel(direct_xl, sheet_name="B2B", header=None, dtype=str)
+                # Data starts at row 6 (index 6) based on confirmed sample layout.
+                # Auto-detect old format (pre-2024, col8=Rate%, col9=TaxableVal) vs
+                # new format (2024+, Rate% removed, col8=TaxableVal, col9=IGST).
+                # Detection: scan header rows 4-6 for "Rate" at column index 8.
+                fmt_b2b = "new"
+                for hdr_idx in range(4, 7):
+                    if hdr_idx < len(raw):
+                        hrow = raw.iloc[hdr_idx]
+                        for j, v in enumerate(hrow):
+                            if v and "Rate" in str(v) and j == 8:
+                                fmt_b2b = "old"
+                                break
+                    if fmt_b2b == "old":
+                        break
+                log.info(f"    GSTR2B {month_name}: B2B format detected = {fmt_b2b}")
+                data_rows = raw.iloc[6:].reset_index(drop=True)
+                for _, row in data_rows.iterrows():
+                    sup = clean_str(row.iloc[0])
+                    if not sup or sup.lower() in ("nan","none","","-","gstin"): continue
+                    try:
+                        nm   = clean_str(row.iloc[1])
+                        inum = clean_str(row.iloc[2])
+                        idt  = clean_str(row.iloc[4])
+                        iv   = clean_num(row.iloc[5])
+                        pos  = clean_str(row.iloc[6])
+                        if fmt_b2b == "old":
+                            # Old format: col8=Rate%, col9=TaxableVal, col10=IGST,
+                            #             col11=CGST, col12=SGST, col16=ITC
+                            rate = clean_num(row.iloc[8])
+                            tv   = clean_num(row.iloc[9])
+                            ig   = clean_num(row.iloc[10])
+                            cg   = clean_num(row.iloc[11])
+                            sg   = clean_num(row.iloc[12])
+                            itc_avail = clean_str(row.iloc[16]) if len(row) > 16 else "Yes"
+                        else:
+                            # New format (2024+): Rate% removed, col8=TaxableVal,
+                            #                    col9=IGST, col10=CGST, col11=SGST, col15=ITC
+                            rate = 0.0
+                            tv   = clean_num(row.iloc[8])
+                            ig   = clean_num(row.iloc[9])
+                            cg   = clean_num(row.iloc[10])
+                            sg   = clean_num(row.iloc[11])
+                            itc_avail = clean_str(row.iloc[15]) if len(row) > 15 else "Yes"
+                        rows.append((sup, nm, inum, idt, round(iv,2), pos, rate,
+                                     round(tv,2), round(ig,2), round(cg,2), round(sg,2),
+                                     itc_avail))
+                        itc["igst"]+=ig; itc["cgst"]+=cg; itc["sgst"]+=sg
+                    except Exception: continue
+                log.info(f"    GSTR2B {month_name}: {len(rows)} records, ITC ₹{sum(itc.values()):,.0f}")
+                return itc, rows
+            except Exception as e:
+                log.warning(f"    GSTR2B direct Excel read [{month_name}]: {e}")
+                # Fallback to column-name detection
+                try:
+                    df,cl=_read_xl(direct_xl, f"GSTR2B {month_name}")
+                    if df is not None:
+                        gc=lambda ps: _find_col(cl,ps)
+                        gstin_c=gc(["gstin of supplier","gstin","ctin"])
+                        nm_c=gc(["trade/legal name","trade name","supplier name"])
+                        inv_c=gc(["invoice number","invoice no"])
+                        dt_c=gc(["invoice date","doc date"])
+                        tv_c=gc(["taxable value","taxable value (₹)"])
+                        ig_c=gc(["integrated tax","igst","integrated tax(₹)"])
+                        cg_c=gc(["central tax","cgst","central tax(₹)"])
+                        sg_c=gc(["state/ut tax","sgst","state/ut tax(₹)"])
+                        for _,row in df.iterrows():
+                            sup=clean_str(row.get(gstin_c,"") if gstin_c else "")
+                            if not sup or sup.lower() in ("nan","none","","-"): continue
+                            ig=clean_num(row.get(ig_c,0) if ig_c else 0)
+                            cg=clean_num(row.get(cg_c,0) if cg_c else 0)
+                            sg=clean_num(row.get(sg_c,0) if sg_c else 0)
+                            tv=clean_num(row.get(tv_c,0) if tv_c else 0)
+                            rows.append((sup,
+                                clean_str(row.get(nm_c,"") if nm_c else ""),
+                                clean_str(row.get(inv_c,"") if inv_c else ""),
+                                clean_str(row.get(dt_c,"") if dt_c else ""),
+                                0.0,"",0,round(tv,2),round(ig,2),round(cg,2),round(sg,2),"Yes"))
+                            itc["igst"]+=ig; itc["cgst"]+=cg; itc["sgst"]+=sg
+                        log.info(f"    GSTR2B {month_name}: {len(rows)} records (fallback)")
+                        return itc, rows
+                except Exception: pass
+
+        if not zp.exists():
+            log.info(f"    GSTR2B {month_name}: no file (xlsx or zip)")
+            return itc, rows
+        try:
+            ed = Path(client_dir)/f"GSTR2B_{month_name}_{year}_ex"
+            ed.mkdir(exist_ok=True)
+            with zipfile.ZipFile(zp) as z: z.extractall(ed)
+            jf = list(ed.glob("*.json"))+list(ed.glob("**/*.json"))
+            if jf:
+                with open(jf[0], encoding="utf-8") as f: d=json.load(f)
+                tmp=d
+                for kp in [["data","docdata"],["data"],["docdata"]]:
+                    t2=d
+                    for k in kp:
+                        if isinstance(t2,dict): t2=t2.get(k,t2)
+                    if isinstance(t2,dict) and "b2b" in t2: tmp=t2; break
+                for p in tmp.get("b2b",[]):
+                    stin=p.get("ctin",""or p.get("gstin",""))
+                    nm=p.get("trdnm","")
+                    for doc in p.get("docs",p.get("inv",[])):
+                        ig=float(doc.get("igst",doc.get("iamt",0)) or 0)
+                        cg=float(doc.get("cgst",doc.get("camt",0)) or 0)
+                        sg=float(doc.get("sgst",doc.get("samt",0)) or 0)
+                        tv=float(doc.get("txval",doc.get("val",0)) or 0)
+                        rows.append((stin,nm,doc.get("inum",""),doc.get("idt",""),
+                                     round(tv,2),round(ig,2),round(cg,2),round(sg,2)))
+                        itc["igst"]+=ig; itc["cgst"]+=cg; itc["sgst"]+=sg
+            else:
+                xlf=(list(ed.glob("*.xlsx"))+list(ed.glob("**/*.xlsx"))+
+                     list(ed.glob("*.xls"))+list(ed.glob("**/*.xls")))
+                if xlf:
+                    log.info(f"    GSTR2B {month_name}: reading Excel {xlf[0].name}")
+                    df,cl=_read_xl(xlf[0], f"GSTR2B {month_name}")
+                    if df is not None:
+                        gc=lambda ps: _find_col(cl,ps)
+                        gstin_c=gc(["gstin of supplier","gstin","ctin"])
+                        nm_c=gc(["trade/legal name","trade name","supplier name","legal name"])
+                        inv_c=gc(["invoice number","invoice no","doc no"])
+                        dt_c=gc(["invoice date","doc date"])
+                        tv_c=gc(["taxable value","taxable"])
+                        ig_c=gc(["integrated tax","igst","iamt"])
+                        cg_c=gc(["central tax","cgst","camt"])
+                        sg_c=gc(["state/ut tax","state tax","sgst","utgst"])
+                        log.info(f"    GSTR2B cols: gstin={gstin_c} tv={tv_c} ig={ig_c}")
+                        for _,row in df.iterrows():
+                            sup=clean_str(row.get(gstin_c,"") if gstin_c else "")
+                            if not sup or sup.lower() in ("nan","none","","-"): continue
+                            ig=clean_num(row.get(ig_c,0) if ig_c else 0)
+                            cg=clean_num(row.get(cg_c,0) if cg_c else 0)
+                            sg=clean_num(row.get(sg_c,0) if sg_c else 0)
+                            tv=clean_num(row.get(tv_c,0) if tv_c else 0)
+                            rows.append((sup,
+                                clean_str(row.get(nm_c,"") if nm_c else ""),
+                                clean_str(row.get(inv_c,"") if inv_c else ""),
+                                clean_str(row.get(dt_c,"") if dt_c else ""),
+                                round(tv,2),round(ig,2),round(cg,2),round(sg,2)))
+                            itc["igst"]+=ig; itc["cgst"]+=cg; itc["sgst"]+=sg
+            log.info(f"    GSTR2B {month_name}: {len(rows)} records, ITC ₹{sum(itc.values()):,.0f}")
+        except Exception as e:
+            log.warning(f"    GSTR2B read [{month_name}]: {e}")
+        return itc, rows
+
+    def read_gstr2a(month_name, year):
+        """
+        Read GSTR-2A data. Portal downloads as:
+          a) GSTR2A_{month}_{year}.zip  (our named file after download)
+          b) Direct .xlsx files: 33AAHFE3141K1ZN_042024_R2A.xlsx (portal naming)
+          c) ZIP extracted already in _ex folder
+        Handles multi-row merged headers via _read_xl.
+        """
+        tot={"tv":0.0,"igst":0.0,"cgst":0.0,"sgst":0.0}; rows=[]
+        cdir_path = Path(client_dir)
+
+        # -- Find the source file --------------------------
+        # 1. Our standard named ZIP
+        zp = cdir_path / f"GSTR2A_{month_name}_{year}.zip"
+        # 2. Direct xlsx files — portal naming or any *R2A* file for this month/year
+        mn2 = f"{month_name[:3].lower()}"  # apr, may, ...
+        yr2 = year[2:]                      # 24, 25
+        direct_xls = (
+            list(cdir_path.glob(f"*{year[-2:]}{MONTHS[[m[0] for m in MONTHS].index(month_name)+1 if month_name in [m[0] for m in MONTHS] else 0][1] if month_name in [m[0] for m in MONTHS] else ''}*R2A*"))
+            if False else  # skip complex logic — use broad glob below
+            list(cdir_path.glob("*_R2A*.xlsx")) +
+            list(cdir_path.glob("*_R2A*.xls"))  +
+            list(cdir_path.glob("GSTR2A_*.xlsx")) +
+            list(cdir_path.glob("GSTR2A_*.xls"))
+        )
+        # Filter to files matching this month+year
+        month_num_map = {"April":"04","May":"05","June":"06","July":"07","August":"08",
+                         "September":"09","October":"10","November":"11","December":"12",
+                         "January":"01","February":"02","March":"03"}
+        mnum = month_num_map.get(month_name, "")
+        yr_short = year[2:]  # 2024 → 24
+        # FIX: use exact regex match to avoid "02" matching inside "042026"
+        import re as _re2a
+        def _exact_month_match(stem, mnum, year, yr_short):
+            # Pattern: MMYYYY or MM_YYYY or MMYY where MM is exact 2-digit month
+            full_yr = "20" + yr_short  # "2026"
+            patterns = [
+                rf"[_\-\.]{mnum}{full_yr}[_\-\.]",   # _022026_
+                rf"[_\-\.]{mnum}{full_yr}R2A",         # _022026R2A
+                rf"[_\-\.]{mnum}{full_yr}$",            # ends with _022026
+                rf"[_\-\.]{mnum}{yr_short}[_\-\.]",    # _0226_
+                rf"{mnum}{full_yr}_R2A",                 # 022026_R2A
+            ]
+            return any(_re2a.search(p, stem, _re2a.IGNORECASE) for p in patterns)
+        matched_direct = [
+            f for f in direct_xls
+            if _exact_month_match(f.stem, mnum, year, yr_short)
+        ]
+
+        def _parse_xl_to_rows(xl_path, src_label):
+            nonlocal tot, rows
+            df, cl = _read_xl(xl_path, f"GSTR2A {month_name}")
+            if df is None: return False
+            gc = lambda ps: _find_col(cl, ps)
+            gstin_c = gc(["gstin of supplier","gstin","ctin","supplier gstin"])
+            nm_c    = gc(["trade/legal name","trade name","supplier name","legal name"])
+            inv_c   = gc(["invoice number","invoice no","doc no"])
+            dt_c    = gc(["invoice date","doc date"])
+            tv_c    = gc(["taxable value","taxable value (₹)","taxable"])
+            ig_c    = gc(["integrated tax (₹)","integrated tax","igst","iamt"])
+            cg_c    = gc(["central tax (₹)","central tax","cgst","camt"])
+            sg_c    = gc(["state/ut tax (₹)","state/ut tax","state tax","sgst","utgst"])
+            log.info(f"    GSTR2A cols: gstin={gstin_c} tv={tv_c} ig={ig_c} cg={cg_c} sg={sg_c}")
+            found = 0
+            for _, row in df.iterrows():
+                sup = clean_str(row.get(gstin_c,"") if gstin_c else "")
+                if not sup or len(sup) < 5 or sup.lower() in ("nan","none","","-"): continue
+                tv = clean_num(row.get(tv_c, 0) if tv_c else 0)
+                ig = clean_num(row.get(ig_c, 0) if ig_c else 0)
+                cg = clean_num(row.get(cg_c, 0) if cg_c else 0)
+                sg = clean_num(row.get(sg_c, 0) if sg_c else 0)
+                rows.append((sup,
+                    clean_str(row.get(nm_c,"") if nm_c else ""),
+                    clean_str(row.get(inv_c,"") if inv_c else ""),
+                    clean_str(row.get(dt_c,"") if dt_c else ""),
+                    round(tv,2), round(ig,2), round(cg,2), round(sg,2)))
+                tot["tv"]+=tv; tot["igst"]+=ig; tot["cgst"]+=cg; tot["sgst"]+=sg
+                found += 1
+            log.info(f"    GSTR2A {month_name} ({src_label}): {found} records, tv ₹{tot['tv']:,.0f}")
+            return found > 0
+
+        # Try direct xlsx files first
+        for xl_path in matched_direct[:1]:
+            try:
+                log.info(f"    GSTR2A {month_name}: reading direct Excel {xl_path.name}")
+                if _parse_xl_to_rows(xl_path, "direct_xlsx"):
+                    return tot, rows
+            except Exception as e:
+                log.warning(f"    GSTR2A direct Excel [{month_name}]: {e}")
+
+        # Try ZIP
+        if zp.exists():
+            try:
+                ed = cdir_path / f"GSTR2A_{month_name}_{year}_ex"
+                ed.mkdir(exist_ok=True)
+                with zipfile.ZipFile(zp) as z: z.extractall(ed)
+                # JSON inside ZIP
+                jf = list(ed.glob("*.json")) + list(ed.glob("**/*.json"))
+                if jf:
+                    with open(jf[0], encoding="utf-8") as f: d=json.load(f)
+                    for p in d.get("b2b",[]):
+                        stin=p.get("ctin",""); nm=p.get("trdnm","")
+                        for inv in p.get("inv",[]):
+                            ig=cg=sg=tv=0.0
+                            for it in inv.get("itms",[]):
+                                x=it.get("itm_det",{})
+                                tv+=float(x.get("txval",0) or 0)
+                                ig+=float(x.get("iamt",0) or 0)
+                                cg+=float(x.get("camt",0) or 0)
+                                sg+=float(x.get("samt",0) or 0)
+                            rows.append((stin,nm,inv.get("inum",""),inv.get("idt",""),
+                                         round(tv,2),round(ig,2),round(cg,2),round(sg,2)))
+                            tot["tv"]+=tv; tot["igst"]+=ig; tot["cgst"]+=cg; tot["sgst"]+=sg
+                    log.info(f"    GSTR2A {month_name} (ZIP/JSON): {len(rows)} records")
+                    return tot, rows
+                # Excel inside ZIP
+                xlf = (list(ed.glob("*.xlsx")) + list(ed.glob("**/*.xlsx")) +
+                       list(ed.glob("*.xls"))  + list(ed.glob("**/*.xls")))
+                if xlf:
+                    log.info(f"    GSTR2A {month_name}: reading ZIP Excel {xlf[0].name}")
+                    _parse_xl_to_rows(xlf[0], "zip_xlsx")
+                    return tot, rows
+            except Exception as e:
+                log.warning(f"    GSTR2A ZIP read [{month_name}]: {e}")
+        else:
+            if not matched_direct:
+                log.info(f"    GSTR2A {month_name}: no ZIP or direct xlsx found")
+
+        return tot, rows
+
+    # -----------------------------------------------------
+    # Collect all monthly data
+    # -----------------------------------------------------
+    N     = len(MONTHS)
+    NCOLS = N + 3  # section + particulars + blank + 12 months + total
+    g1          = {}
+    g1_inv_rows = {}   # per-invoice detail: mk → list of rows
+    g1_cdn_rows = {}   # CDNR/Debit Note detail: mk → list of rows
+    g2b         = {}
+    g2a         = {}
+
+    # -- Build GSTIN→name lookup from GSTR-2A / GSTR-2B ------------------
+    # GSTR-1 trdnm is often blank; GSTR-2A/2B Excel always has supplier names
+    gstin_name_map = {}
+    cdir_path = Path(client_dir)
+
+    # -- Load customer/party name Excel (user-provided GSTIN→Name) ----------
+    # Place any of these files in the script folder or client folder:
+    #   customer_names.xlsx / customers.xlsx / party_master.xlsx etc.
+    # Format: any sheet, GSTIN in any column, Name in the NEXT column
+    _cust_files_loaded = 0
+    for _sdir in [Path(os.path.dirname(os.path.abspath(__file__))),
+                  cdir_path, cdir_path.parent]:
+        for _pat in ["customer_names.xlsx","customers.xlsx","party_master.xlsx",
+                     "customer_master.xlsx","GSTIN_Names.xlsx","gstin_names.xlsx",
+                     "customer_list.xlsx","PartyMaster.xlsx","CustomerMaster.xlsx",
+                     "name_list.xlsx","client_names.xlsx"]:
+            _cf = _sdir / _pat
+            if not _cf.exists(): continue
+            try:
+                _xl = pd.ExcelFile(_cf, engine="openpyxl")
+                for _sn in _xl.sheet_names:
+                    try:
+                        _df = _xl.parse(_sn, header=None, dtype=str, nrows=20000)
+                        for _, _rw in _df.iterrows():
+                            for _ci in range(min(8, len(_rw)-1)):
+                                _g = str(_rw.iloc[_ci] or "").strip().upper()
+                                _n = str(_rw.iloc[_ci+1] or "").strip()
+                                if (len(_g)==15 and _g[:2].isdigit()
+                                        and _n and _n.lower() not in ("nan","none","")):
+                                    gstin_name_map[_g] = _n
+                                    _cust_files_loaded += 1
+                    except Exception: pass
+            except Exception as _ce:
+                log.warning(f"    Customer Excel [{_cf.name}] error: {_ce}")
+    if _cust_files_loaded:
+        log.info(f"    Customer Excel: {_cust_files_loaded} GSTIN->Name entries loaded")
+
+    def _scan_xl_for_names(xl_path):
+        """Scan all sheets of an Excel file for GSTIN→name pairs."""
+        try:
+            xl_f = pd.ExcelFile(xl_path, engine="openpyxl")
+            for sname in xl_f.sheet_names:
+                try:
+                    df_s = xl_f.parse(sname, header=None, dtype=str, nrows=5000)
+                    for _, row in df_s.iterrows():
+                        for col_i in range(min(4, len(row)-1)):
+                            g_v = str(row.iloc[col_i] or '').strip()
+                            n_v = str(row.iloc[col_i+1] or '').strip()
+                            if (len(g_v)==15 and g_v[:2].isdigit() and
+                                    n_v and n_v.lower() not in ('nan','none','')):
+                                gstin_name_map[g_v] = n_v
+                except Exception: pass
+        except Exception: pass
+
+    # Scan GSTR-2A ZIPs
+    for zpath in list(cdir_path.glob("GSTR2A_*.zip")) + list(cdir_path.glob("*_R2A*.zip")):
+        try:
+            ed_nm = cdir_path / (zpath.stem + "_nmex")
+            ed_nm.mkdir(exist_ok=True)
+            with zipfile.ZipFile(zpath) as z2: z2.extractall(ed_nm)
+            for xlf in list(ed_nm.glob("*.xlsx")) + list(ed_nm.glob("*.xls")):
+                _scan_xl_for_names(xlf)
+            for jf in list(ed_nm.glob("*.json")) + list(ed_nm.glob("**/*.json")):
+                try:
+                    dj = json.load(open(jf, encoding="utf-8"))
+                    for ent in dj.get("b2b",[]):
+                        g2 = ent.get("ctin","").strip(); nm2 = ent.get("trdnm","").strip()
+                        if len(g2)==15 and nm2 and nm2.lower() not in ("nan","none",""):
+                            gstin_name_map[g2] = nm2
+                except Exception: pass
+        except Exception: pass
+
+    # Scan direct GSTR-2A xlsx files
+    for xlf in (list(cdir_path.glob("*_R2A*.xlsx")) + list(cdir_path.glob("GSTR2A_*.xlsx"))):
+        _scan_xl_for_names(xlf)
+
+    # Scan GSTR-2B Excel files (also has supplier names)
+    for xlf in (list(cdir_path.glob("GSTR2B_*.xlsx")) + list(cdir_path.glob("*_R2B*.xlsx"))):
+        _scan_xl_for_names(xlf)
+
+    # Also extract names from GSTR-2B ZIPs
+    for zpath in list(cdir_path.glob("GSTR2B_*.zip")):
+        try:
+            ed_nb = cdir_path / (zpath.stem + "_nmex")
+            ed_nb.mkdir(exist_ok=True)
+            with zipfile.ZipFile(zpath) as z3: z3.extractall(ed_nb)
+            for xlf in list(ed_nb.glob("*.xlsx")):
+                _scan_xl_for_names(xlf)
+        except Exception: pass
+
+    log.info(f"    GSTIN→name map: {len(gstin_name_map)} entries (from GSTR-2A/2B)")
+
+    # -- Try public GST search API for any missing names ----------
+    # Collect all GSTINs from GSTR-1 invoice rows that have no name yet
+    # We do a quick offline read first to find unknown GSTINs
+    unknown_gstins = set()
+    for zp in list(cdir_path.glob("GSTR1_*.zip")):
+        try:
+            import zipfile as _zf2, json as _j2
+            ed2 = cdir_path / (zp.stem + "_ex2")
+            ed2.mkdir(exist_ok=True)
+            with _zf2.ZipFile(zp) as z2: z2.extractall(ed2)
+            for jf2 in list(ed2.glob("*.json"))+list(ed2.glob("**/*.json")):
+                d2 = _j2.load(open(jf2, encoding="utf-8"))
+                for p2 in d2.get("b2b",[]):
+                    g2 = p2.get("ctin","").strip()
+                    if g2 and g2 not in gstin_name_map:
+                        unknown_gstins.add(g2)
+        except Exception: pass
+    log.info(f"    Unknown GSTINs needing API lookup: {len(unknown_gstins)}")
+
+    if unknown_gstins:
+        try:
+            import urllib.request, json as _j3, time as _t3
+            looked_up = 0
+            for gstin_q in list(unknown_gstins)[:50]:  # max 50 API calls
+                try:
+                    # Public GST search API (no auth needed for basic lookup)
+                    url = f"https://sheet.gstincheck.co.in/check/apikey/{gstin_q}"
+                    # Fallback to knowyourgst endpoint
+                    url2 = f"https://www.knowyourgst.com/developers/getsinglegstin/?gstin={gstin_q}&user=apitest"
+                    req = urllib.request.Request(
+                        f"https://api.knowyourgst.com/gstin/{gstin_q}",
+                        headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+                    try:
+                        with urllib.request.urlopen(req, timeout=3) as resp:
+                            data = _j3.loads(resp.read())
+                            name = (data.get("lgnm") or data.get("tradeNam") or
+                                    data.get("tradeName") or data.get("legal_name") or "")
+                            if name and name.lower() not in ("null","none",""):
+                                gstin_name_map[gstin_q] = name
+                                looked_up += 1
+                    except Exception:
+                        # Try alternate public endpoint
+                        req2 = urllib.request.Request(
+                            f"https://sheet.gstincheck.co.in/check/39592d0c-5c45-4f20-b7d7-7a0ee92b4e38/{gstin_q}",
+                            headers={"User-Agent":"Mozilla/5.0"})
+                        try:
+                            with urllib.request.urlopen(req2, timeout=3) as resp2:
+                                data2 = _j3.loads(resp2.read())
+                                name2 = (data2.get("lgnm") or data2.get("tradeNam") or "")
+                                if name2:
+                                    gstin_name_map[gstin_q] = name2
+                                    looked_up += 1
+                        except Exception: pass
+                    _t3.sleep(0.2)  # polite delay between API calls
+                except Exception: pass
+            log.info(f"    API lookup complete: {looked_up} names fetched")
+        except Exception as e:
+            log.warning(f"    API lookup failed: {e}")
+
+    log.info(f"    GSTIN→name map final: {len(gstin_name_map)} entries")
+
+    for mn, _, yr in MONTHS:
+        mk      = f"{mn}_{yr}"
+        g1_tot, g1_rows, g1_cdn = read_gstr1(mn, yr)
+        g1[mk]  = g1_tot
+        # -- Patch missing receiver names using lookup map --
+        patched = []
+        for r in g1_rows:
+            inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg = r
+            if not nm or str(nm).strip() in ('','nan','None'):
+                nm = gstin_name_map.get(str(gstin_r).strip(), '')
+            patched.append((inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg))
+        g1_inv_rows[mk] = patched
+        g1_cdn_rows[mk] = g1_cdn
+        itc, r2b_rows = read_gstr2b(mn, yr)
+        g2b[mk] = {"itc": itc, "rows": r2b_rows}
+        tot2a, r2a_rows = read_gstr2a(mn, yr)
+        g2a[mk] = {"tot": tot2a, "rows": r2a_rows}
+        # Add 2A names to map for future use
+        for r2 in r2a_rows:
+            if len(r2)>=2 and r2[0] and len(str(r2[0]).strip())==15:
+                gstin_name_map[str(r2[0]).strip()] = str(r2[1] or '').strip()
+
+    log.info(f"  Data loaded: "
+             f"R1={sum(1 for mk in g1 if g1[mk]['inv']>0)}/12  "
+             f"R2B={sum(1 for mk in g2b if g2b[mk]['rows'])}/12  "
+             f"R2A={sum(1 for mk in g2a if g2a[mk]['rows'])}/12 months")
+
+    # ======================================================
+    # PRE-EXTRACT ALL GSTR-3B PDFs IMMEDIATELY
+    # MUST be here — before ANY sheet code — because Python's
+    # scoping rules block ALL uses of g3b_monthly if there is
+    # a later assignment anywhere in this function.
+    # ======================================================
+    g3b_monthly = {}
+    for _mn, _dummy, _yr in MONTHS:
+        _pdf = Path(client_dir) / f"GSTR3B_{_mn}_{_yr}.pdf"
+        g3b_monthly[f"{_mn}_{_yr}"] = extract_3b_pdf(_pdf)
+    _ok_3b = sum(1 for v in g3b_monthly.values()
+                 if v.get("taxable",0)>0 or v.get("o_cgst",0)>0)
+    log.info(f"  3B PDFs extracted: {_ok_3b}/12 months with data")
+
+    # -----------------------------------------------------
+    # SHEET 1 — Summary_Report (GSTR-3B Monthwise format)
+    # -----------------------------------------------------
+    ws1 = wb.create_sheet("Summary_Report")
+    ws1.sheet_view.showGridLines = False
+
+    # Build month headers
+    month_labels = [mn + "\n" + yr for mn,_,yr in MONTHS]
+
+    # Title
+    ws1.merge_cells(f"A1:{get_column_letter(NCOLS)}1")
+    tc = ws1["A1"]
+    tc.value = f"GST ANNUAL SUMMARY REPORT — {client_name} ({gstin}) — FY {FY_LABEL}"
+    tc.font = Font(name="Arial", bold=True, color=HDR_FG, size=12)
+    tc.fill = fill(HDR_BG); tc.alignment = aln(); ws1.row_dimensions[1].height = 28
+
+    # Taxpayer info row
+    ws1.merge_cells(f"A2:{get_column_letter(NCOLS)}2")
+    ic = ws1["A2"]
+    ic.value = f"GSTIN: {gstin}   |   Client: {client_name}   |   FY: {FY_LABEL}   |   Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}"
+    ic.font = Font(name="Arial", size=9, italic=True)
+    ic.fill = fill("D6DCE4"); ic.alignment = aln(h="left"); ws1.row_dimensions[2].height = 14
+
+    # Column headers row 3 — Section | Particulars | | Apr | May | ... | Total
+    ws1.column_dimensions["A"].width = 22
+    ws1.column_dimensions["B"].width = 48
+    ws1.column_dimensions["C"].width = 4
+    for ci2, (ml, (mn,_,yr)) in enumerate(zip(month_labels, MONTHS), 4):
+        ws1.column_dimensions[get_column_letter(ci2)].width = 12
+        ch = ws1.cell(row=3, column=ci2, value=ml)
+        ch.font = Font(name="Arial", bold=True, color=HDR_FG, size=8)
+        ch.fill = fill(HDR_BG); ch.alignment = aln(h="center"); ch.border = bdr()
+    # Total col
+    tot_col = ws1.cell(row=3, column=4+N, value="Total")
+    tot_col.font = Font(name="Arial", bold=True, color=HDR_FG, size=9)
+    tot_col.fill = fill(HDR_BG); tot_col.alignment = aln(); tot_col.border = bdr()
+    ws1.column_dimensions[get_column_letter(4+N)].width = 14
+    # Section / Particulars headers
+    for ci2, hdr_label in [(1,"Section"),(2,"Particulars")]:
+        hc = ws1.cell(row=3, column=ci2, value=hdr_label)
+        hc.font = Font(name="Arial", bold=True, color=HDR_FG, size=9)
+        hc.fill = fill(HDR_BG); hc.alignment = aln(h="left"); hc.border = bdr()
+    ws1.cell(row=3, column=3).fill = fill(HDR_BG); ws1.cell(row=3, column=3).border = bdr()
+    ws1.row_dimensions[3].height = 28
+    ws1.freeze_panes = "D4"
+
+    ri = 4  # ← ri declared HERE in write_annual_reconciliation scope
+
+    def srow(section, particulars, vals_by_month, bold=False, bg=ALT1, secbg=None):
+        """Write one data row. vals_by_month = list of 12 floats."""
+        nonlocal ri
+        row_bg = secbg or bg
+        # Section cell (merged vertically is complex — just write per row)
+        c = ws1.cell(row=ri, column=1, value=section)
+        c.font = _font(bold, color="000000", size=9)
+        c.fill = _f(row_bg); c.alignment = _aln("left", wrap=True); c.border = _bdr()
+        c = ws1.cell(row=ri, column=2, value=particulars)
+        c.font = _font(False, "000000", 9)
+        c.fill = _f(row_bg); c.alignment = _aln("left", wrap=True); c.border = _bdr()
+        c = ws1.cell(row=ri, column=3, value="")
+        c.fill = _f(row_bg); c.border = _bdr()
+        total = 0.0
+        for ci2, v in enumerate(vals_by_month, 4):
+            cv = ws1.cell(row=ri, column=ci2, value=round(v, 2) if v else 0)
+            cv.font = _font(bold, "000000", 9)
+            cv.fill = _f(row_bg); cv.alignment = _aln("right"); cv.border = _bdr()
+            cv.number_format = NUM_FMT; total += (v or 0)
+        tc2 = ws1.cell(row=ri, column=4+N, value=round(total, 2))
+        tc2.font = _font(True, "000000", 9)
+        tc2.fill = _f(TOT_BG); tc2.alignment = _aln("right"); tc2.border = _bdr()
+        tc2.number_format = NUM_FMT
+        ws1.row_dimensions[ri].height = 16; ri += 1
+
+    def blank_row():
+        nonlocal ri
+        for ci2 in range(1, NCOLS+1):
+            c = ws1.cell(row=ri, column=ci2, value="")
+            c.fill = _f(ALT1); c.border = _bdr()
+        ws1.row_dimensions[ri].height = 8; ri += 1
+
+    def sec_header(label):
+        nonlocal ri
+        ws1.merge_cells(f"A{ri}:{get_column_letter(NCOLS)}{ri}")
+        c = ws1.cell(row=ri, column=1, value=label)
+        c.font = _font(True, SEC_FG, 9); c.fill = _f(SEC_BG)
+        c.alignment = _aln("left"); c.border = _bdr()
+        ws1.row_dimensions[ri].height = 16; ri += 1
+
+    # -- Section: Sales Summary --
+    sec_header("SALES SUMMARY (GSTR-1 / GSTR-3B Table 3.1)")
+    srow("Sales Summary", "3.1(a) Outward taxable supplies (excl zero-rated, nil, exempt)",
+         [round(g1[f"{mn}_{yr}"]["b2b_tx"]+g1[f"{mn}_{yr}"]["b2cs_tx"],2) for mn,_,yr in MONTHS], bg="E2EFDA")
+    srow("", "3.1(b) Outward taxable — Zero rated",
+         [round(g3b_monthly.get(f"{mn}_{yr}",{}).get("zero_taxable",0),2) for mn,_,yr in MONTHS], bg=ALT2)
+    srow("", "3.1(c) Nil rated / Exempt supplies (GSTR-1)",
+         [round(g1[f"{mn}_{yr}"].get("nil_exempt",0),2) for mn,_,yr in MONTHS], bg="EBF3FB")
+    srow("", "3.1(c) Nil rated / Exempt (GSTR-3B PDF)",
+         [round(g3b_monthly.get(f"{mn}_{yr}",{}).get("nil_exempt",0),2) for mn,_,yr in MONTHS], bg="FFF2CC")
+    srow("", "3.1(e) Non-GST outward supplies",
+         [round(g1[f"{mn}_{yr}"].get("non_gst",0),2) for mn,_,yr in MONTHS], bg=ALT2)
+    srow("TOTAL Taxable Turnover (B2B+B2CS+Nil+NonGST)", "",
+         [round(g1[f"{mn}_{yr}"]["b2b_tx"]+g1[f"{mn}_{yr}"]["b2cs_tx"]
+                +g1[f"{mn}_{yr}"].get("nil_exempt",0)+g1[f"{mn}_{yr}"].get("non_gst",0),2) for mn,_,yr in MONTHS],
+         bold=True, bg=TOT_BG)
+    blank_row()
+
+    # -- Section: Tax Liability --
+    sec_header("TAX LIABILITY — NON-REVERSE CHARGE (GSTR-3B Table 3.1)")
+    srow("Tax Liability", "IGST",
+         [round(g1[f"{mn}_{yr}"]["igst"],2) for mn,_,yr in MONTHS], bg=IGST_BG)
+    srow("", "CGST",
+         [round(g1[f"{mn}_{yr}"]["cgst"],2) for mn,_,yr in MONTHS], bg=CGST_BG)
+    srow("", "SGST",
+         [round(g1[f"{mn}_{yr}"]["sgst"],2) for mn,_,yr in MONTHS], bg=SGST_BG)
+    srow("", "CESS", [0.0]*N, bg=ALT2)
+    srow("TOTAL Tax Liability", "",
+         [round(g1[f"{mn}_{yr}"]["igst"]+g1[f"{mn}_{yr}"]["cgst"]+g1[f"{mn}_{yr}"]["sgst"],2)
+          for mn,_,yr in MONTHS], bold=True, bg=TOT_BG)
+    blank_row()
+
+    # -- Section: ITC from GSTR-2B --
+    sec_header("INPUT TAX CREDIT — NON-REVERSE CHARGE (GSTR-2B Confirmed ITC)")
+    srow("ITC Available", "IGST",
+         [round(g2b[f"{mn}_{yr}"]["itc"]["igst"],2) for mn,_,yr in MONTHS], bg=IGST_BG)
+    srow("", "CGST",
+         [round(g2b[f"{mn}_{yr}"]["itc"]["cgst"],2) for mn,_,yr in MONTHS], bg=CGST_BG)
+    srow("", "SGST",
+         [round(g2b[f"{mn}_{yr}"]["itc"]["sgst"],2) for mn,_,yr in MONTHS], bg=SGST_BG)
+    srow("", "CESS", [0.0]*N, bg=ALT2)
+    srow("TOTAL ITC", "",
+         [round(sum(g2b[f"{mn}_{yr}"]["itc"].values()),2) for mn,_,yr in MONTHS],
+         bold=True, bg=TOT_BG)
+    blank_row()
+
+    # -- Section: Net Tax --
+    sec_header("NET TAX PAYABLE  (Tax Liability minus ITC)")
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        tl=g1[mk]["igst"]+g1[mk]["cgst"]+g1[mk]["sgst"]
+        itc_t=sum(g2b[mk]["itc"].values())
+    srow("Net Tax Payable", "Total Tax − Total ITC",
+         [round((g1[f"{mn}_{yr}"]["igst"]+g1[f"{mn}_{yr}"]["cgst"]+g1[f"{mn}_{yr}"]["sgst"])
+                - sum(g2b[f"{mn}_{yr}"]["itc"].values()), 2) for mn,_,yr in MONTHS],
+         bold=True, bg="FFC7CE")
+    blank_row()
+
+    # -- Section: ITC 2A vs 2B diff --
+    sec_header("ITC RECONCILIATION  (GSTR-2A vs GSTR-2B)")
+    srow("GSTR-2A Total ITC", "",
+         [round(g2a[f"{mn}_{yr}"]["tot"]["igst"]+g2a[f"{mn}_{yr}"]["tot"]["cgst"]+
+                g2a[f"{mn}_{yr}"]["tot"]["sgst"],2) for mn,_,yr in MONTHS], bg="FFF2CC")
+    srow("GSTR-2B Total ITC", "",
+         [round(sum(g2b[f"{mn}_{yr}"]["itc"].values()),2) for mn,_,yr in MONTHS], bg="E2EFDA")
+    srow("Difference (2A − 2B)", "Positive = unclaimed ITC; Negative = excess claim",
+         [round((g2a[f"{mn}_{yr}"]["tot"]["igst"]+g2a[f"{mn}_{yr}"]["tot"]["cgst"]+
+                 g2a[f"{mn}_{yr}"]["tot"]["sgst"])
+                - sum(g2b[f"{mn}_{yr}"]["itc"].values()), 2) for mn,_,yr in MONTHS],
+         bold=True, bg="FFC7CE")
+    blank_row()
+
+    ws1.sheet_properties.tabColor = "1F3864"
+
+    # ====================================================
+    # SHEET 2: GSTR-1 Sales Detail
+    # ====================================================
+    ws2 = wb.create_sheet("GSTR1_Sales_Detail")
+    ws2.sheet_view.showGridLines = False
+    cols2 = [("Month",12),("Invoices",9),("B2B Taxable ₹",16),("B2CS Taxable ₹",16),
+             ("Total Taxable ₹",16),("IGST ₹",13),("CGST ₹",13),("SGST ₹",13),
+             ("Total Tax ₹",14),("Invoice Value ₹",16)]
+    title(ws2, f"GSTR-1 Annual Sales Summary — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols2))
+    hdr(ws2, cols2)
+    ws2.freeze_panes = "A3"
+    ri2=3
+    ann2={"inv":0,"b2b":0.,"b2cs":0.,"ig":0.,"cg":0.,"sg":0.,"val":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d=g1[mk]
+        bg2=ALT2 if ri2%2==0 else ALT1
+        tx=d["b2b_tx"]+d["b2cs_tx"]+d.get("nil_exempt",0)+d.get("non_gst",0); tt=d["igst"]+d["cgst"]+d["sgst"]
+        for ci2,v in enumerate([f"{mn} {yr}",d["inv"],round(d["b2b_tx"],2),round(d["b2cs_tx"],2),
+                                 round(tx,2),round(d["igst"],2),round(d["cgst"],2),round(d["sgst"],2),
+                                 round(tt,2),round(d["val"],2)],1):
+            cell(ws2,ri2,ci2,v,bg2,numfmt=NUM_FMT if ci2>1 else None,align="right" if ci2>1 else "left")
+        ws2.row_dimensions[ri2].height=15; ri2+=1
+        ann2["inv"]+=d["inv"]; ann2["b2b"]+=d["b2b_tx"]; ann2["b2cs"]+=d["b2cs_tx"]
+        ann2["ig"]+=d["igst"]; ann2["cg"]+=d["cgst"]; ann2["sg"]+=d["sgst"]; ann2["val"]+=d["val"]
+    totrow(ws2,ri2,["ANNUAL TOTAL",_fsum("B",3,ri2-1),_fsum("C",3,ri2-1),_fsum("D",3,ri2-1),
+                    _fsum("E",3,ri2-1),_fsum("F",3,ri2-1),_fsum("G",3,ri2-1),
+                    _fsum("H",3,ri2-1),f"=F{ri2}+G{ri2}+H{ri2}",_fsum("J",3,ri2-1)])
+    ws2.sheet_properties.tabColor = "2E75B6"
+
+    # ====================================================
+    # SHEET 2x: GSTR-1 Rate-wise Breakdown
+    # Taxable values split by GST rate (0/3/5/12/18/28) per month
+    # ====================================================
+    ws2x = wb.create_sheet("GSTR1_Rate_Breakdown")
+    ws2x.sheet_view.showGridLines = False
+    cols2x = [("Month",12),("0% ₹",13),("3% ₹",13),("5% ₹",14),
+              ("12% ₹",14),("18% ₹",14),("28% ₹",14),("Other% ₹",13),
+              ("Total Taxable ₹",16),("IGST ₹",13),("CGST ₹",13),("SGST ₹",13),("Total Tax ₹",14)]
+    title(ws2x, f"GSTR-1 Rate-wise Taxable Breakdown -- {client_name} ({gstin}) -- FY {FY_LABEL}", len(cols2x))
+    hdr(ws2x, cols2x)
+    ws2x.freeze_panes = "A3"; ri2x=3
+    ann2x={k:0. for k in ["r0","r3","r5","r12","r18","r28","ro","tx","ig","cg","sg"]}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d=g1[mk]
+        bg2x=ALT2 if ri2x%2==0 else ALT1
+        r0=round(d.get("rate_0",0),2);   r3=round(d.get("rate_3",0),2)
+        r5=round(d.get("rate_5",0),2);   r12=round(d.get("rate_12",0),2)
+        r18=round(d.get("rate_18",0),2); r28=round(d.get("rate_28",0),2)
+        ro=round(d.get("rate_other",0),2)
+        tx=round(d["b2b_tx"]+d["b2cs_tx"],2)
+        ig=round(d["igst"],2); cg=round(d["cgst"],2); sg=round(d["sgst"],2)
+        for ci2x,v in enumerate([f"{mn} {yr}",r0,r3,r5,r12,r18,r28,ro,tx,ig,cg,sg,round(ig+cg+sg,2)],1):
+            cell(ws2x,ri2x,ci2x,v,bg2x,numfmt=NUM_FMT if ci2x>1 else None,
+                 align="right" if ci2x>1 else "left")
+        ws2x.row_dimensions[ri2x].height=15; ri2x+=1
+        for k,v in [("r0",r0),("r3",r3),("r5",r5),("r12",r12),
+                    ("r18",r18),("r28",r28),("ro",ro),("tx",tx),
+                    ("ig",ig),("cg",cg),("sg",sg)]:
+            ann2x[k]+=v
+    totrow(ws2x,ri2x,["ANNUAL TOTAL — use SUM formulas below",_fsum("B",3,ri2x-1),
+                       round(ann2x["r0"],2),round(ann2x["r3"],2),round(ann2x["r5"],2),
+                       round(ann2x["r12"],2),round(ann2x["r18"],2),round(ann2x["r28"],2),
+                       round(ann2x["ro"],2),round(ann2x["tx"],2),
+                       round(ann2x["ig"],2),round(ann2x["cg"],2),round(ann2x["sg"],2),
+                       round(ann2x["ig"]+ann2x["cg"]+ann2x["sg"],2)])
+    ws2x.sheet_properties.tabColor = "843C0C"
+
+    # ====================================================
+    # SHEET 2b: GSTR-1 Invoice Detail (per-invoice rows)
+    # All invoice types: B2B, B2CS, B2CL, CDNR for all 12 months
+    # Then monthly summary at end
+    # ====================================================
+    ws2b = wb.create_sheet("GSTR1_Invoice_Detail")
+    ws2b.sheet_view.showGridLines = False
+    cols2b = [("Type",8),("GSTIN/UIN Receiver",22),("Receiver Name",26),
+              ("Invoice No",16),("Invoice Date",13),("Invoice Value ₹",16),
+              ("Place of Supply",16),("Rate %",7),
+              ("Taxable Value ₹",16),("IGST ₹",12),("CGST ₹",12),("SGST ₹",12)]
+    title(ws2b, f"GSTR-1 Invoice Detail (All Types) — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols2b))
+    hdr(ws2b, cols2b)
+    ws2b.freeze_panes = "A3"
+    ri2b = 3
+    prev_mn = None
+    ann2b = {"tx":0.,"ig":0.,"cg":0.,"sg":0.,"iv":0.}
+    for mn,_,yr in MONTHS:
+        mk = f"{mn}_{yr}"
+        inv_rows = g1_inv_rows.get(mk, [])
+        if not inv_rows:
+            continue
+        # Month separator row
+        ws2b.merge_cells(f"A{ri2b}:{get_column_letter(len(cols2b))}{ri2b}")
+        sep = ws2b.cell(row=ri2b, column=1, value=f"-- {mn} {yr} --  ({len(inv_rows)} records)")
+        sep.font = _font(True, HDR_FG, 9); sep.fill = _f(SEC_BG)
+        sep.alignment = _aln("left"); sep.border = _bdr()
+        ws2b.row_dimensions[ri2b].height = 14; ri2b += 1
+
+        for row_data in inv_rows:
+            inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg = row_data
+            bg2b = ALT2 if ri2b%2==0 else ALT1
+            for ci2b,v in enumerate([inv_type,gstin_r,nm,inum,idt,
+                                      iv,pos,rate,tv,ig,cg,sg],1):
+                cell(ws2b,ri2b,ci2b,v,bg2b,
+                     numfmt=NUM_FMT if ci2b in (6,9,10,11,12) else None,
+                     align="right" if ci2b in (6,7,8,9,10,11,12) else "left")
+            ws2b.row_dimensions[ri2b].height=14; ri2b+=1
+            ann2b["tx"]+=float(tv or 0); ann2b["ig"]+=float(ig or 0)
+            ann2b["cg"]+=float(cg or 0); ann2b["sg"]+=float(sg or 0)
+            ann2b["iv"]+=float(iv or 0)
+
+    # Annual total row with SUM formulas
+    _inv_count = sum(len(g1_inv_rows.get(f"{mn}_{yr}",[]))for mn,_,yr in MONTHS)
+    totrow(ws2b, ri2b, ["ANNUAL TOTAL","","",
+                         f"Total: {_inv_count} records",
+                         "","", _fsum("G",3,ri2b-1),"",
+                         _fsum("I",3,ri2b-1),_fsum("J",3,ri2b-1),
+                         _fsum("K",3,ri2b-1),_fsum("L",3,ri2b-1)])
+    ws2b.sheet_properties.tabColor = "1F3864"
+
+    # ====================================================
+    # SHEET 2c: GSTR-1 CDNR & Debit Note Detail
+    # Invoice-level rows + Monthly Summary for Credit/Debit Notes
+    # ====================================================
+    ws2c = wb.create_sheet("GSTR1_CDNR_Debit_Note")
+    ws2c.sheet_view.showGridLines = False
+    cols2c = [("Month",10),("Note Type",14),("Counterparty GSTIN",22),
+              ("Counterparty Name",26),("Note Number",16),("Note Date",13),
+              ("Note Value ₹",15),("Rate %",7),
+              ("Taxable Value ₹",16),("IGST ₹",12),("CGST ₹",12),("SGST ₹",12),
+              ("Total Tax ₹",13)]
+    title(ws2c, f"GSTR-1 CDNR, Debit Notes & CDNRA Amendments — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols2c))
+    ws2c.merge_cells(f"A2:{get_column_letter(len(cols2c))}2")
+    sh2c_note=ws2c["A2"]
+    sh2c_note.value=("CDNR-Credit = Credit notes to registered buyers (reduces outward supply)  |  "
+                     "CDNR-Debit = Debit notes to registered buyers (increases outward supply)  |  "
+                     "CDNRA = Amended credit/debit notes via GSTR-1A  |  "
+                     "CDNUR = Notes to unregistered buyers  |  "
+                     "Overall values include credit, debit AND amendments for full picture")
+    sh2c_note.font=_font(False,"000000",8); sh2c_note.fill=_f("FFF2CC")
+    sh2c_note.alignment=_aln("left"); sh2c_note.border=_bdr()
+    ws2c.row_dimensions[2].height=14
+    hdr(ws2c, cols2c, row=3)
+    ws2c.freeze_panes = "A4"
+    ri2c = 4
+    ann2c = {"cr_tv":0.,"dr_tv":0.,"amend_cr":0.,"amend_dr":0.,"ig":0.,"cg":0.,"sg":0.}
+
+    # -- Invoice-level rows ------------------------------
+    for mn,_,yr in MONTHS:
+        mk = f"{mn}_{yr}"
+        cdn_data = g1_cdn_rows.get(mk, [])
+        if not cdn_data:
+            continue
+        # Month separator
+        cr_count  = sum(1 for r in cdn_data if "Credit" in str(r[0]) or (r[0] in ("CDN-C","CDNUR-Cr")))
+        dr_count  = sum(1 for r in cdn_data if "Debit"  in str(r[0]) or (r[0] in ("CDN-D","CDNUR-Dr")))
+        amd_count = sum(1 for r in cdn_data if "CDNRA"  in str(r[0]))
+        ws2c.merge_cells(f"A{ri2c}:{get_column_letter(len(cols2c))}{ri2c}")
+        sep = ws2c.cell(row=ri2c, column=1,
+                        value=(f"── {mn} {yr} ──  Credit:{cr_count}  Debit:{dr_count}  "
+                               f"Amendments(CDNRA):{amd_count}  Total:{len(cdn_data)} notes"))
+        sep.font=_font(True,HDR_FG,9); sep.fill=_f(SEC_BG)
+        sep.alignment=_aln("left"); sep.border=_bdr()
+        ws2c.row_dimensions[ri2c].height=14; ri2c+=1
+
+        for row_data in cdn_data:
+            inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg = row_data
+            bg2c = ALT2 if ri2c%2==0 else ALT1
+            # Colour coding: Debit=yellow, Credit=green, Amendment=blue
+            if "Debit" in str(inv_type) or "Dr" in str(inv_type):
+                type_bg = "FFF2CC"
+            elif "CDNRA" in str(inv_type):
+                type_bg = "DEEAF1"
+            else:
+                type_bg = "E2EFDA"
+            for ci2c,v in enumerate([mn+" "+yr, inv_type,gstin_r,nm,inum,idt,
+                                      iv,rate,tv,ig,cg,sg,round(float(ig or 0)+float(cg or 0)+float(sg or 0),2)],1):
+                cl2c = ws2c.cell(row=ri2c,column=ci2c,value=v)
+                cl2c.font = _font(False,"000000",9)
+                cl2c.fill = _f(type_bg if ci2c==2 else bg2c)
+                cl2c.alignment=_aln("right" if ci2c in (7,8,9,10,11,12,13) else "left")
+                cl2c.border=_bdr()
+                if ci2c in (7,9,10,11,12,13) and isinstance(v,(int,float)):
+                    cl2c.number_format=NUM_FMT
+            ws2c.row_dimensions[ri2c].height=14; ri2c+=1
+            if "Debit" in str(inv_type) or "Dr" in str(inv_type):
+                ann2c["dr_tv"]+=float(tv or 0)
+            elif "CDNRA" in str(inv_type):
+                if "Debit" in str(inv_type):
+                    ann2c["amend_dr"]+=float(tv or 0)
+                else:
+                    ann2c["amend_cr"]+=float(tv or 0)
+            else:
+                ann2c["cr_tv"]+=float(tv or 0)
+            ann2c["ig"]+=float(ig or 0); ann2c["cg"]+=float(cg or 0); ann2c["sg"]+=float(sg or 0)
+
+    # Overall annual totals row
+    totrow(ws2c, ri2c, ["ANNUAL TOTAL (All Types)",
+                         _fsum("B",3,ri2c-1),_fsum("C",3,ri2c-1),
+                         _fsum("D",3,ri2c-1),_fsum("E",3,ri2c-1),
+                         _fsum("F",3,ri2c-1),_fsum("G",3,ri2c-1),
+                         _fsum("H",3,ri2c-1),_fsum("I",3,ri2c-1),
+                         _fsum("J",3,ri2c-1),f"=SUM(H{ri2c}:J{ri2c})"])
+    ri2c += 2
+
+    # -- Monthly Summary table with Amendments column ----
+    ws2c.merge_cells(f"A{ri2c}:{get_column_letter(len(cols2c))}{ri2c}")
+    sh2c = ws2c.cell(row=ri2c, column=1, value="MONTHLY SUMMARY — CDNR (Credit + Debit + Amendments) — Overall Values")
+    sh2c.font=_font(True,HDR_FG,9); sh2c.fill=_f(SEC_BG)
+    sh2c.alignment=_aln("left"); sh2c.border=_bdr()
+    ws2c.row_dimensions[ri2c].height=16; ri2c+=1
+
+    # Summary header — now includes amendments columns
+    sum_headers2 = [("Month",10),
+                    ("Credit Notes #",14),("Credit TV ₹",16),
+                    ("Debit Notes #",14),("Debit TV ₹",16),
+                    ("CDNRA Amend #",14),("Amend TV ₹",16),
+                    ("Overall IGST ₹",14),("Overall CGST ₹",14),("Overall SGST ₹",14),
+                    ("Overall Tax ₹",14),("Net CDN Impact ₹",16)]
+    for ci2c,(h,w) in enumerate(sum_headers2,1):
+        c2cs = ws2c.cell(row=ri2c,column=ci2c,value=h)
+        c2cs.font=_font(True,HDR_FG,9); c2cs.fill=_f(MED_BLUE)
+        c2cs.alignment=_aln("center"); c2cs.border=_bdr()
+        ws2c.column_dimensions[get_column_letter(ci2c)].width=w
+    ws2c.row_dimensions[ri2c].height=20; ri2c+=1
+
+    # Summary rows
+    ann_sum = {"cr_cnt":0,"cr_tv":0.,"dr_cnt":0,"dr_tv":0.,
+               "amd_cnt":0,"amd_tv":0.,"ig":0.,"cg":0.,"sg":0.}
+    for mn,_,yr in MONTHS:
+        mk = f"{mn}_{yr}"
+        cdn_data = g1_cdn_rows.get(mk, [])
+        cr_cnt=dr_cnt=amd_cnt=0
+        cr_tv=dr_tv=amd_tv=ig=cg=sg=0.0
+        for row_data in cdn_data:
+            inv_type,_2,_3,_4,_5,iv,_7,rate,tv,rig,rcg,rsg = row_data
+            if "CDNRA" in str(inv_type):
+                amd_cnt+=1; amd_tv+=float(tv or 0)
+            elif "Debit" in str(inv_type) or "Dr" in str(inv_type):
+                dr_cnt+=1; dr_tv+=float(tv or 0)
+            else:
+                cr_cnt+=1; cr_tv+=float(tv or 0)
+            ig+=float(rig or 0); cg+=float(rcg or 0); sg+=float(rsg or 0)
+        # Net CDN impact = Debit TV - Credit TV + Amendment TV (net effect on turnover)
+        net_cdn = round(dr_tv - cr_tv + amd_tv, 2)
+        net_bg = GREEN_BG if net_cdn >= 0 else "FFC7CE"
+        bg_sum = ALT2 if ri2c%2==0 else ALT1
+        row_sum_vals=[f"{mn} {yr}",cr_cnt,round(cr_tv,2),dr_cnt,round(dr_tv,2),
+                      amd_cnt,round(amd_tv,2),
+                      round(ig,2),round(cg,2),round(sg,2),round(ig+cg+sg,2),net_cdn]
+        for ci2c,v in enumerate(row_sum_vals,1):
+            c2cs=ws2c.cell(row=ri2c,column=ci2c,value=v)
+            c2cs.font=_font(False,"000000",9)
+            c2cs.fill=_f(net_bg if ci2c==12 else bg_sum)
+            c2cs.alignment=_aln("right" if ci2c>1 else "left"); c2cs.border=_bdr()
+            if ci2c in (3,5,7,8,9,10,11,12) and isinstance(v,(int,float)): c2cs.number_format=NUM_FMT
+        ws2c.row_dimensions[ri2c].height=15; ri2c+=1
+        ann_sum["cr_cnt"]+=cr_cnt; ann_sum["cr_tv"]+=cr_tv
+        ann_sum["dr_cnt"]+=dr_cnt; ann_sum["dr_tv"]+=dr_tv
+        ann_sum["amd_cnt"]+=amd_cnt; ann_sum["amd_tv"]+=amd_tv
+        ann_sum["ig"]+=ig; ann_sum["cg"]+=cg; ann_sum["sg"]+=sg
+
+    ann_net_cdn=round(ann_sum["dr_tv"]-ann_sum["cr_tv"]+ann_sum["amd_tv"],2)
+    totrow(ws2c, ri2c, ["ANNUAL TOTAL",
+                         _fsum("B",3,ri2c-1),_fsum("C",3,ri2c-1),
+                         _fsum("D",3,ri2c-1),_fsum("E",3,ri2c-1),
+                         _fsum("F",3,ri2c-1),_fsum("G",3,ri2c-1),
+                         _fsum("H",3,ri2c-1),_fsum("I",3,ri2c-1),
+                         _fsum("J",3,ri2c-1),f"=SUM(H{ri2c}:J{ri2c})"])
+    ws2c.sheet_properties.tabColor = "FF0000"
+
+    # ====================================================
+    # SHEET 3: GSTR-2B ITC Detail
+    # ====================================================
+    ws3 = wb.create_sheet("GSTR2B_ITC_Detail")
+    ws3.sheet_view.showGridLines = False
+    cols3=[("Month",12),("Supplier GSTIN",22),("Supplier Name",28),("Invoice No",16),
+           ("Invoice Date",13),("Taxable Value ₹",16),("IGST ₹",12),("CGST ₹",12),
+           ("SGST ₹",12),("Total ITC ₹",14)]
+    title(ws3, f"GSTR-2B ITC Details — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols3))
+    hdr(ws3, cols3)
+    ws3.freeze_panes = "A3"
+    ri3=3; ann3={"ig":0.,"cg":0.,"sg":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        for row_data in g2b[mk]["rows"]:
+            # Support both old 8-field and new 12-field format
+            if len(row_data) == 12:
+                stin,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg,itc_avail = row_data
+            else:
+                stin,nm,inum,idt,tv,ig,cg,sg = row_data[:8]
+                iv=0; pos=""; rate=0; itc_avail="Yes"
+            bg3=ALT2 if ri3%2==0 else ALT1
+            for ci3,v in enumerate([f"{mn} {yr}",stin,nm,inum,idt,tv,ig,cg,sg,round(ig+cg+sg,2)],1):
+                cell(ws3,ri3,ci3,v,bg3,numfmt=NUM_FMT if ci3>5 else None,
+                     align="right" if ci3>5 else "left")
+            ws3.row_dimensions[ri3].height=15; ri3+=1
+            ann3["ig"]+=ig; ann3["cg"]+=cg; ann3["sg"]+=sg
+    totrow(ws3,ri3,["ANNUAL TOTAL","","","","","",_fsum("G",3,ri3-1),_fsum("H",3,ri3-1),
+                    _fsum("I",3,ri3-1),_fsum("J",3,ri3-1)])
+    ws3.sheet_properties.tabColor = "276221"
+
+    # ====================================================
+    # SHEET 4: GSTR-2A Purchase Detail
+    # ====================================================
+    ws4 = wb.create_sheet("GSTR2A_Purchase_Detail")
+    ws4.sheet_view.showGridLines = False
+    cols4=[("Month",12),("Supplier GSTIN",22),("Supplier Name",28),("Invoice No",16),
+           ("Invoice Date",13),("Taxable Value ₹",16),("IGST ₹",12),("CGST ₹",12),
+           ("SGST ₹",12),("Total Tax ₹",14)]
+    title(ws4, f"GSTR-2A Purchase Details — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols4))
+    hdr(ws4, cols4)
+    ws4.freeze_panes = "A3"
+    ri4=3; ann4={"tv":0.,"ig":0.,"cg":0.,"sg":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        for stin,nm,inum,idt,tv,ig,cg,sg in g2a[mk]["rows"]:
+            bg4=ALT2 if ri4%2==0 else ALT1
+            for ci4,v in enumerate([f"{mn} {yr}",stin,nm,inum,idt,tv,ig,cg,sg,round(ig+cg+sg,2)],1):
+                cell(ws4,ri4,ci4,v,bg4,numfmt=NUM_FMT if ci4>5 else None,
+                     align="right" if ci4>5 else "left")
+            ws4.row_dimensions[ri4].height=15; ri4+=1
+            ann4["tv"]+=tv; ann4["ig"]+=ig; ann4["cg"]+=cg; ann4["sg"]+=sg
+    totrow(ws4,ri4,["ANNUAL TOTAL","","","","",_fsum("F",3,ri4-1),_fsum("G",3,ri4-1),
+                    round(ann4["cg"],2),round(ann4["sg"],2),
+                    round(ann4["ig"]+ann4["cg"]+ann4["sg"],2)])
+    ws4.sheet_properties.tabColor = "9C6500"
+
+    # ====================================================
+    # SHEET 5: GSTR-3B Download Status
+    # ====================================================
+    ws5 = wb.create_sheet("GSTR3B_Status")
+    ws5.sheet_view.showGridLines = False
+    cols5=[("Month",14),("Status",12),
+           ("Taxable Supply ₹",18),("Output IGST ₹",15),
+           ("Output CGST ₹",15),("Output SGST ₹",15),("Total Tax ₹",15),
+           ("ITC IGST ₹",13),("ITC CGST ₹",13),("ITC SGST ₹",13),("Total ITC ₹",14),
+           ("Net Payable ₹",15),("File Name",36)]
+    title(ws5, f"GSTR-3B Monthly Summary — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols5))
+    hdr(ws5, cols5)
+    ws5.freeze_panes = "A3"
+    ri5=3
+    ann5={k:0.0 for k in ["taxable","nil","nongst","zr","rcm","oig","ocg","osg",
+                            "iig","icg","isg","rev","nicg","nisg","int_cg","int_sg",
+                            "lf_cg","lf_sg","net"]}
+
+
+    for mn,_,yr in MONTHS:
+        pdf=Path(client_dir)/f"GSTR3B_{mn}_{yr}.pdf"
+        ok=pdf.exists()
+        bg5=GREEN_BG if ok else RED_BG; fg5=GREEN_FG if ok else RED_FG
+        status="Downloaded" if ok else "Missing"
+
+        d3b = extract_3b_pdf(pdf)
+        total_out = round(d3b["o_igst"]+d3b["o_cgst"]+d3b["o_sgst"],2)
+        total_itc = round(d3b["itc_igst"]+d3b["itc_cgst"]+d3b["itc_sgst"],2)
+        net       = round(total_out - total_itc, 2)
+
+        row_vals = [f"{mn} {yr}", status,
+                    round(d3b["taxable"],2),
+                    round(d3b["o_igst"],2), round(d3b["o_cgst"],2), round(d3b["o_sgst"],2),
+                    total_out,
+                    round(d3b["itc_igst"],2), round(d3b["itc_cgst"],2), round(d3b["itc_sgst"],2),
+                    total_itc, net,
+                    pdf.name if ok else "Not downloaded"]
+
+        bg_row = ALT2 if ri5%2==0 else ALT1
+        for ci5,v in enumerate(row_vals,1):
+            c5=ws5.cell(row=ri5,column=ci5,value=v)
+            if ci5==2:
+                c5.font=_font(True,fg5,9); c5.fill=_f(bg5)
+            else:
+                c5.font=_font(False,"000000",9); c5.fill=_f(bg_row)
+                if isinstance(v,(int,float)) and v != 0:
+                    c5.number_format="#,##0.00"
+            c5.alignment=_aln("right" if isinstance(v,(int,float)) else "left")
+            c5.border=_bdr()
+        ws5.row_dimensions[ri5].height=16; ri5+=1
+
+    # -- Annual total row --------------------------------------
+    ann5_tot_out = round(ann5["oig"]+ann5["ocg"]+ann5["osg"],2)
+    ann5_net_itc = round(ann5["iig"]+ann5["icg"]+ann5["isg"],2)
+    totrow(ws5, ri5, ["ANNUAL TOTAL","12 Months",
+                       _fsum("C",3,ri5-1), _fsum("D",3,ri5-1), _fsum("E",3,ri5-1),
+                       _fsum("F",3,ri5-1), _fsum("G",3,ri5-1),
+                       _fsum("H",3,ri5-1), _fsum("I",3,ri5-1), _fsum("J",3,ri5-1),
+                       f"=SUM(H{ri5}:J{ri5})",
+                       _fsum("L",3,ri5-1), _fsum("M",3,ri5-1), round(ann5["isg"],2),
+                       round(ann5["rev"],2),
+                       round(ann5["nicg"],2), round(ann5["nisg"],2),
+                       round(ann5["int_cg"],2), round(ann5["int_sg"],2),
+                       round(ann5["lf_cg"],2), round(ann5["lf_sg"],2),
+                       round(ann5["net"],2), "Annual"])
+    ws5.sheet_properties.tabColor = "9C0006"
+
+    # ======================================================
+    # SHEET: GSTR-3B EXTRACTED DETAIL — All fields per month
+    # Shows every extracted value from each 3B PDF in a table
+    # ======================================================
+    ws_3bd = wb.create_sheet("GSTR3B_Extracted_Detail")
+    ws_3bd.sheet_view.showGridLines = False
+
+    # Define all columns with labels
+    cols_3bd = [
+        ("Month",          14), ("Period",         12), ("FY",             9),
+        ("GSTIN",          22), ("Legal Name",      28), ("Trade Name",     26),
+        ("ARN",            22), ("ARN Date",        13),
+        # 3.1 Outward
+        ("3.1(a) Taxable ₹",  18), ("3.1(a) IGST ₹", 14),
+        ("3.1(a) CGST ₹",     14), ("3.1(a) SGST ₹", 14), ("3.1(a) Cess ₹", 12),
+        ("3.1(b) Zero Rated ₹",16), ("3.1(c) Nil/Exempt ₹",18),
+        ("3.1(d) RCM Taxable ₹",16),("3.1(e) Non-GST ₹",14),
+        # 4 ITC
+        ("4A(1) Imp.Goods ₹",  15), ("4A(2) Imp.Svc ₹",  15),
+        ("4A(3) RCM ITC ₹",    14), ("4A(4) ISD ITC ₹",  14),
+        ("4A(5) Other IGST ₹", 15), ("4A(5) Other CGST ₹",15),
+        ("4A(5) Other SGST ₹", 15),
+        ("4B Rev IGST ₹",      14), ("4B Rev CGST ₹",     14), ("4B Rev SGST ₹", 14),
+        ("4C Net IGST ₹",      14), ("4C Net CGST ₹",     14), ("4C Net SGST ₹", 14),
+        # 5.1
+        ("Int IGST ₹",    12), ("Int CGST ₹",     12), ("Int SGST ₹",     12),
+        ("Late CGST ₹",   12), ("Late SGST ₹",    12),
+        # 6.1
+        ("Paid IGST ₹",   14), ("Paid CGST ₹",    14), ("Paid SGST ₹",    14),
+        # Computed
+        ("Total Output ₹",16), ("Total ITC ₹",    14), ("Net Payable ₹",  16),
+        ("Status",         12),
+    ]
+
+    title(ws_3bd,
+          f"GSTR-3B Extracted Detail — {client_name} ({gstin}) — FY {FY_LABEL}",
+          len(cols_3bd))
+    ws_3bd.merge_cells(f"A2:{get_column_letter(len(cols_3bd))}2")
+    s2=ws_3bd["A2"]
+    s2.value = ("All values extracted directly from downloaded GSTR-3B PDFs | "
+                "3.1=Outward Supplies | 4=ITC | 5.1=Interest/LateFee | 6.1=Cash Paid | "
+                "Green=Extracted OK | Red=PDF Missing")
+    s2.font=_font(False,"000000",8); s2.fill=_f("FFF2CC"); s2.alignment=_aln("left")
+    ws_3bd.row_dimensions[2].height=13
+
+    # Header row 3
+    for ci,(h,w) in enumerate(cols_3bd, 1):
+        hc = ws_3bd.cell(row=3, column=ci, value=h)
+        hc.font = _font(True,"FFFFFF",8)
+        hc.fill = _f("1F3864" if ci <= 8 else
+                      "2E75B6" if ci <= 17 else
+                      "375623" if ci <= 29 else
+                      "843C0C" if ci <= 34 else
+                      "9C0006" if ci <= 37 else HDR_BG)
+        hc.alignment = _aln("center"); hc.border = _bdr()
+        ws_3bd.column_dimensions[get_column_letter(ci)].width = w
+    ws_3bd.row_dimensions[3].height = 20
+    ws_3bd.freeze_panes = "A4"
+
+    # Re-extract all PDFs to populate this sheet
+    r_3bd = 4
+    ann_3bd = {"taxable":0.,"o_igst":0.,"o_cgst":0.,"o_sgst":0.,
+               "itc_igst":0.,"itc_cgst":0.,"itc_sgst":0.,"paid_cgst":0.,"paid_sgst":0.}
+
+    for mn,_,yr in MONTHS:
+        mk = f"{mn}_{yr}"
+        pdf_p = Path(client_dir)/f"GSTR3B_{mn}_{yr}.pdf"
+        d3b = extract_3b_pdf(pdf_p)
+        ok = pdf_p.exists()
+        bgr = ALT2 if r_3bd%2==0 else ALT1
+        status_v = "✓ OK" if ok else "✗ Missing"
+        sbg = GREEN_BG if ok else RED_BG
+        sfg = GREEN_FG if ok else RED_FG
+
+        tot_out = round(d3b["o_igst"]+d3b["o_cgst"]+d3b["o_sgst"],2)
+        tot_itc = round(d3b["net_itc_igst"]+d3b["net_itc_cgst"]+d3b["net_itc_sgst"],2)
+        net_pay = round(tot_out - tot_itc, 2)
+
+        row_vals = [
+            f"{mn} {yr}", d3b.get("period",mn), d3b.get("year",FY_LABEL),
+            d3b.get("gstin",gstin), d3b.get("legal_name",client_name),
+            d3b.get("trade_name",""),
+            d3b.get("arn",""), d3b.get("arn_date",""),
+            d3b["taxable"], d3b["o_igst"], d3b["o_cgst"], d3b["o_sgst"], d3b["o_cess"],
+            d3b["zero_taxable"], d3b["nil_exempt"],
+            d3b["rcm_taxable"], d3b["non_gst"],
+            d3b["itc_import_goods"], d3b["itc_import_svc"],
+            d3b["itc_rcm"], d3b["itc_isd"],
+            d3b["itc_igst"], d3b["itc_cgst"], d3b["itc_sgst"],
+            d3b["rev_igst"], d3b["rev_cgst"], d3b["rev_sgst"],
+            d3b["net_itc_igst"], d3b["net_itc_cgst"], d3b["net_itc_sgst"],
+            d3b["interest_igst"], d3b["interest_cgst"], d3b["interest_sgst"],
+            d3b["late_fee_cgst"], d3b["late_fee_sgst"],
+            d3b["tax_paid_igst"], d3b["tax_paid_cgst"], d3b["tax_paid_sgst"],
+            tot_out, tot_itc, net_pay, status_v,
+        ]
+        for ci, v in enumerate(row_vals, 1):
+            cv = ws_3bd.cell(row=r_3bd, column=ci, value=v)
+            if ci == len(cols_3bd):           # Status
+                cv.font = _font(True, sfg, 9); cv.fill = _f(sbg)
+            elif ci <= 8:                      # Meta cols — grey
+                cv.font = _font(False,"000000",9); cv.fill = _f(bgr)
+            elif isinstance(v, float) and v != 0.:
+                cv.font = _font(False,"000000",9); cv.fill = _f(bgr)
+                cv.number_format = NUM_FMT
+            elif isinstance(v, float):        # zero value
+                cv.font = _font(False,"AAAAAA",9); cv.fill = _f(bgr)
+                cv.number_format = NUM_FMT
+            else:
+                cv.font = _font(False,"000000",9); cv.fill = _f(bgr)
+            cv.alignment = _aln("right" if isinstance(v,float) else "left")
+            cv.border = _bdr()
+        ws_3bd.row_dimensions[r_3bd].height = 16; r_3bd += 1
+
+        ann_3bd["taxable"]  += d3b["taxable"]
+        ann_3bd["o_igst"]   += d3b["o_igst"]
+        ann_3bd["o_cgst"]   += d3b["o_cgst"]
+        ann_3bd["o_sgst"]   += d3b["o_sgst"]
+        ann_3bd["itc_igst"] += d3b["net_itc_igst"]
+        ann_3bd["itc_cgst"] += d3b["net_itc_cgst"]
+        ann_3bd["itc_sgst"] += d3b["net_itc_sgst"]
+        ann_3bd["paid_cgst"]+= d3b["tax_paid_cgst"]
+        ann_3bd["paid_sgst"]+= d3b["tax_paid_sgst"]
+
+    # Annual total row
+    ann_out=round(ann_3bd["o_igst"]+ann_3bd["o_cgst"]+ann_3bd["o_sgst"],2)
+    ann_itc=round(ann_3bd["itc_igst"]+ann_3bd["itc_cgst"]+ann_3bd["itc_sgst"],2)
+    ann_net=round(ann_out-ann_itc,2)
+    ann_vals = [
+        "APR-MAR TOTAL","","",gstin,client_name,"","","",
+        round(ann_3bd["taxable"],2),round(ann_3bd["o_igst"],2),
+        round(ann_3bd["o_cgst"],2),round(ann_3bd["o_sgst"],2),0,
+        0,0,0,0, 0,0,0,0,
+        round(ann_3bd["itc_igst"],2),round(ann_3bd["itc_cgst"],2),round(ann_3bd["itc_sgst"],2),
+        0,0,0,
+        round(ann_3bd["itc_igst"],2),round(ann_3bd["itc_cgst"],2),round(ann_3bd["itc_sgst"],2),
+        0,0,0,0,0,
+        0,round(ann_3bd["paid_cgst"],2),round(ann_3bd["paid_sgst"],2),
+        ann_out,ann_itc,ann_net,"Annual"
+    ]
+    for ci,v in enumerate(ann_vals,1):
+        cv=ws_3bd.cell(row=r_3bd,column=ci,value=v)
+        cv.font=_font(True,"FFFFFF",9 if ci>3 else 10)
+        cv.fill=_f("C00000" if ci>37 else "1F3864")
+        cv.alignment=_aln("right" if isinstance(v,float) else "left"); cv.border=_bdr()
+        if isinstance(v,float): cv.number_format=NUM_FMT
+    ws_3bd.row_dimensions[r_3bd].height=20
+    ws_3bd.sheet_properties.tabColor="9C0006"
+
+    # (g3b_monthly already extracted above)
+
+    # ====================================================
+    # SHEET 6: GSTR-1 vs GSTR-3B Reconciliation
+    # ====================================================
+    ws6 = wb.create_sheet("R1_vs_3B_Recon")
+    ws6.sheet_view.showGridLines = False
+    cols6=[("Month",13),
+           ("R1 Taxable ₹",16),("R1 IGST ₹",13),("R1 CGST ₹",13),("R1 SGST ₹",13),("R1 Total Tax ₹",15),
+           ("2B ITC IGST ₹",14),("2B ITC CGST ₹",14),("2B ITC SGST ₹",14),("2B Total ITC ₹",15),
+           ("Net Tax Payable ₹",17),("2A vs 2B Diff ₹",16),("Status",14)]
+    title(ws6, f"R1 vs 3B Reconciliation — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols6))
+    ws6.merge_cells(f"A2:{get_column_letter(len(cols6))}2")
+    sh6=ws6["A2"]
+    sh6.value=("Output Tax from GSTR-1 vs ITC from GSTR-2B. "
+               "Net Tax = R1 Tax – 2B ITC. 2A vs 2B diff shows unclaimed credit. "
+               "Green = OK  |  Red = Action needed")
+    sh6.font=Font(name="Arial",size=8,italic=True)
+    sh6.fill=_f("FFF2CC"); sh6.alignment=_aln("left"); sh6.border=_bdr()
+    ws6.row_dimensions[2].height=14
+    hdr(ws6, cols6, row=3)
+    ws6.freeze_panes = "A4"
+    ri6=4
+    ann6={"tx":0.,"r1ig":0.,"r1cg":0.,"r1sg":0.,"iig":0.,"icg":0.,"isg":0.,"a2":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d=g1[mk]
+        r1tx=round(d["b2b_tx"]+d["b2cs_tx"],2)
+        r1ig=round(d["igst"],2); r1cg=round(d["cgst"],2); r1sg=round(d["sgst"],2)
+        r1tt=round(r1ig+r1cg+r1sg,2)
+        iig=round(g2b[mk]["itc"]["igst"],2); icg=round(g2b[mk]["itc"]["cgst"],2)
+        isg=round(g2b[mk]["itc"]["sgst"],2); itt=round(iig+icg+isg,2)
+        net=round(r1tt-itt,2)
+        a2t=round(g2a[mk]["tot"]["igst"]+g2a[mk]["tot"]["cgst"]+g2a[mk]["tot"]["sgst"],2)
+        diff=round(a2t-itt,2)
+        status=("✓ OK" if abs(diff)<=100 and net>=0
+                else ("⚠ Excess ITC" if diff<-100 else ("⚠ Unclaimed ITC" if diff>100 else "⚠ Check")))
+        rbg="FFC7CE" if "⚠" in status else ("C6EFCE" if status=="✓ OK" else "FFEB9C")
+        rfg="9C0006" if "⚠" in status else ("276221" if status=="✓ OK" else "9C6500")
+        bg6=ALT2 if ri6%2==0 else ALT1
+        vals6=[f"{mn} {yr}",r1tx,r1ig,r1cg,r1sg,r1tt,iig,icg,isg,itt,net,diff,status]
+        for ci6,v in enumerate(vals6,1):
+            c6=ws6.cell(row=ri6,column=ci6,value=v)
+            if ci6==13:
+                c6.font=_font(True,rfg,9); c6.fill=_f(rbg)
+            else:
+                c6.font=_font(False,"000000",9); c6.fill=_f(bg6)
+            c6.alignment=_aln("right" if isinstance(v,(int,float)) else "left")
+            c6.border=_bdr()
+            if isinstance(v,(int,float)): c6.number_format=NUM_FMT
+        ws6.row_dimensions[ri6].height=15; ri6+=1
+        ann6["tx"]+=r1tx; ann6["r1ig"]+=r1ig; ann6["r1cg"]+=r1cg; ann6["r1sg"]+=r1sg
+        ann6["iig"]+=iig; ann6["icg"]+=icg; ann6["isg"]+=isg; ann6["a2"]+=a2t
+    ann_r1tt=round(ann6["r1ig"]+ann6["r1cg"]+ann6["r1sg"],2)
+    ann_itt=round(ann6["iig"]+ann6["icg"]+ann6["isg"],2)
+    ann_diff=round(ann6["a2"]-ann_itt,2)
+    totrow(ws6,ri6,["ANNUAL TOTAL",_fsum("B",3,ri6-1),_fsum("C",3,ri6-1),_fsum("D",3,ri6-1),
+                    round(ann6["r1sg"],2),ann_r1tt,round(ann6["iig"],2),round(ann6["icg"],2),
+                    round(ann6["isg"],2),ann_itt,round(ann_r1tt-ann_itt,2),ann_diff,
+                    "✓ Balanced" if abs(ann_diff)<=500 else "⚠ Review"])
+    ws6.sheet_properties.tabColor = "843C0C"
+
+    # ====================================================
+    # SHEET 7: Tax Liabilities & ITC Comparison (portal download)
+    # Services → Returns → Tax liabilities and ITC comparison
+    # Select FY 2024-25 → SEARCH → DOWNLOAD COMPARISON REPORTS (EXCEL)
+    # ====================================================
+    ws7 = wb.create_sheet("Tax_Liability_Compare")
+    ws7.sheet_view.showGridLines = False
+    ws7.column_dimensions["A"].width = 50
+    ws7.column_dimensions["B"].width = 30
+
+    # Find the downloaded file
+    tl_file = (next(Path(client_dir).glob("TaxLiability_Comparison_FY*.xlsx"), None) or
+               next(Path(client_dir).glob("TaxLiability_Comparison_FY*.xls"),  None) or
+               next(Path(client_dir).glob("TaxLiability_FY*.xlsx"), None))
+    tl_csv  = next(Path(client_dir).glob("TaxLiability_FY*.csv"),  None) if not tl_file else None
+
+    # Title
+    ws7.merge_cells("A1:B1")
+    t7=ws7["A1"]
+    t7.value = f"Tax Liabilities & ITC Comparison — {client_name} ({gstin}) — FY {FY_LABEL}"
+    t7.font=Font(name="Arial",bold=True,color=HDR_FG,size=12)
+    t7.fill=_f("7030A0"); t7.alignment=_aln("center"); t7.border=_bdr()
+    ws7.row_dimensions[1].height=28
+
+    # Sub-header explaining portal flow
+    ws7.merge_cells("A2:B2")
+    sub=ws7["A2"]
+    sub.value=("Source: Services → Returns → Tax liabilities and ITC comparison → "
+               f"Select FY {FY_LABEL} → SEARCH → DOWNLOAD COMPARISON REPORTS (EXCEL)")
+    sub.font=Font(name="Arial",size=8,italic=True)
+    sub.fill=_f("EAD1DC"); sub.alignment=_aln("left"); sub.border=_bdr()
+    ws7.row_dimensions[2].height=14
+
+    ri7=3
+    if tl_file and tl_file.exists():
+        try:
+            xl7=pd.ExcelFile(tl_file)
+            log.info(f"    Tax Liability file: {tl_file.name}, sheets: {xl7.sheet_names}")
+            # Header row
+            c=ws7.cell(row=ri7,column=1,value="Source File")
+            c.font=_font(True,HDR_FG,9); c.fill=_f(SEC_BG); c.border=_bdr()
+            c2=ws7.cell(row=ri7,column=2,value=tl_file.name)
+            c2.font=_font(False,"000000",9); c2.fill=_f(ALT1); c2.border=_bdr()
+            ri7+=1
+            # Write all sheets from the downloaded Excel
+            for sname in xl7.sheet_names:
+                # Sheet sub-header
+                ws7.merge_cells(f"A{ri7}:B{ri7}")
+                sh=ws7.cell(row=ri7,column=1,value=f"— {sname} —")
+                sh.font=_font(True,SEC_FG,9); sh.fill=_f(SEC_BG)
+                sh.alignment=_aln("center"); sh.border=_bdr()
+                ws7.row_dimensions[ri7].height=16; ri7+=1
+                df7=pd.read_excel(tl_file,sheet_name=sname,header=None,dtype=str)
+                for _,row7 in df7.iterrows():
+                    vals=[str(v).strip() if pd.notna(v) and str(v).strip()!="nan" else "" for v in row7]
+                    if not any(vals): continue   # skip blank rows
+                    bg7=ALT2 if ri7%2==0 else ALT1
+                    for ci7,rv in enumerate(vals[:2],1):
+                        cv=ws7.cell(row=ri7,column=ci7,value=rv)
+                        cv.font=_font(False,"000000",9); cv.fill=_f(bg7)
+                        cv.alignment=_aln("left"); cv.border=_bdr()
+                    ws7.row_dimensions[ri7].height=15; ri7+=1
+            log.info(f"    Tax Liability sheet: {ri7-3} rows written")
+        except Exception as e:
+            log.warning(f"    Tax Liability file read error: {e}")
+            ws7.merge_cells(f"A{ri7}:B{ri7}")
+            c=ws7.cell(row=ri7,column=1,value=f"⚠ Error reading {tl_file.name}: {e}")
+            c.font=_font(False,RED_FG,9); c.fill=_f(RED_BG); c.border=_bdr(); ri7+=1
+    elif tl_csv and tl_csv.exists():
+        try:
+            df_csv=pd.read_csv(tl_csv,dtype=str)
+            for ci7,col in enumerate(df_csv.columns[:2],1):
+                c=ws7.cell(row=ri7,column=ci7,value=col)
+                c.font=_font(True,HDR_FG,9); c.fill=_f(SEC_BG); c.border=_bdr()
+            ri7+=1
+            for _,row7 in df_csv.iterrows():
+                bg7=ALT2 if ri7%2==0 else ALT1
+                for ci7,v in enumerate(list(row7)[:2],1):
+                    rv=str(v) if pd.notna(v) else ""
+                    cv=ws7.cell(row=ri7,column=ci7,value=rv)
+                    cv.font=_font(False,"000000",9); cv.fill=_f(bg7)
+                    cv.alignment=_aln("left"); cv.border=_bdr()
+                ri7+=1
+        except Exception as e:
+            log.warning(f"    CSV read error: {e}")
+    else:
+        # Not downloaded yet — show clear instructions
+        ws7.merge_cells(f"A{ri7}:B{ri7}")
+        c=ws7.cell(row=ri7,column=1,value="⚠ Tax Liability Comparison report NOT downloaded yet")
+        c.font=_font(True,RED_FG,10); c.fill=_f(RED_BG); c.border=_bdr()
+        ws7.row_dimensions[ri7].height=20; ri7+=1
+        instructions=[
+            "HOW TO DOWNLOAD MANUALLY:",
+            "1. Login to GST portal → https://return.gst.gov.in",
+            f"2. Click:  Services  →  Returns  →  Tax liabilities and ITC comparison",
+            f"3. Select Financial Year:  {FY_LABEL}",
+            "4. Click SEARCH button",
+            "5. Scroll down → click  'DOWNLOAD COMPARISON REPORTS (EXCEL)'  button",
+            f"6. Save the downloaded file as:  TaxLiability_Comparison_FY{FY_LABEL.replace('-','_')}.xlsx",
+            f"7. Place it in:  {client_dir}",
+            "8. Re-run the reconciliation report to populate this sheet",
+            "",
+            "OR: Run the script again and select option [10] Tax Liability to auto-download.",
+        ]
+        for inst in instructions:
+            ws7.merge_cells(f"A{ri7}:B{ri7}")
+            bg7=YELLOW_BG if inst.startswith(("HOW","OR:")) else ALT1
+            bld=inst.startswith(("HOW","OR:"))
+            c=ws7.cell(row=ri7,column=1,value=inst)
+            c.font=_font(bld,"000000",9); c.fill=_f(bg7)
+            c.alignment=_aln("left",wrap=True); c.border=_bdr()
+            ws7.row_dimensions[ri7].height=16; ri7+=1
+    ws7.sheet_properties.tabColor = "7030A0"
+
+    # ====================================================
+    # SHEET 8: GSTR-3B vs GSTR-1 Reconciliation
+    # Matches GSTR1R3B_RECONCILED_Summary format exactly
+    # ====================================================
+    ws8 = wb.create_sheet("GSTR3B_vs_R1_Recon")
+    ws8.sheet_view.showGridLines = False
+    # Columns: Month | R1 Taxable | R1 IGST | R1 CGST | R1 SGST | R1 Total |
+    #          3B Taxable | 3B IGST | 3B CGST | 3B SGST | 3B Total |
+    #          Diff Taxable | Diff IGST | Diff CGST | Diff SGST | Diff Total | Status
+    RCOLS8=[("Month",14),
+            ("R1 Taxable ₹",16),("R1 IGST ₹",13),("R1 CGST ₹",13),("R1 SGST ₹",13),("R1 Total Tax ₹",16),
+            ("3B Taxable ₹",14),("3B IGST ₹",13),("3B CGST ₹",13),("3B SGST ₹",13),("3B Total Tax ₹",16),
+            ("Diff Taxable ₹",14),("Diff IGST ₹",13),("Diff CGST ₹",13),("Diff SGST ₹",13),("Diff Total ₹",14),
+            ("Status",14)]
+    title(ws8, f"GSTR-3B vs GSTR-1 Monthly Reconciliation — {client_name} ({gstin}) — FY {FY_LABEL}", len(RCOLS8))
+    ws8.merge_cells(f"A2:{get_column_letter(len(RCOLS8))}2")
+    sh8=ws8["A2"]
+    sh8.value="R1=GSTR-1 Supply (B2B+B2CS) | 3B=GSTR-3B Output Tax (from PDF) | Diff=3B−R1 | Green=Match | Red=Mismatch (>₹100)"
+    sh8.font=_font(False,"000000",8); sh8.fill=_f(YELLOW_BG); sh8.alignment=_aln("left")
+    ws8.row_dimensions[2].height=14
+    hdr(ws8, RCOLS8, row=3, bg=HDR_BG)
+    ws8.freeze_panes = "A4"
+    ri8=4
+
+    # Ann accumulators for ALL R1 types + 3B
+    ann8={"b2b_tx":0.,"b2cs_tx":0.,"b2cl_tx":0.,"nil_tx":0.,"exp_tx":0.,"cdn_cr":0.,"cdn_dr":0.,
+          "r1ig":0.,"r1cg":0.,"r1sg":0.,
+          "b3tx":0.,"b3ig":0.,"b3cg":0.,"b3sg":0.}
+
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d=g1[mk]; d3b=g3b_monthly.get(mk,{})
+        # -- GSTR-1 breakdown by type --
+        b2b_tx=round(d["b2b_tx"],2); b2cs_tx=round(d["b2cs_tx"],2)
+        # Sum CDN credit/debit from totals
+        cdn_cr=round(d.get("cdn_cr",0),2); cdn_dr=round(d.get("cdn_dr",0),2)
+        r1_tx=round(b2b_tx+b2cs_tx,2)
+        r1_ig=round(d["igst"],2); r1_cg=round(d["cgst"],2); r1_sg=round(d["sgst"],2)
+        r1_tt=round(r1_ig+r1_cg+r1_sg,2)
+        # Net after CDN
+        net_r1_tx=round(r1_tx - cdn_cr + cdn_dr, 2)
+        # -- GSTR-3B values from PDF --
+        b3_tx=round(d3b.get("taxable",0),2)
+        b3_ig=round(d3b.get("o_igst",0),2); b3_cg=round(d3b.get("o_cgst",0),2)
+        b3_sg=round(d3b.get("o_sgst",0),2); b3_tt=round(b3_ig+b3_cg+b3_sg,2)
+        # -- Differences --
+        d_tx=round(b3_tx-r1_tx,2); d_ig=round(b3_ig-r1_ig,2)
+        d_cg=round(b3_cg-r1_cg,2); d_sg=round(b3_sg-r1_sg,2); d_tt=round(d_ig+d_cg+d_sg,2)
+        if abs(d_tt)<1:      status8="✓ Match";    sbg=GREEN_BG; sfg=GREEN_FG
+        elif abs(d_tt)<1000: status8="⚠ Minor";    sbg="FFEB9C"; sfg="9C6500"
+        else:                status8="✗ Mismatch"; sbg=RED_BG;   sfg=RED_FG
+
+        bgr=ALT2 if ri8%2==0 else ALT1
+
+        # -- Write month detail rows (all R1 types) --
+        # Section header: Month name
+        ws8.merge_cells(f"A{ri8}:{get_column_letter(len(RCOLS8))}{ri8}")
+        mh=ws8.cell(row=ri8,column=1,value=f"{mn} {yr}")
+        mh.font=_font(True,"FFFFFF",10); mh.fill=_f(SEC_BG)
+        mh.alignment=_aln("left"); mh.border=_bdr(); ws8.row_dimensions[ri8].height=16; ri8+=1
+
+        def wr8(lbl, r1_tx_v, r1_ig_v, r1_cg_v, r1_sg_v,
+                b3_tx_v, b3_ig_v, b3_cg_v, b3_sg_v, bg=ALT1, bold=False):
+            nonlocal ri8
+            r1_tt2=round(r1_ig_v+r1_cg_v+r1_sg_v,2)
+            b3_tt2=round(b3_ig_v+b3_cg_v+b3_sg_v,2)
+            d_t2=round(r1_tx_v-b3_tx_v,2) if b3_tx_v else 0
+            d_ig2=round(b3_ig_v-r1_ig_v,2); d_cg2=round(b3_cg_v-r1_cg_v,2)
+            d_sg2=round(b3_sg_v-r1_sg_v,2); d_tt2=round(d_ig2+d_cg2+d_sg2,2)
+            diff_bg=GREEN_BG if abs(d_tt2)<1 else (RED_BG if abs(d_tt2)>100 else "FFEB9C")
+            row_vals=[lbl,
+                      round(r1_tx_v,2),round(r1_ig_v,2),round(r1_cg_v,2),round(r1_sg_v,2),r1_tt2,
+                      round(b3_tx_v,2),round(b3_ig_v,2),round(b3_cg_v,2),round(b3_sg_v,2),b3_tt2,
+                      d_t2,d_ig2,d_cg2,d_sg2,d_tt2,""]
+            for ci_w,v_w in enumerate(row_vals,1):
+                cv=ws8.cell(row=ri8,column=ci_w,value=v_w)
+                cv.font=_font(bold,"000000",9)
+                if ci_w in (12,13,14,15,16): cv.fill=_f(diff_bg)
+                else: cv.fill=_f(TOT_BG if bold else bg)
+                cv.alignment=_aln("right" if ci_w>1 else "left"); cv.border=_bdr()
+                if isinstance(v_w,(int,float)) and ci_w<17: cv.number_format=NUM_FMT
+            ws8.row_dimensions[ri8].height=15; ri8+=1
+
+        # GSTR-1 types in rows, 3B only on Total row
+        wr8("3.1(a) B2B Supplies",     b2b_tx, round(r1_ig*b2b_tx/r1_tx if r1_tx else 0,2),
+            round(r1_cg*b2b_tx/r1_tx if r1_tx else 0,2),
+            round(r1_sg*b2b_tx/r1_tx if r1_tx else 0,2),
+            0,0,0,0, bg="DEEAF1")
+        wr8("3.1(a) B2CS Supplies",    b2cs_tx, 0,
+            round(r1_cg*b2cs_tx/r1_tx if r1_tx else 0,2),
+            round(r1_sg*b2cs_tx/r1_tx if r1_tx else 0,2),
+            0,0,0,0, bg="E2EFDA")
+        wr8("3.1(b) Zero Rated",       0,0,0,0, 0,0,0,0, bg=ALT2)
+        wr8("3.1(c) Nil/Exempt",       0,0,0,0, 0,0,0,0, bg=ALT2)
+        wr8("3.1(e) Non-GST",          0,0,0,0, 0,0,0,0, bg=ALT2)
+        wr8("CDNR Credit",             -cdn_cr, 0,
+            -round(r1_cg*cdn_cr/r1_tx if r1_tx else 0,2),
+            -round(r1_sg*cdn_cr/r1_tx if r1_tx else 0,2),
+            0,0,0,0, bg="FFF2CC")
+        wr8("CDNR Debit",              cdn_dr, 0,
+            round(r1_cg*cdn_dr/r1_tx if r1_tx else 0,2),
+            round(r1_sg*cdn_dr/r1_tx if r1_tx else 0,2),
+            0,0,0,0, bg="FFF2CC")
+        # TOTAL row for this month (R1 vs 3B)
+        row8=["TOTAL " + f"{mn[:3]} {yr}",
+              r1_tx,r1_ig,r1_cg,r1_sg,r1_tt,
+              b3_tx,b3_ig,b3_cg,b3_sg,b3_tt,
+              d_tx,d_ig,d_cg,d_sg,d_tt,status8]
+        for ci8,v in enumerate(row8,1):
+            cv8=ws8.cell(row=ri8,column=ci8,value=v)
+            if ci8==17: cv8.font=_font(True,sfg,9); cv8.fill=_f(sbg)
+            elif ci8 in (12,13,14,15,16):
+                cv8.font=_font(True,"000000",9)
+                cv8.fill=_f(GREEN_BG if abs(float(v or 0))<1 else (RED_BG if abs(float(v or 0))>100 else "FFEB9C"))
+            else: cv8.font=_font(True,"FFFFFF",9); cv8.fill=_f("1F3864")
+            cv8.alignment=_aln("right" if ci8>1 and ci8<17 else "left"); cv8.border=_bdr()
+            if isinstance(v,(int,float)) and ci8<17: cv8.number_format=NUM_FMT
+        ws8.row_dimensions[ri8].height=18; ri8+=1; ri8+=1  # blank line after each month
+
+        ann8["b2b_tx"]+=b2b_tx; ann8["b2cs_tx"]+=b2cs_tx
+        ann8["cdn_cr"]+=cdn_cr; ann8["cdn_dr"]+=cdn_dr
+        ann8["r1ig"]+=r1_ig; ann8["r1cg"]+=r1_cg; ann8["r1sg"]+=r1_sg
+        ann8["b3tx"]+=b3_tx; ann8["b3ig"]+=b3_ig; ann8["b3cg"]+=b3_cg; ann8["b3sg"]+=b3_sg
+
+    # -- APR-MAR ANNUAL TOTAL (cumulative all 12 months) ----------
+    ann_r1tx=round(ann8["b2b_tx"]+ann8["b2cs_tx"],2)
+    ann_r1tt=round(ann8["r1ig"]+ann8["r1cg"]+ann8["r1sg"],2)
+    ann_b3tt=round(ann8["b3ig"]+ann8["b3cg"]+ann8["b3sg"],2)
+    ann_d_tx=round(ann8["b3tx"]-ann_r1tx,2)
+    ann_d_ig=round(ann8["b3ig"]-ann8["r1ig"],2)
+    ann_d_cg=round(ann8["b3cg"]-ann8["r1cg"],2)
+    ann_d_sg=round(ann8["b3sg"]-ann8["r1sg"],2)
+    ann_d_tt=round(ann_b3tt-ann_r1tt,2)
+    ann_status="✓ Balanced" if abs(ann_d_tt)<100 else "✗ Review"
+    ann_sbg=GREEN_BG if abs(ann_d_tt)<100 else RED_BG
+    ann_sfg=GREEN_FG if abs(ann_d_tt)<100 else RED_FG
+    ann_row=["APR-MAR TOTAL (Full Year)",
+             ann_r1tx,round(ann8["r1ig"],2),round(ann8["r1cg"],2),round(ann8["r1sg"],2),ann_r1tt,
+             round(ann8["b3tx"],2),round(ann8["b3ig"],2),round(ann8["b3cg"],2),round(ann8["b3sg"],2),ann_b3tt,
+             ann_d_tx,ann_d_ig,ann_d_cg,ann_d_sg,ann_d_tt,ann_status]
+    for ci8,v in enumerate(ann_row,1):
+        cv8=ws8.cell(row=ri8,column=ci8,value=v)
+        if ci8==17: cv8.font=_font(True,ann_sfg,11); cv8.fill=_f(ann_sbg)
+        elif ci8>11: cv8.font=_font(True,"000000",11); cv8.fill=_f(TOT_BG)
+        else: cv8.font=_font(True,"FFFFFF",11); cv8.fill=_f("C00000")
+        cv8.alignment=_aln("right" if ci8>1 and ci8<17 else "left"); cv8.border=_bdr()
+        if isinstance(v,(int,float)) and ci8<17: cv8.number_format=NUM_FMT
+    ws8.row_dimensions[ri8].height=22
+    ws8.sheet_properties.tabColor = "1F3864"
+
+    # ====================================================
+    # SHEET 9: GSTR-3B vs GSTR-2A Reconciliation
+    # Matches GSTR3BR2A_RECONCILED_Summary format exactly
+    # ====================================================
+    ws9 = wb.create_sheet("GSTR3B_vs_R2A_Recon")
+    ws9.sheet_view.showGridLines = False
+    RCOLS9=[("Section",24),("Particulars",44),
+            ("IGST ₹",14),("CGST ₹",14),("SGST ₹",14),("Cess ₹",10),("Total ₹",16)]
+    title(ws9, f"GSTR-3B vs GSTR-2A ITC Reconciliation — {client_name} ({gstin}) — FY {FY_LABEL}", len(RCOLS9))
+    ws9.merge_cells(f"A2:{get_column_letter(len(RCOLS9))}2")
+    sh9=ws9["A2"]
+    sh9.value=f"GSTIN: {gstin}  |  Difference = GSTR-3B (A) minus GSTR-2A (B)  |  Negative = less ITC claimed vs available"
+    sh9.font=_font(False,"000000",8); sh9.fill=_f(YELLOW_BG); sh9.alignment=_aln("left")
+    ws9.row_dimensions[2].height=14
+    hdr(ws9, RCOLS9, row=3, bg=HDR_BG)
+    ws9.freeze_panes = "A4"
+    ri9=4
+
+    # Annual totals
+    r2a_ig=r2a_cg=r2a_sg=0.0
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; tot=g2a[mk]["tot"]
+        r2a_ig+=tot.get("igst",0); r2a_cg+=tot.get("cgst",0); r2a_sg+=tot.get("sgst",0)
+
+    r2b_ig=r2b_cg=r2b_sg=0.0
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; itc=g2b[mk]["itc"]
+        r2b_ig+=itc["igst"]; r2b_cg+=itc["cgst"]; r2b_sg+=itc["sgst"]
+
+    r3b_itc_ig=r3b_itc_cg=r3b_itc_sg=0.0
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d3b=g3b_monthly.get(mk,{})
+        r3b_itc_ig+=d3b.get("itc_igst",0); r3b_itc_cg+=d3b.get("itc_cgst",0)
+        r3b_itc_sg+=d3b.get("itc_sgst",0)
+
+    def r9row(sect,part,ig,cg,sg,bg=ALT1,bold=False):
+        nonlocal ri9
+        tot=round(ig+cg+sg,2)
+        for ci9,v in enumerate([sect,part,round(ig,2),round(cg,2),round(sg,2),0.0,tot],1):
+            cell(ws9,ri9,ci9,v,bg,bold=bold,numfmt=NUM_FMT if ci9>2 else None,
+                 align="right" if ci9>2 else "left")
+        ws9.row_dimensions[ri9].height=16; ri9+=1
+    def r9sec(label):
+        nonlocal ri9
+        ws9.merge_cells(f"A{ri9}:{get_column_letter(len(RCOLS9))}{ri9}")
+        sc_=ws9.cell(row=ri9,column=1,value=label)
+        sc_.font=_font(True,HDR_FG,9); sc_.fill=_f(SEC_BG)
+        sc_.alignment=_aln("left"); sc_.border=_bdr()
+        ws9.row_dimensions[ri9].height=16; ri9+=1
+
+    r9sec("GSTR-3B ITC Details (Other than ISD)")
+    r9row("GSTR-3B","4A(5) - All other ITC (A)",r3b_itc_ig,r3b_itc_cg,r3b_itc_sg,bg="E2EFDA")
+    r9row("","4B - ITC Reversed",0,0,0,bg=ALT2)
+    r9row("Total from GSTR-3B (A)","",r3b_itc_ig,r3b_itc_cg,r3b_itc_sg,bg=TOT_BG,bold=True)
+    ri9+=1
+
+    r9sec("GSTR-2A ITC Details (Other than ISD)")
+    r9row("GSTR-2A","B2B",r2a_ig,r2a_cg,r2a_sg,bg="DEEAF1")
+    r9row("","CDNR",0,0,0,bg=ALT2)
+    r9row("","TDS",0,0,0,bg=ALT2)
+    r9row("","TCS",0,0,0,bg=ALT2)
+    r9row("Total from GSTR-2A (B)","",r2a_ig,r2a_cg,r2a_sg,bg=TOT_BG,bold=True)
+    ri9+=1
+
+    r9sec("Difference (A - B)")
+    d9ig=round(r3b_itc_ig-r2a_ig,2); d9cg=round(r3b_itc_cg-r2a_cg,2); d9sg=round(r3b_itc_sg-r2a_sg,2)
+    d9bg = GREEN_BG if abs(d9ig+d9cg+d9sg)<1 else RED_BG
+    r9row("Difference (A - B)","Positive=excess ITC claimed vs available | Negative=ITC in 2A not claimed in 3B",
+          d9ig,d9cg,d9sg,bg=d9bg,bold=True)
+    ri9+=2
+
+    r9sec("GSTR-2B vs GSTR-3B (Confirmed ITC)")
+    r9row("GSTR-2B","B2B Confirmed ITC",r2b_ig,r2b_cg,r2b_sg,bg="FFF2CC")
+    r9row("Total from GSTR-2B","",r2b_ig,r2b_cg,r2b_sg,bg=TOT_BG,bold=True)
+    ri9+=1
+    d2b_ig=round(r3b_itc_ig-r2b_ig,2); d2b_cg=round(r3b_itc_cg-r2b_cg,2); d2b_sg=round(r3b_itc_sg-r2b_sg,2)
+    d2b_bg = GREEN_BG if abs(d2b_ig+d2b_cg+d2b_sg)<1 else RED_BG
+    r9row("Difference (3B - 2B)","Positive=excess claimed | Negative=ITC available but not claimed",
+          d2b_ig,d2b_cg,d2b_sg,bg=d2b_bg,bold=True)
+    ws9.sheet_properties.tabColor = "9C0006"
+
+    # ====================================================
+    # SHEET 8: Month-Wise Reconciliation
+    # ====================================================
+    ws_mw = wb.create_sheet("Monthwise_Reconciliation")
+    ws_mw.sheet_view.showGridLines = False
+
+    cols8 = [
+        ("Month",13),
+        ("R1 Taxable ₹",16),("R1 IGST ₹",13),("R1 CGST ₹",13),("R1 SGST ₹",13),("R1 Tax Total ₹",16),
+        ("3B Out IGST ₹",15),("3B Out CGST ₹",15),("3B Out SGST ₹",15),("3B Tax Total ₹",15),("R1 vs 3B ₹",15),
+        ("2B ITC IGST ₹",14),("2B ITC CGST ₹",14),("2B ITC SGST ₹",14),("2B ITC Total ₹",16),
+        ("2A ITC Total ₹",16),("2A vs 2B Diff ₹",16),
+        ("CDN Credit TV ₹",16),("CDN Debit TV ₹",16),("CDN Tax Total ₹",15),
+        ("Net Tax Payable ₹",18),("Status",16),
+    ]
+    title(ws_mw, f"Month-Wise Reconciliation — {client_name} ({gstin}) — FY {FY_LABEL}", len(cols8))
+    ws_mw.merge_cells(f"A2:{get_column_letter(len(cols8))}2")
+    sh8=ws_mw["A2"]
+    sh8.value=("R1=GSTR-1  3B=GSTR-3B  2B=Confirmed ITC  2A=Auto-ITC  CDN=Credit/Debit Notes  "
+               "Net=R1 Tax − 2B ITC  |  Green=OK  Yellow=Minor  Red=Review needed")
+    sh8.font=Font(name="Arial",size=8,italic=True)
+    sh8.fill=_f("FFF2CC"); sh8.alignment=_aln("left"); sh8.border=_bdr()
+    ws_mw.row_dimensions[2].height=14
+    hdr(ws_mw, cols8, row=3)
+    ws_mw.freeze_panes="A4"
+    ri8=4
+    ann8={"r1tx":0.,"r1ig":0.,"r1cg":0.,"r1sg":0.,
+          "b3ig":0.,"b3cg":0.,"b3sg":0.,
+          "b2ig":0.,"b2cg":0.,"b2sg":0.,
+          "a2t":0.,"cdn_cr":0.,"cdn_dr":0.,"cdn_tax":0.}
+
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        d1=g1[mk]; d3b=g3b_monthly[mk]
+        r1tx=round(d1["b2b_tx"]+d1["b2cs_tx"],2)
+        r1ig=round(d1["igst"],2); r1cg=round(d1["cgst"],2); r1sg=round(d1["sgst"],2); r1tt=round(r1ig+r1cg+r1sg,2)
+        b3ig=round(d3b["o_igst"],2); b3cg=round(d3b["o_cgst"],2); b3sg=round(d3b["o_sgst"],2); b3tt=round(b3ig+b3cg+b3sg,2)
+        r1_3b=round(r1tt-b3tt,2)
+        b2ig=round(g2b[mk]["itc"]["igst"],2); b2cg=round(g2b[mk]["itc"]["cgst"],2)
+        b2sg=round(g2b[mk]["itc"]["sgst"],2); b2tt=round(b2ig+b2cg+b2sg,2)
+        a2t=round(g2a[mk]["tot"]["igst"]+g2a[mk]["tot"]["cgst"]+g2a[mk]["tot"]["sgst"],2)
+        a2_2b=round(a2t-b2tt,2)
+        cdn_cr=round(d1.get("cdn_cr",0),2); cdn_dr=round(d1.get("cdn_dr",0),2)
+        cdn_tax=round(d1.get("cdn_ig",0)+d1.get("cdn_cg",0)+d1.get("cdn_sg",0),2)
+        net=round(r1tt-b2tt,2)
+        # Status
+        if abs(r1_3b)<=100 and abs(a2_2b)<=500:
+            status8="✓ Balanced"; sbg="C6EFCE"; sfg="276221"
+        elif abs(r1_3b)>1000 or abs(a2_2b)>5000:
+            status8="⚠ Review"; sbg="FFC7CE"; sfg="9C0006"
+        else:
+            status8="⚠ Minor Diff"; sbg="FFEB9C"; sfg="9C6500"
+        bg8=ALT2 if ri8%2==0 else ALT1
+        vals8=[f"{mn} {yr}",r1tx,r1ig,r1cg,r1sg,r1tt,b3ig,b3cg,b3sg,b3tt,r1_3b,
+               b2ig,b2cg,b2sg,b2tt,a2t,a2_2b,cdn_cr,cdn_dr,cdn_tax,net,status8]
+        for ci8,v in enumerate(vals8,1):
+            c8=ws_mw.cell(row=ri8,column=ci8,value=v)
+            if ci8==22:  c8.font=_font(True,sfg,9);  c8.fill=_f(sbg)
+            elif ci8==11:c8.fill=_f("FFC7CE" if abs(r1_3b)>100 else "C6EFCE"); c8.font=_font(False,"000000",9)
+            elif ci8==17:c8.fill=_f("FFC7CE" if abs(a2_2b)>500 else "C6EFCE"); c8.font=_font(False,"000000",9)
+            else:        c8.font=_font(False,"000000",9); c8.fill=_f(bg8)
+            c8.alignment=_aln("right" if ci8>1 else "left"); c8.border=_bdr()
+            if isinstance(v,(int,float)): c8.number_format=NUM_FMT
+        ws_mw.row_dimensions[ri8].height=16; ri8+=1
+        ann8["r1tx"]+=r1tx; ann8["r1ig"]+=r1ig; ann8["r1cg"]+=r1cg; ann8["r1sg"]+=r1sg
+        ann8["b3ig"]+=b3ig; ann8["b3cg"]+=b3cg; ann8["b3sg"]+=b3sg
+        ann8["b2ig"]+=b2ig; ann8["b2cg"]+=b2cg; ann8["b2sg"]+=b2sg
+        ann8["a2t"]+=a2t; ann8["cdn_cr"]+=cdn_cr; ann8["cdn_dr"]+=cdn_dr; ann8["cdn_tax"]+=cdn_tax
+
+    ann_r1tt=round(ann8["r1ig"]+ann8["r1cg"]+ann8["r1sg"],2)
+    ann_b3tt=round(ann8["b3ig"]+ann8["b3cg"]+ann8["b3sg"],2)
+    ann_b2tt=round(ann8["b2ig"]+ann8["b2cg"]+ann8["b2sg"],2)
+    totrow(ws8,ri8,["ANNUAL TOTAL",_fsum("B",3,ri8-1),_fsum("C",3,ri8-1),_fsum("D",3,ri8-1),_fsum("E",3,ri8-1),f"=SUM(C{ri8}:E{ri8})",
+                    round(ann8["b3ig"],2),round(ann8["b3cg"],2),round(ann8["b3sg"],2),ann_b3tt,round(ann_r1tt-ann_b3tt,2),
+                    round(ann8["b2ig"],2),round(ann8["b2cg"],2),round(ann8["b2sg"],2),ann_b2tt,
+                    round(ann8["a2t"],2),round(ann8["a2t"]-ann_b2tt,2),
+                    round(ann8["cdn_cr"],2),round(ann8["cdn_dr"],2),round(ann8["cdn_tax"],2),
+                    round(ann_r1tt-ann_b2tt,2),""])
+    ws_mw.sheet_properties.tabColor="7030A0"
+
+    # -----------------------------------------------------------------
+    # SHEET 9 (Final): ANNUAL SUMMARY — one-page executive summary
+    # -----------------------------------------------------------------
+    ws_ann = wb.create_sheet("Annual_Summary")
+    ws_ann.sheet_view.showGridLines = False
+    ws_ann.column_dimensions["A"].width=40
+    ws_ann.column_dimensions["B"].width=20
+    ws_ann.column_dimensions["C"].width=20
+    ws_ann.column_dimensions["D"].width=20
+
+    ws_ann.merge_cells("A1:D1")
+    ts=ws_ann["A1"]; ts.value=f"ANNUAL SUMMARY — {client_name} ({gstin}) — FY {FY_LABEL}"
+    ts.font=Font(name="Arial",bold=True,color="FFFFFF",size=13)
+    ts.fill=_f(HDR_BG); ts.alignment=_aln("center"); ts.border=_bdr()
+    ws_ann.row_dimensions[1].height=30
+    ws_ann.merge_cells("A2:D2")
+    ts2=ws_ann["A2"]; ts2.value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}   |   Source: GSTR-1 JSON + GSTR-2B + GSTR-2A + GSTR-3B PDFs"
+    ts2.font=Font(name="Arial",size=9,italic=True); ts2.fill=_f("D6DCE4")
+    ts2.alignment=_aln("left"); ts2.border=_bdr(); ws_ann.row_dimensions[2].height=13
+
+    def sum_header(r, label):
+        ws_ann.merge_cells(f"A{r}:D{r}")
+        c=ws_ann.cell(row=r,column=1,value=label)
+        c.font=_font(True,"FFFFFF",10); c.fill=_f(SEC_BG)
+        c.alignment=_aln("left"); c.border=_bdr(); ws_ann.row_dimensions[r].height=18
+
+    def sum_row(r, label, igst, cgst, sgst, bold=False, bg=ALT1):
+        total=round(igst+cgst+sgst,2)
+        for ci,(v,al) in enumerate([(label,"left"),(round(igst,2),"right"),
+                                     (round(cgst,2),"right"),(round(sgst,2),"right")],1):
+            c=ws_ann.cell(row=r,column=ci,value=v)
+            c.font=_font(bold,"000000",9); c.fill=_f(bg)
+            c.alignment=_aln(al); c.border=_bdr()
+            if ci>1 and isinstance(v,(int,float)): c.number_format=NUM_FMT
+        ws_ann.row_dimensions[r].height=16
+
+    def sum_total(r, label, igst, cgst, sgst, bg=TOT_BG):
+        for ci,(v,al) in enumerate([(label,"left"),(round(igst,2),"right"),
+                                     (round(cgst,2),"right"),(round(igst+cgst+sgst,2),"right")],1):
+            c=ws_ann.cell(row=r,column=ci,value=v)
+            c.font=_font(True,"000000",9); c.fill=_f(bg)
+            c.alignment=_aln(al); c.border=_bdr()
+            if ci>1 and isinstance(v,(int,float)): c.number_format=NUM_FMT
+        ws_ann.row_dimensions[r].height=18
+
+    # Column headers row 3
+    for ci,(h,bg) in enumerate([("Particulars",HDR_BG),("IGST ₹",HDR_BG),
+                                  ("CGST ₹",HDR_BG),("SGST / Total ₹",HDR_BG)],1):
+        c=ws_ann.cell(row=3,column=ci,value=h)
+        c.font=_font(True,"FFFFFF",9); c.fill=_f(bg)
+        c.alignment=_aln("center"); c.border=_bdr()
+    ws_ann.row_dimensions[3].height=20
+
+    sr = 4  # start row
+    # -- Annual totals from collected data --
+    tot_r1ig=ann8["r1ig"]; tot_r1cg=ann8["r1cg"]; tot_r1sg=ann8["r1sg"]
+    tot_b3ig=ann8["b3ig"]; tot_b3cg=ann8["b3cg"]; tot_b3sg=ann8["b3sg"]
+    tot_b2ig=ann8["b2ig"]; tot_b2cg=ann8["b2cg"]; tot_b2sg=ann8["b2sg"]
+    tot_a2  =ann8["a2t"]
+
+    sum_header(sr,"1. OUTPUT TAX (GSTR-1 Reported)"); sr+=1
+    sum_row(sr,"Total Sales (B2B + B2CS) Taxable Value",ann8["r1tx"],0,0,bg="E2EFDA"); sr+=1
+    sum_row(sr,"Output IGST",tot_r1ig,0,0,bg=IGST_BG); sr+=1
+    sum_row(sr,"Output CGST",0,tot_r1cg,0,bg=CGST_BG); sr+=1
+    sum_row(sr,"Output SGST",0,0,tot_r1sg,bg=SGST_BG); sr+=1
+    sum_row(sr,"Credit Notes (TV)",ann8["cdn_cr"],0,0,bg="E8F5E9"); sr+=1
+    sum_row(sr,"Debit Notes (TV)", ann8["cdn_dr"],0,0,bg="FFF9C4"); sr+=1
+    sum_total(sr,"TOTAL OUTPUT TAX",tot_r1ig,tot_r1cg,tot_r1sg); sr+=2
+
+    sum_header(sr,"2. TAX FILED (GSTR-3B)"); sr+=1
+    sum_row(sr,"Output IGST (filed)",tot_b3ig,0,0,bg=IGST_BG); sr+=1
+    sum_row(sr,"Output CGST (filed)",0,tot_b3cg,0,bg=CGST_BG); sr+=1
+    sum_row(sr,"Output SGST (filed)",0,0,tot_b3sg,bg=SGST_BG); sr+=1
+    diff_r1_3b=round(tot_r1ig+tot_r1cg+tot_r1sg-tot_b3ig-tot_b3cg-tot_b3sg,2)
+    bg_diff1="C6EFCE" if abs(diff_r1_3b)<100 else "FFC7CE"
+    sum_row(sr,f"R1 vs 3B Difference (should be ≈0)",diff_r1_3b,0,0,bg=bg_diff1,bold=True); sr+=2
+
+    sum_header(sr,"3. INPUT TAX CREDIT"); sr+=1
+    sum_row(sr,"2B Confirmed ITC — IGST",tot_b2ig,0,0,bg=IGST_BG); sr+=1
+    sum_row(sr,"2B Confirmed ITC — CGST",0,tot_b2cg,0,bg=CGST_BG); sr+=1
+    sum_row(sr,"2B Confirmed ITC — SGST",0,0,tot_b2sg,bg=SGST_BG); sr+=1
+    sum_row(sr,"2A Auto-drafted ITC",tot_a2,0,0,bg="FFF2CC"); sr+=1
+    diff_2a_2b=round(tot_a2-tot_b2ig-tot_b2cg-tot_b2sg,2)
+    bg_diff2="C6EFCE" if abs(diff_2a_2b)<500 else "FFC7CE"
+    sum_row(sr,"2A vs 2B Difference",diff_2a_2b,0,0,bg=bg_diff2,bold=True); sr+=1
+    sum_total(sr,"TOTAL 2B ITC",tot_b2ig,tot_b2cg,tot_b2sg); sr+=2
+
+    sum_header(sr,"4. NET TAX PAYABLE"); sr+=1
+    net_payable=round(tot_r1ig+tot_r1cg+tot_r1sg-tot_b2ig-tot_b2cg-tot_b2sg,2)
+    bg_net="C6EFCE" if net_payable>=0 else "FFC7CE"
+    sum_total(sr,"NET TAX (Output − 2B ITC)",
+              round(tot_r1ig-tot_b2ig,2),round(tot_r1cg-tot_b2cg,2),round(tot_r1sg-tot_b2sg,2),
+              bg=bg_net); sr+=2
+
+    ws_ann.sheet_properties.tabColor="1F3864"
+
+    # -- Save ----------------------------------------------
+    safe = client_name.replace(" ","_").replace("/","_")[:20]
+    rp = Path(client_dir)/f"ANNUAL_RECONCILIATION_{safe}_{FY_LABEL.replace('-','_')}.xlsx"
+
+    # =======================================================
+    # PER-MONTH SHEETS — one sheet per month with full detail
+    # Sheet name: Apr-24, May-24, ... Mar-25
+    # =======================================================
+    MONTH_COLORS = ["1F3864","2E75B6","2F5496","17375E","243F60","17375E",
+                    "375623","375623","4F6228","974706","843C0C","C00000"]
+
+    for m_idx, (mn,_,yr) in enumerate(MONTHS):
+        mk   = f"{mn}_{yr}"
+        sname = f"{mn[:3]}-{yr[2:]}"   # Apr-24, May-24 ...
+        wm   = wb.create_sheet(sname)
+        wm.sheet_view.showGridLines = False
+        mcol = MONTH_COLORS[m_idx % len(MONTH_COLORS)]
+
+        # Title row
+        wm.merge_cells("A1:K1")
+        tm=wm["A1"]
+        tm.value=f"{mn} {yr}  |  {client_name} ({gstin})  |  FY {FY_LABEL}"
+        tm.font=Font(name="Arial",bold=True,color="FFFFFF",size=11)
+        tm.fill=_f(mcol); tm.alignment=_aln("center"); tm.border=_bdr()
+        wm.row_dimensions[1].height=26
+        rm=2
+
+        # -- GSTR-1 Summary ------------------------------
+        wm.merge_cells(f"A{rm}:K{rm}")
+        s=wm.cell(row=rm,column=1,value="GSTR-1 SALES SUMMARY")
+        s.font=_font(True,"FFFFFF",9); s.fill=_f("2E75B6")
+        s.alignment=_aln("left"); s.border=_bdr(); wm.row_dimensions[rm].height=14; rm+=1
+        d1=g1[mk]
+        nil_month = round(d1.get("nil_exempt",0),2)
+        non_gst_month = round(d1.get("non_gst",0),2)
+        for lbl,val in [("B2B Taxable ₹",d1["b2b_tx"]),("B2CS Taxable ₹",d1["b2cs_tx"]),
+                         ("Nil/Exempt Taxable ₹",nil_month),("Non-GST Supplies ₹",non_gst_month),
+                         ("Total Taxable ₹",round(d1["b2b_tx"]+d1["b2cs_tx"]+nil_month+non_gst_month,2)),
+                         ("IGST ₹",d1["igst"]),("CGST ₹",d1["cgst"]),("SGST ₹",d1["sgst"]),
+                         ("Total Tax ₹",round(d1["igst"]+d1["cgst"]+d1["sgst"],2)),
+                         ("Invoice Count",d1["inv"])]:
+            lc=wm.cell(row=rm,column=1,value=lbl)
+            lc.font=_font(False,"000000",9); lc.fill=_f(ALT1); lc.border=_bdr()
+            vc=wm.cell(row=rm,column=2,value=round(float(val),2) if isinstance(val,float) else val)
+            vc.font=_font(True,"000000",9); vc.fill=_f(TOT_BG); vc.alignment=_aln("right"); vc.border=_bdr()
+            if isinstance(val,float): vc.number_format=NUM_FMT
+            rm+=1
+        rm+=1
+
+        # -- GSTR-1 Invoice Detail (B2B) -----------------
+        wm.merge_cells(f"A{rm}:K{rm}")
+        s=wm.cell(row=rm,column=1,value="GSTR-1 INVOICE DETAIL")
+        s.font=_font(True,"FFFFFF",9); s.fill=_f("2E75B6")
+        s.alignment=_aln("left"); s.border=_bdr(); wm.row_dimensions[rm].height=14; rm+=1
+        inv_h=["Type","GSTIN Receiver","Receiver Name","Invoice No","Date","Value ₹","Rate%","Taxable ₹","IGST ₹","CGST ₹","SGST ₹"]
+        inv_w=[7,22,26,14,12,14,6,14,12,12,12]
+        for ci,(h,w) in enumerate(zip(inv_h,inv_w),1):
+            hc=wm.cell(row=rm,column=ci,value=h)
+            hc.font=_font(True,"FFFFFF",9); hc.fill=_f(HDR_BG)
+            hc.alignment=_aln("center"); hc.border=_bdr()
+            wm.column_dimensions[get_column_letter(ci)].width=w
+        wm.row_dimensions[rm].height=16; rm+=1
+        inv_rows_m = g1_inv_rows.get(mk,[])
+        for row_d in inv_rows_m:
+            inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg = row_d
+            bgm=ALT2 if rm%2==0 else ALT1
+            for ci,v in enumerate([inv_type,gstin_r,nm,inum,idt,iv,rate,tv,ig,cg,sg],1):
+                cell(wm,rm,ci,v,bgm,numfmt=NUM_FMT if ci in (6,8,9,10,11) else None,
+                     align="right" if ci in (6,7,8,9,10,11) else "left")
+            wm.row_dimensions[rm].height=14; rm+=1
+        if not inv_rows_m:
+            wm.cell(row=rm,column=1,value="No invoices").font=_font(False,"000000",9); rm+=1
+        rm+=1
+
+        # -- GSTR-2A Purchases ---------------------------
+        wm.merge_cells(f"A{rm}:K{rm}")
+        s=wm.cell(row=rm,column=1,value="GSTR-2A PURCHASES")
+        s.font=_font(True,"FFFFFF",9); s.fill=_f("375623")
+        s.alignment=_aln("left"); s.border=_bdr(); wm.row_dimensions[rm].height=14; rm+=1
+        pur_h=["GSTIN Supplier","Supplier Name","Invoice No","Date","Taxable ₹","IGST ₹","CGST ₹","SGST ₹","Total ₹","",""]
+        for ci,h in enumerate(pur_h[:9],1):
+            hc=wm.cell(row=rm,column=ci,value=h)
+            hc.font=_font(True,"FFFFFF",9); hc.fill=_f(HDR_BG)
+            hc.alignment=_aln("center"); hc.border=_bdr()
+        wm.row_dimensions[rm].height=16; rm+=1
+        for row2a in g2a[mk]["rows"]:
+            stin,nm,inum,idt,tv,ig,cg,sg = row2a
+            bgm=ALT2 if rm%2==0 else ALT1
+            for ci,v in enumerate([stin,nm,inum,idt,tv,ig,cg,sg,round(ig+cg+sg,2)],1):
+                cell(wm,rm,ci,v,bgm,numfmt=NUM_FMT if ci>4 else None,align="right" if ci>4 else "left")
+            wm.row_dimensions[rm].height=14; rm+=1
+        if not g2a[mk]["rows"]:
+            wm.cell(row=rm,column=1,value="No 2A data").font=_font(False,"000000",9); rm+=1
+        rm+=1
+
+        # -- GSTR-2B ITC Detail --------------------------
+        wm.merge_cells(f"A{rm}:K{rm}")
+        s=wm.cell(row=rm,column=1,value="GSTR-2B ITC DETAIL (Confirmed ITC)")
+        s.font=_font(True,"FFFFFF",9); s.fill=_f("1F3864")
+        s.alignment=_aln("left"); s.border=_bdr(); wm.row_dimensions[rm].height=14; rm+=1
+        b2b_h=["GSTIN Supplier","Supplier Name","Invoice No","Date","Invoice Value ₹","Rate%","Taxable ₹","IGST ₹","CGST ₹","SGST ₹","ITC?"]
+        for ci,h in enumerate(b2b_h,1):
+            hc=wm.cell(row=rm,column=ci,value=h)
+            hc.font=_font(True,"FFFFFF",9); hc.fill=_f(HDR_BG)
+            hc.alignment=_aln("center"); hc.border=_bdr()
+        wm.row_dimensions[rm].height=16; rm+=1
+        b2b_rows_m=g2b[mk]["rows"]
+        for row_d in b2b_rows_m:
+            if len(row_d)==12:
+                sup,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg,itc_av=row_d
+            else:
+                sup,nm,inum,idt,tv,ig,cg,sg=row_d[:8]; iv=0; rate=0; itc_av="Yes"
+            bgm=ALT2 if rm%2==0 else ALT1
+            itc_bg="C6EFCE" if str(itc_av).lower() in ("yes","y","true","1") else "FFC7CE"
+            for ci,v in enumerate([sup,nm,inum,idt,iv,rate,tv,ig,cg,sg,itc_av],1):
+                cv=wm.cell(row=rm,column=ci,value=v)
+                cv.font=_font(False,"000000",9)
+                cv.fill=_f(itc_bg if ci==11 else bgm)
+                cv.alignment=_aln("right" if ci in (5,6,7,8,9,10) else "left")
+                cv.border=_bdr()
+                if isinstance(v,float) and ci in (5,7,8,9,10): cv.number_format=NUM_FMT
+            wm.row_dimensions[rm].height=14; rm+=1
+        if not b2b_rows_m:
+            wm.cell(row=rm,column=1,value="No 2B data this month").font=_font(False,"000000",9); rm+=1
+        rm+=1
+
+        # -- GSTR-3B Summary -----------------------------
+        wm.merge_cells(f"A{rm}:K{rm}")
+        s=wm.cell(row=rm,column=1,value="GSTR-3B SUMMARY (from PDF)")
+        s.font=_font(True,"FFFFFF",9); s.fill=_f("9C0006")
+        s.alignment=_aln("left"); s.border=_bdr(); wm.row_dimensions[rm].height=14; rm+=1
+        d3b=g3b_monthly.get(mk,{})
+        o_ig=d3b.get("o_igst",0); o_cg=d3b.get("o_cgst",0); o_sg=d3b.get("o_sgst",0)
+        i_ig=d3b.get("itc_igst",0); i_cg=d3b.get("itc_cgst",0); i_sg=d3b.get("itc_sgst",0)
+        for lbl,val in [("Output IGST ₹",o_ig),("Output CGST ₹",o_cg),("Output SGST ₹",o_sg),
+                         ("Total Output Tax ₹",round(o_ig+o_cg+o_sg,2)),
+                         ("ITC Total ₹",round(i_ig+i_cg+i_sg,2)),
+                         ("Net Payable ₹",round(o_ig+o_cg+o_sg-i_ig-i_cg-i_sg,2))]:
+            lc=wm.cell(row=rm,column=1,value=lbl)
+            lc.font=_font(False,"000000",9); lc.fill=_f(ALT1); lc.border=_bdr()
+            vc=wm.cell(row=rm,column=2,value=round(float(val),2))
+            vc.font=_font(True,"000000",9); vc.fill=_f(TOT_BG); vc.alignment=_aln("right"); vc.border=_bdr()
+            vc.number_format=NUM_FMT; rm+=1
+
+        wm.freeze_panes="A2"
+        wm.sheet_properties.tabColor=mcol
+
+    # =======================================================
+    # COMPANY OVERALL TOTAL SHEET
+    # =======================================================
+    ws_cot = wb.create_sheet("Company_Overall_Total")
+    ws_cot.sheet_view.showGridLines = False
+    for col,w in zip(["A","B","C","D","E","F"],[40,20,18,18,18,18]):
+        ws_cot.column_dimensions[col].width=w
+    ws_cot.merge_cells("A1:F1")
+    tt=ws_cot["A1"]
+    tt.value=f"COMPANY OVERALL TOTAL — {client_name} ({gstin}) — FY {FY_LABEL}"
+    tt.font=Font(name="Arial",bold=True,color="FFFFFF",size=13)
+    tt.fill=_f("1F3864"); tt.alignment=_aln("center"); tt.border=_bdr()
+    ws_cot.row_dimensions[1].height=32
+    rc=2
+
+    def cot_sec(lbl):
+        nonlocal rc
+        ws_cot.merge_cells(f"A{rc}:F{rc}")
+        s=ws_cot.cell(row=rc,column=1,value=lbl)
+        s.font=_font(True,"FFFFFF",9); s.fill=_f("2E75B6")
+        s.alignment=_aln("left"); s.border=_bdr(); ws_cot.row_dimensions[rc].height=16; rc+=1
+    def cot_hdr(labels):
+        nonlocal rc
+        for ci,h in enumerate(labels,1):
+            hc=ws_cot.cell(row=rc,column=ci,value=h)
+            hc.font=_font(True,"FFFFFF",9); hc.fill=_f(HDR_BG)
+            hc.alignment=_aln("center"); hc.border=_bdr()
+        ws_cot.row_dimensions[rc].height=18; rc+=1
+    def cot_row(lbl, vals, bold=False, bg=ALT1):
+        nonlocal rc
+        lc=ws_cot.cell(row=rc,column=1,value=lbl)
+        lc.font=_font(bold,"000000",10); lc.fill=_f(bg); lc.border=_bdr(); lc.alignment=_aln("left")
+        for ci,v in enumerate(vals,2):
+            vc=ws_cot.cell(row=rc,column=ci,value=round(float(v),2) if isinstance(v,(int,float)) else v)
+            vc.font=_font(bold,"000000",10); vc.fill=_f(TOT_BG if bold else bg)
+            vc.alignment=_aln("right"); vc.border=_bdr()
+            if isinstance(v,(int,float)): vc.number_format=NUM_FMT
+        ws_cot.row_dimensions[rc].height=18; rc+=1
+
+    # Compute annual totals
+    t_b2b=t_b2cs=t_ig=t_cg=t_sg=t_inv=0.0
+    t_3b_ig=t_3b_cg=t_3b_sg=t_itc_ig=t_itc_cg=t_itc_sg=0.0
+    t_2b_ig=t_2b_cg=t_2b_sg=t_2a_ig=t_2a_cg=t_2a_sg=0.0
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d=g1[mk]
+        t_b2b+=d["b2b_tx"]; t_b2cs+=d["b2cs_tx"]
+        t_ig+=d["igst"]; t_cg+=d["cgst"]; t_sg+=d["sgst"]; t_inv+=d["inv"]
+        d3=g3b_monthly.get(mk,{})
+        t_3b_ig+=d3.get("o_igst",0); t_3b_cg+=d3.get("o_cgst",0); t_3b_sg+=d3.get("o_sgst",0)
+        t_itc_ig+=d3.get("itc_igst",0); t_itc_cg+=d3.get("itc_cgst",0); t_itc_sg+=d3.get("itc_sgst",0)
+        t_2b_ig+=g2b[mk]["itc"]["igst"]; t_2b_cg+=g2b[mk]["itc"]["cgst"]; t_2b_sg+=g2b[mk]["itc"]["sgst"]
+        t_2a_ig+=g2a[mk]["tot"].get("igst",0); t_2a_cg+=g2a[mk]["tot"].get("cgst",0); t_2a_sg+=g2a[mk]["tot"].get("sgst",0)
+
+    t_tx=t_b2b+t_b2cs; t_tt=t_ig+t_cg+t_sg
+    t_3b_tt=t_3b_ig+t_3b_cg+t_3b_sg; t_itc_tt=t_itc_ig+t_itc_cg+t_itc_sg
+    t_2b_tt=t_2b_ig+t_2b_cg+t_2b_sg; t_2a_tt=t_2a_ig+t_2a_cg+t_2a_sg
+
+    cot_sec("GSTR-1 ANNUAL SALES")
+    cot_hdr(["Particulars","IGST ₹","CGST ₹","SGST ₹","Total Tax ₹","Taxable ₹"])
+    cot_row("B2B Taxable",   [round(t_ig*t_b2b/(t_tx or 1),2),round(t_cg*t_b2b/(t_tx or 1),2),
+                               round(t_sg*t_b2b/(t_tx or 1),2),round(t_tt*t_b2b/(t_tx or 1),2),t_b2b])
+    cot_row("B2CS Taxable",  [0,round(t_cg*t_b2cs/(t_tx or 1),2),round(t_sg*t_b2cs/(t_tx or 1),2),
+                               round(t_tt*t_b2cs/(t_tx or 1),2),t_b2cs])
+    cot_row("GRAND TOTAL",   [t_ig,t_cg,t_sg,t_tt,t_tx],bold=True,bg=TOT_BG)
+    cot_row(f"Total Invoices: {int(t_inv)}",[" "," "," "," "," "])
+    rc+=1
+
+    cot_sec("GSTR-3B ANNUAL SUMMARY (from PDF)")
+    cot_hdr(["Particulars","IGST ₹","CGST ₹","SGST ₹","Total ₹",""])
+    cot_row("Output Tax",    [t_3b_ig,t_3b_cg,t_3b_sg,t_3b_tt,""])
+    cot_row("ITC Claimed",   [t_itc_ig,t_itc_cg,t_itc_sg,t_itc_tt,""])
+    cot_row("Net Payable",   [t_3b_ig-t_itc_ig,t_3b_cg-t_itc_cg,
+                               t_3b_sg-t_itc_sg,t_3b_tt-t_itc_tt,""],bold=True,bg=TOT_BG)
+    rc+=1
+
+    cot_sec("ITC ANNUAL SUMMARY")
+    cot_hdr(["Particulars","IGST ₹","CGST ₹","SGST ₹","Total ₹",""])
+    cot_row("GSTR-2B Confirmed ITC",[t_2b_ig,t_2b_cg,t_2b_sg,t_2b_tt,""])
+    cot_row("GSTR-2A Available ITC",[t_2a_ig,t_2a_cg,t_2a_sg,t_2a_tt,""])
+    cot_row("Difference (2A−2B)",   [t_2a_ig-t_2b_ig,t_2a_cg-t_2b_cg,
+                                      t_2a_sg-t_2b_sg,t_2a_tt-t_2b_tt,""],bold=True,bg=TOT_BG)
+    rc+=1
+
+    cot_sec("RECONCILIATION")
+    cot_hdr(["Check","IGST Diff","CGST Diff","SGST Diff","Total Diff","Status"])
+    r1_3b_diff=t_tt-t_3b_tt; itc_diff=t_itc_tt-t_2a_tt
+    cot_row("R1 Supply vs 3B Output",
+            [round(t_ig-t_3b_ig,2),round(t_cg-t_3b_cg,2),round(t_sg-t_3b_sg,2),
+             round(r1_3b_diff,2),"Balanced" if abs(r1_3b_diff)<100 else "Review"],
+            bold=abs(r1_3b_diff)>100,
+            bg="C6EFCE" if abs(r1_3b_diff)<100 else "FFC7CE")
+    cot_row("3B ITC vs 2A ITC",
+            [round(t_itc_ig-t_2a_ig,2),round(t_itc_cg-t_2a_cg,2),round(t_itc_sg-t_2a_sg,2),
+             round(itc_diff,2),"Balanced" if abs(itc_diff)<500 else "Review"],
+            bold=abs(itc_diff)>500,
+            bg="C6EFCE" if abs(itc_diff)<500 else "FFC7CE")
+
+    ws_cot.freeze_panes="A2"
+    ws_cot.sheet_properties.tabColor="C00000"
+
+    # ======================================================
+    # GSTR-1 MONTHLY BREAKDOWN — per-return-type monthly sheet
+    # Columns: Month | B2B Invoices | B2B Taxable | B2CS Taxable |
+    #          IGST | CGST | SGST | Total Tax | CDN Credit | CDN Debit | Net Taxable | Tax% of Taxable
+    # ======================================================
+    ws_g1m = wb.create_sheet("GSTR1_Monthly_Breakdown")
+    ws_g1m.sheet_view.showGridLines = False
+    g1m_cols = [
+        ("Month",12),("B2B Inv",8),("B2B Taxable ₹",16),("B2CS Taxable ₹",16),
+        ("Total Taxable ₹",16),("IGST ₹",13),("CGST ₹",13),("SGST ₹",13),
+        ("Total Tax ₹",14),("CDN Credit ₹",14),("CDN Debit ₹",13),
+        ("Net Taxable ₹",16),("Tax Rate %",10),("Status",14)
+    ]
+    title(ws_g1m, f"GSTR-1 Monthly Breakdown — {client_name} ({gstin}) — FY {FY_LABEL}", len(g1m_cols))
+    ws_g1m.merge_cells(f"A2:{get_column_letter(len(g1m_cols))}2")
+    sub_g1m = ws_g1m["A2"]
+    sub_g1m.value = "B2B=Business-to-Business | B2CS=Small Consumers | CDN=Credit/Debit Notes | Tax%=Effective Tax Rate on Taxable Supply"
+    sub_g1m.font=_font(False,"000000",8); sub_g1m.fill=_f("FFF2CC"); sub_g1m.alignment=_aln("left")
+    ws_g1m.row_dimensions[2].height=13
+    hdr(ws_g1m, g1m_cols, row=3, bg=HDR_BG)
+    ws_g1m.freeze_panes="A4"
+    rg1m=4
+    ann_g1m={"inv":0,"b2b":0.,"b2cs":0.,"ig":0.,"cg":0.,"sg":0.,
+              "cdn_cr":0.,"cdn_dr":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d1=g1[mk]
+        b2b_tx=round(d1["b2b_tx"],2); b2cs_tx=round(d1["b2cs_tx"],2)
+        total_tx=round(b2b_tx+b2cs_tx,2)
+        ig=round(d1["igst"],2); cg=round(d1["cgst"],2); sg=round(d1["sgst"],2)
+        tt=round(ig+cg+sg,2)
+        cdn_cr=round(d1.get("cdn_cr",0),2); cdn_dr=round(d1.get("cdn_dr",0),2)
+        net_tx=round(total_tx-cdn_cr+cdn_dr,2)
+        tax_pct=round(tt/total_tx*100,2) if total_tx else 0
+        # Status: expected ~18% tax rate for most businesses
+        if total_tx==0:   status="No Sales";  sbg="D9D9D9"
+        elif tax_pct>=17: status="Normal";     sbg="C6EFCE"
+        elif tax_pct>=10: status="Mixed Rate"; sbg="FFEB9C"
+        else:             status="Low Rate";   sbg="FFC7CE"
+        bgr=ALT2 if rg1m%2==0 else ALT1
+        vals=[f"{mn} {yr}",d1["inv"],b2b_tx,b2cs_tx,total_tx,ig,cg,sg,tt,cdn_cr,cdn_dr,net_tx,tax_pct,status]
+        for ci,v in enumerate(vals,1):
+            cv=ws_g1m.cell(row=rg1m,column=ci,value=v)
+            if ci==14: cv.font=_font(True,"000000",9); cv.fill=_f(sbg)
+            elif ci==13: cv.font=_font(False,"000000",9); cv.fill=_f("DEEAF1")
+            else: cv.font=_font(False,"000000",9); cv.fill=_f(bgr)
+            cv.alignment=_aln("right" if ci>1 and ci<14 else "left")
+            cv.border=_bdr()
+            if isinstance(v,float) and ci not in (13,): cv.number_format=NUM_FMT
+        ws_g1m.row_dimensions[rg1m].height=15; rg1m+=1
+        ann_g1m["inv"]+=d1["inv"]; ann_g1m["b2b"]+=b2b_tx; ann_g1m["b2cs"]+=b2cs_tx
+        ann_g1m["ig"]+=ig; ann_g1m["cg"]+=cg; ann_g1m["sg"]+=sg
+        ann_g1m["cdn_cr"]+=cdn_cr; ann_g1m["cdn_dr"]+=cdn_dr
+    ann_tx=ann_g1m["b2b"]+ann_g1m["b2cs"]; ann_tt=ann_g1m["ig"]+ann_g1m["cg"]+ann_g1m["sg"]
+    ann_pct=round(ann_tt/ann_tx*100,2) if ann_tx else 0
+    totrow(ws_g1m, rg1m, ["ANNUAL TOTAL", _fsum("B",3,rg1m-1),
+                            round(ann_g1m["b2b"],2), round(ann_g1m["b2cs"],2),
+                            round(ann_tx,2), round(ann_g1m["ig"],2),
+                            round(ann_g1m["cg"],2), round(ann_g1m["sg"],2),
+                            round(ann_tt,2), round(ann_g1m["cdn_cr"],2),
+                            round(ann_g1m["cdn_dr"],2), round(ann_tx-ann_g1m["cdn_cr"]+ann_g1m["cdn_dr"],2),
+                            ann_pct, "Annual"])
+    ws_g1m.sheet_properties.tabColor="2E75B6"
+
+    # ======================================================
+    # GSTR-1A MONTHLY BREAKDOWN — Amendments per month
+    # ======================================================
+    ws_g1am = wb.create_sheet("GSTR1A_Monthly_Amendments")
+    ws_g1am.sheet_view.showGridLines = False
+    g1am_cols = [
+        ("Month",12),("Amended Inv Count",16),("Amended B2B Taxable ₹",20),
+        ("IGST ₹",13),("CGST ₹",13),("SGST ₹",13),("Total Tax ₹",14),
+        ("Amendment Type",18),("Notes",30)
+    ]
+    title(ws_g1am, f"GSTR-1A Amendment Summary — {client_name} ({gstin}) — FY {FY_LABEL}", len(g1am_cols))
+    ws_g1am.merge_cells(f"A2:{get_column_letter(len(g1am_cols))}2")
+    sub_g1am=ws_g1am["A2"]
+    sub_g1am.value="GSTR-1A = Amendments to previously filed GSTR-1 invoices (B2BA, CDNRA, B2CLA, EXPA etc.)"
+    sub_g1am.font=_font(False,"000000",8); sub_g1am.fill=_f("FFF2CC"); sub_g1am.alignment=_aln("left")
+    ws_g1am.row_dimensions[2].height=13
+    hdr(ws_g1am, g1am_cols, row=3, bg=HDR_BG)
+    ws_g1am.freeze_panes="A4"
+    rg1am=4
+    ann_g1am={"inv":0,"b2b":0.,"ig":0.,"cg":0.,"sg":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d1=g1[mk]
+        # GSTR-1A amendments (b2ba, cdnra data if collected in g1_inv_rows)
+        amend_rows=[r for r in g1_inv_rows.get(mk,[]) if r[0] in ("B2BA","CDNRA","B2CLA","EXPA")]
+        a_inv=len(amend_rows)
+        a_tx=round(sum(r[8] for r in amend_rows),2)
+        a_ig=round(sum(r[9] for r in amend_rows),2)
+        a_cg=round(sum(r[10] for r in amend_rows),2)
+        a_sg=round(sum(r[11] for r in amend_rows),2)
+        a_tt=round(a_ig+a_cg+a_sg,2)
+        types_seen=list(set(r[0] for r in amend_rows)) if amend_rows else []
+        note="Amended: "+", ".join(types_seen) if types_seen else "No amendments this month"
+        bgr=ALT2 if rg1am%2==0 else ALT1
+        hlt="FFEB9C" if a_inv>0 else bgr
+        vals=[f"{mn} {yr}",a_inv,a_tx,a_ig,a_cg,a_sg,a_tt,",".join(types_seen) if types_seen else "-",note]
+        for ci,v in enumerate(vals,1):
+            cv=ws_g1am.cell(row=rg1am,column=ci,value=v)
+            cv.font=_font(a_inv>0,"000000",9); cv.fill=_f(hlt)
+            cv.alignment=_aln("right" if 2<ci<8 else "left"); cv.border=_bdr()
+            if isinstance(v,float): cv.number_format=NUM_FMT
+        ws_g1am.row_dimensions[rg1am].height=15; rg1am+=1
+        ann_g1am["inv"]+=a_inv; ann_g1am["b2b"]+=a_tx
+        ann_g1am["ig"]+=a_ig; ann_g1am["cg"]+=a_cg; ann_g1am["sg"]+=a_sg
+    totrow(ws_g1am, rg1am, ["ANNUAL TOTAL", _fsum("B",3,rg1am-1),
+                          _fsum("C",3,rg1am-1),_fsum("D",3,rg1am-1),
+                          _fsum("E",3,rg1am-1),_fsum("F",3,rg1am-1),
+                          _fsum("G",3,rg1am-1),_fsum("H",3,rg1am-1),
+                          f"=SUM(D{rg1am}:H{rg1am})"])
+    ws_g1am.sheet_properties.tabColor="9C6500"
+
+    # ======================================================
+    # COMPANY-WISE GSTR-1 SUMMARY — party-level aggregation
+    # Shows: per-company annual taxable, IGST, CGST, SGST, invoice count, % of total
+    # ======================================================
+    ws_cw = wb.create_sheet("Company_Wise_Summary")
+    ws_cw.sheet_view.showGridLines = False
+    cw_cols=[
+        ("GSTIN",22),("Company Name",32),("Invoice Count",13),
+        ("Taxable Value ₹",18),("IGST ₹",13),("CGST ₹",13),("SGST ₹",13),
+        ("Total Tax ₹",14),("Invoice Value ₹",17),
+        ("% of Total Taxable",17),("% of Total Tax",16),("Avg Invoice ₹",16)
+    ]
+    title(ws_cw, f"Company-Wise Sales Summary — {client_name} ({gstin}) — FY {FY_LABEL}", len(cw_cols))
+    ws_cw.merge_cells(f"A2:{get_column_letter(len(cw_cols))}2")
+    sub_cw=ws_cw["A2"]
+    sub_cw.value="Aggregated from all 12 months GSTR-1 B2B data | % shows contribution to total annual turnover"
+    sub_cw.font=_font(False,"000000",8); sub_cw.fill=_f("FFF2CC"); sub_cw.alignment=_aln("left")
+    ws_cw.row_dimensions[2].height=13
+    hdr(ws_cw, cw_cols, row=3, bg=HDR_BG)
+    ws_cw.freeze_panes="A4"
+    rcw=4
+
+    # Aggregate all B2B invoices by company across all months
+    company_data={}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        for row_d in g1_inv_rows.get(mk,[]):
+            if row_d[0] not in ("B2B","B2CL"): continue
+            inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg = row_d
+            if not gstin_r or gstin_r=="-": continue
+            key=gstin_r.strip()
+            if key not in company_data:
+                company_data[key]={"name":nm,"inv":0,"tv":0.,"ig":0.,"cg":0.,"sg":0.,"iv":0.}
+            company_data[key]["name"]=nm or company_data[key]["name"]
+            company_data[key]["inv"]+=1
+            company_data[key]["tv"]+=float(tv or 0)
+            company_data[key]["ig"]+=float(ig or 0)
+            company_data[key]["cg"]+=float(cg or 0)
+            company_data[key]["sg"]+=float(sg or 0)
+            company_data[key]["iv"]+=float(iv or 0)
+
+    # Sort by taxable value descending
+    sorted_companies=sorted(company_data.items(), key=lambda x: x[1]["tv"], reverse=True)
+    grand_tv=sum(d["tv"] for _,d in sorted_companies) or 1
+    grand_tt=sum(d["ig"]+d["cg"]+d["sg"] for _,d in sorted_companies) or 1
+
+    for gstin_r,(d) in sorted_companies:
+        tv=round(d["tv"],2); ig=round(d["ig"],2); cg=round(d["cg"],2); sg=round(d["sg"],2)
+        tt=round(ig+cg+sg,2); iv=round(d["iv"],2)
+        pct_tv=round(d["tv"]/grand_tv*100,2)
+        pct_tt=round((ig+cg+sg)/(grand_tt)*100,2) if grand_tt else 0
+        avg_inv=round(iv/d["inv"],2) if d["inv"] else 0
+        # Color top contributors
+        if pct_tv>=10:   bgc="E2EFDA"
+        elif pct_tv>=5:  bgc="EBF3FB"
+        elif pct_tv>=1:  bgc=ALT1
+        else:            bgc=ALT2
+        vals=[gstin_r,d["name"],d["inv"],tv,ig,cg,sg,tt,iv,pct_tv,pct_tt,avg_inv]
+        for ci,v in enumerate(vals,1):
+            cv=ws_cw.cell(row=rcw,column=ci,value=v)
+            cv.font=_font(pct_tv>=10,"000000",9); cv.fill=_f(bgc)
+            cv.alignment=_aln("right" if ci>2 else "left"); cv.border=_bdr()
+            if isinstance(v,float) and ci not in (10,11):
+                cv.number_format=NUM_FMT
+            elif ci in (10,11) and isinstance(v,float):
+                cv.number_format="0.00%"
+        ws_cw.row_dimensions[rcw].height=15; rcw+=1
+
+    # Grand total
+    grand_tv_r=sum(d["tv"] for _,d in sorted_companies)
+    grand_ig=sum(d["ig"] for _,d in sorted_companies)
+    grand_cg=sum(d["cg"] for _,d in sorted_companies)
+    grand_sg=sum(d["sg"] for _,d in sorted_companies)
+    grand_iv=sum(d["iv"] for _,d in sorted_companies)
+    grand_inv=sum(d["inv"] for _,d in sorted_companies)
+    totrow(ws_cw, rcw, ["GRAND TOTAL",f"All {len(sorted_companies)} companies",grand_inv,
+                         round(grand_tv_r,2),round(grand_ig,2),round(grand_cg,2),
+                         round(grand_sg,2),round(grand_ig+grand_cg+grand_sg,2),
+                         round(grand_iv,2),100.0,100.0,
+                         round(grand_iv/grand_inv,2) if grand_inv else 0])
+    ws_cw.sheet_properties.tabColor="243F60"
+
+
+    # ==================================================================
+    # XLSM-STYLE EXTRA SHEETS
+    # These replicate the analysis sheets from the reference XLSM file
+    # ==================================================================
+
+    # -- SHEET: Annual Report 3B (rate-wise breakdown) -----------------
+    # Matches: ANNUAL REPORT 3B sheet in XLSM
+    # Shows: Month | Rate-wise purchases (5%/12%/18%/28%) |
+    #        Rate-wise sales | Tax amounts | ITC carried forward
+    ws_ar3b = wb.create_sheet("Annual_Report_3B")
+    ws_ar3b.sheet_view.showGridLines = False
+    ar3b_cols = [
+        ("Month",12),("Filing Date",14),
+        ("Sales 5% ₹",13),("Sales 12% ₹",13),("Sales 18% ₹",14),("Sales 28% ₹",13),("Sales Total ₹",15),
+        ("Purch 5% ₹",13),("Purch 12% ₹",13),("Purch 18% ₹",14),("Purch 28% ₹",13),("Purch Total ₹",15),
+        ("Output CGST ₹",14),("Output SGST ₹",14),("Output IGST ₹",14),("Output Tax Total ₹",17),
+        ("ITC CGST ₹",13),("ITC SGST ₹",13),("ITC IGST ₹",13),("ITC Total ₹",14),
+        ("Net Payable ₹",15),("ITC Carried Fwd ₹",17),
+    ]
+    title(ws_ar3b, f"Annual Report 3B (Rate-wise) — {client_name} ({gstin}) — FY {FY_LABEL}", len(ar3b_cols))
+    ws_ar3b.merge_cells(f"A2:{get_column_letter(len(ar3b_cols))}2")
+    sub=ws_ar3b["A2"]
+    sub.value="Rate-wise Sales & Purchase breakdown | Output Tax | ITC | Net Payable | Carried Forward — Source: GSTR-1 JSON + GSTR-3B PDF + GSTR-2B Excel"
+    sub.font=_font(False,"000000",8); sub.fill=_f("FFF2CC"); sub.alignment=_aln("left")
+    ws_ar3b.row_dimensions[2].height=13
+    hdr(ws_ar3b, ar3b_cols, row=3, bg=HDR_BG)
+    ws_ar3b.freeze_panes="A4"
+    r_ar=4
+    ann_ar={"s5":0.,"s12":0.,"s18":0.,"s28":0.,"p5":0.,"p12":0.,"p18":0.,"p28":0.,
+            "ocg":0.,"osg":0.,"oig":0.,"icg":0.,"isg":0.,"iig":0.}
+    itc_cf=0.0  # ITC carried forward running total
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d1=g1[mk]; d3b=g3b_monthly.get(mk,{})
+        # Sales by rate (from g1_inv_rows — group by rate)
+        inv_rows_m=g1_inv_rows.get(mk,[])
+        s_by_rate={5:0.,12:0.,18:0.,28:0.}
+        for rd in inv_rows_m:
+            rate_v=_parse_gst_rate(rd[7] if len(rd)>7 else None)
+            tv_v=float(rd[8] or 0)
+            if rate_v in s_by_rate: s_by_rate[rate_v]+=tv_v
+            else: s_by_rate[18]+=tv_v  # default to 18
+        s_tot=sum(s_by_rate.values())
+        # Purchase by rate (from g2b rows)
+        p_by_rate={5:0.,12:0.,18:0.,28:0.}
+        for row_2b in g2b[mk]["rows"]:
+            if len(row_2b)>=12:
+                rate_2b=_parse_gst_rate(row_2b[6] if len(row_2b)>6 else None)
+                tv_2b=float(row_2b[7] or 0)
+                if rate_2b in p_by_rate: p_by_rate[rate_2b]+=tv_2b
+                else: p_by_rate[18]+=tv_2b
+        p_tot=sum(p_by_rate.values())
+        # Output tax from 3B PDF
+        ocg=round(d3b.get("o_cgst",0),2); osg=round(d3b.get("o_sgst",0),2); oig=round(d3b.get("o_igst",0),2)
+        otot=round(ocg+osg+oig,2)
+        # ITC
+        icg=round(d3b.get("itc_cgst",0),2); isg=round(d3b.get("itc_sgst",0),2); iig=round(d3b.get("itc_igst",0),2)
+        itot=round(icg+isg+iig,2)
+        net=round(otot-itot,2)
+        itc_cf=round(max(0,itot-otot)+itc_cf,2)
+        bgr=ALT2 if r_ar%2==0 else ALT1
+        vals=[f"{mn} {yr}","",
+              round(s_by_rate[5],2),round(s_by_rate[12],2),round(s_by_rate[18],2),round(s_by_rate[28],2),round(s_tot,2),
+              round(p_by_rate[5],2),round(p_by_rate[12],2),round(p_by_rate[18],2),round(p_by_rate[28],2),round(p_tot,2),
+              ocg,osg,oig,otot,icg,isg,iig,itot,net,itc_cf]
+        for ci,v in enumerate(vals,1):
+            cv=ws_ar3b.cell(row=r_ar,column=ci,value=v)
+            cv.font=_font(False,"000000",9); cv.fill=_f(bgr)
+            cv.alignment=_aln("right" if ci>2 else "left"); cv.border=_bdr()
+            if isinstance(v,float): cv.number_format=NUM_FMT
+        ws_ar3b.row_dimensions[r_ar].height=15; r_ar+=1
+        ann_ar["s5"]+=s_by_rate[5]; ann_ar["s12"]+=s_by_rate[12]
+        ann_ar["s18"]+=s_by_rate[18]; ann_ar["s28"]+=s_by_rate[28]
+        ann_ar["p5"]+=p_by_rate[5]; ann_ar["p12"]+=p_by_rate[12]
+        ann_ar["p18"]+=p_by_rate[18]; ann_ar["p28"]+=p_by_rate[28]
+        ann_ar["ocg"]+=ocg; ann_ar["osg"]+=osg; ann_ar["oig"]+=oig
+        ann_ar["icg"]+=icg; ann_ar["isg"]+=isg; ann_ar["iig"]+=iig
+    totrow(ws_ar3b,r_ar,["ANNUAL TOTAL","",
+                          _fsum("C",3,r_ar-1),_fsum("D",3,r_ar-1),_fsum("E",3,r_ar-1),_fsum("F",3,r_ar-1),
+                          _fsum("G",3,r_ar-1)])
+    ws_ar3b.sheet_properties.tabColor="1F3864"
+
+    # -- SHEET: GST vs CDNR Monthly -------------------------------------
+    # Matches: GST vs CDNR All + CDNR_Monthly_Summary sheets in XLSM
+    ws_cdnr = wb.create_sheet("GST_vs_CDNR_Monthly")
+    ws_cdnr.sheet_view.showGridLines = False
+    cdnr_cols=[
+        ("Month",12),("GST Taxable ₹",16),("GST CGST ₹",13),("GST SGST ₹",13),("GST IGST ₹",13),
+        ("CDNR Taxable ₹",16),("CDNR CGST ₹",13),("CDNR SGST ₹",13),
+        ("Net Taxable ₹",16),("Net CGST ₹",13),("Net SGST ₹",13),("Net IGST ₹",13),("Net Tax ₹",14),
+    ]
+    title(ws_cdnr, f"GST vs CDNR Monthly — {client_name} ({gstin}) — FY {FY_LABEL}", len(cdnr_cols))
+    ws_cdnr.merge_cells(f"A2:{get_column_letter(len(cdnr_cols))}2")
+    sub2=ws_cdnr["A2"]
+    sub2.value="GST Sales vs Credit/Debit Notes (CDNR) | Net = GST minus CDNR Credit plus CDNR Debit"
+    sub2.font=_font(False,"000000",8); sub2.fill=_f("FFF2CC"); sub2.alignment=_aln("left")
+    ws_cdnr.row_dimensions[2].height=13
+    hdr(ws_cdnr, cdnr_cols, row=3, bg=HDR_BG)
+    ws_cdnr.freeze_panes="A4"
+    r_cd=4
+    ann_cd={"gtx":0.,"gcg":0.,"gsg":0.,"gig":0.,
+             "ctx":0.,"ccg":0.,"csg":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d1=g1[mk]
+        gtx=round(d1["b2b_tx"]+d1["b2cs_tx"],2)
+        gcg=round(d1["cgst"],2); gsg=round(d1["sgst"],2); gig=round(d1["igst"],2)
+        ctx=round(d1.get("cdn_cr",0),2)
+        ccg=round(d1.get("cdn_cg",0),2); csg=round(d1.get("cdn_sg",0),2)
+        net_tx=round(gtx-ctx,2)
+        net_cg=round(gcg-ccg,2); net_sg=round(gsg-csg,2); net_ig=round(gig,2)
+        net_tax=round(net_cg+net_sg+net_ig,2)
+        bgr=ALT2 if r_cd%2==0 else ALT1
+        has_cdnr=ctx>0
+        vals=[f"{mn} {yr}",gtx,gcg,gsg,gig,ctx,ccg,csg,net_tx,net_cg,net_sg,net_ig,net_tax]
+        for ci,v in enumerate(vals,1):
+            bgc="FFEB9C" if has_cdnr and ci>=6 else bgr
+            cv=ws_cdnr.cell(row=r_cd,column=ci,value=v)
+            cv.font=_font(has_cdnr and ci>=6,"000000",9); cv.fill=_f(bgc)
+            cv.alignment=_aln("right" if ci>1 else "left"); cv.border=_bdr()
+            if isinstance(v,float): cv.number_format=NUM_FMT
+        ws_cdnr.row_dimensions[r_cd].height=15; r_cd+=1
+        ann_cd["gtx"]+=gtx; ann_cd["gcg"]+=gcg; ann_cd["gsg"]+=gsg; ann_cd["gig"]+=gig
+        ann_cd["ctx"]+=ctx; ann_cd["ccg"]+=ccg; ann_cd["csg"]+=csg
+    ann_net_tx=ann_cd["gtx"]-ann_cd["ctx"]
+    ann_net_cg=ann_cd["gcg"]-ann_cd["ccg"]; ann_net_sg=ann_cd["gsg"]-ann_cd["csg"]
+    totrow(ws_cdnr,r_cd,["ANNUAL TOTAL",
+                          _fsum("B",3,r_cd-1),_fsum("C",3,r_cd-1),_fsum("D",3,r_cd-1),_fsum("E",3,r_cd-1),
+                          _fsum("F",3,r_cd-1),_fsum("G",3,r_cd-1),_fsum("H",3,r_cd-1)])
+    ws_cdnr.sheet_properties.tabColor="9C0006"
+
+    # -- SHEET: Purchase 2B Detail ---------------------------------------
+    # Matches: PURCHASE 2B sheet in XLSM — full GSTR-2B invoice detail
+    ws_p2b = wb.create_sheet("Purchase_2B_Detail")
+    ws_p2b.sheet_view.showGridLines = False
+    p2b_cols=[
+        ("Month",12),("GSTIN Supplier",22),("Trade Name",28),("Inv No",14),
+        ("Type",8),("Invoice Date",13),("Invoice Value ₹",16),("Rate %",8),
+        ("Taxable Value ₹",16),("IGST ₹",12),("CGST ₹",12),("SGST ₹",12),
+        ("ITC Avail?",11),
+    ]
+    title(ws_p2b, f"GSTR-2B Purchase Detail — {client_name} ({gstin}) — FY {FY_LABEL}", len(p2b_cols))
+    hdr(ws_p2b, p2b_cols, row=2, bg=HDR_BG)
+    ws_p2b.freeze_panes="A3"
+    r_p2b=3
+    ann_p2b={"tv":0.,"ig":0.,"cg":0.,"sg":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        for row_d in g2b[mk]["rows"]:
+            if len(row_d)>=12:
+                sup,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg,itc_av = row_d
+            else:
+                sup,nm,inum,idt,tv,ig,cg,sg = row_d[:8]
+                iv=0; rate=0; itc_av="Yes"
+            bgr=ALT2 if r_p2b%2==0 else ALT1
+            bgc="C6EFCE" if str(itc_av).lower() in ("yes","y","true","1") else "FFC7CE"
+            vals=[f"{mn} {yr}",sup,nm,inum,"R",idt,iv,rate,tv,ig,cg,sg,itc_av]
+            for ci,v in enumerate(vals,1):
+                cv=ws_p2b.cell(row=r_p2b,column=ci,value=v)
+                cv.font=_font(False,"000000",9)
+                cv.fill=_f(bgc if ci==13 else bgr)
+                cv.alignment=_aln("right" if ci in (7,8,9,10,11,12) else "left"); cv.border=_bdr()
+                if isinstance(v,float): cv.number_format=NUM_FMT
+            ws_p2b.row_dimensions[r_p2b].height=14; r_p2b+=1
+            ann_p2b["tv"]+=float(tv or 0); ann_p2b["ig"]+=float(ig or 0)
+            ann_p2b["cg"]+=float(cg or 0); ann_p2b["sg"]+=float(sg or 0)
+    totrow(ws_p2b,r_p2b,["ANNUAL TOTAL","","","","","","","",
+                          _fsum("I",3,r_p2b-1),_fsum("J",3,r_p2b-1),_fsum("K",3,r_p2b-1),
+                          _fsum("L",3,r_p2b-1),""])
+    ws_p2b.sheet_properties.tabColor="375623"
+
+    # -- SHEET: GST Sales Detail (party-wise monthly) --------------------
+    # Matches: GST_Monthwise_Summary_Sal sheet in XLSM
+    ws_gsd = wb.create_sheet("GST_Sales_Detail")
+    ws_gsd.sheet_view.showGridLines = False
+    gsd_cols=[
+        ("Month",12),("Rate %",8),("GSTIN",22),("Trade Name",30),
+        ("Invoice Date",13),("Taxable ₹",16),("CGST ₹",12),("SGST ₹",12),("IGST ₹",12),("Total GST ₹",14),
+    ]
+    title(ws_gsd, f"GST Sales (Party-Wise Monthly) — {client_name} ({gstin}) — FY {FY_LABEL}", len(gsd_cols))
+    hdr(ws_gsd, gsd_cols, row=2, bg=HDR_BG)
+    ws_gsd.freeze_panes="A3"
+    r_gsd=3
+    ann_gsd={"tx":0.,"cg":0.,"sg":0.,"ig":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        inv_rows_m=g1_inv_rows.get(mk,[])
+        if inv_rows_m:
+            ws_gsd.merge_cells(f"A{r_gsd}:{get_column_letter(len(gsd_cols))}{r_gsd}")
+            sep=ws_gsd.cell(row=r_gsd,column=1,value=f"-- {mn} {yr}  ({len(inv_rows_m)} invoices) --")
+            sep.font=_font(True,HDR_FG,9); sep.fill=_f(SEC_BG)
+            sep.alignment=_aln("left"); sep.border=_bdr()
+            ws_gsd.row_dimensions[r_gsd].height=14; r_gsd+=1
+        m_tx=m_cg=m_sg=m_ig=0.
+        for rd in inv_rows_m:
+            inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg = rd
+            bgr=ALT2 if r_gsd%2==0 else ALT1
+            tot_gst=round(float(ig or 0)+float(cg or 0)+float(sg or 0),2)
+            vals=[f"{mn} {yr}",rate,gstin_r,nm,idt,tv,cg,sg,ig,tot_gst]
+            for ci,v in enumerate(vals,1):
+                cv=ws_gsd.cell(row=r_gsd,column=ci,value=v)
+                cv.font=_font(False,"000000",9); cv.fill=_f(bgr)
+                cv.alignment=_aln("right" if ci in (2,6,7,8,9,10) else "left"); cv.border=_bdr()
+                if isinstance(v,float): cv.number_format=NUM_FMT
+            ws_gsd.row_dimensions[r_gsd].height=14; r_gsd+=1
+            m_tx+=float(tv or 0); m_cg+=float(cg or 0); m_sg+=float(sg or 0); m_ig+=float(ig or 0)
+        if inv_rows_m:
+            sub_r=ws_gsd.cell(row=r_gsd,column=1,value=f"Subtotal {mn} {yr}")
+            sub_r.font=_font(True,"000000",9); sub_r.fill=_f(TOT_BG); sub_r.border=_bdr()
+            for ci,v in enumerate(["","","","",round(m_tx,2),round(m_cg,2),round(m_sg,2),round(m_ig,2),round(m_cg+m_sg+m_ig,2)],2):
+                sv=ws_gsd.cell(row=r_gsd,column=ci,value=v)
+                sv.font=_font(True,"000000",9); sv.fill=_f(TOT_BG); sv.border=_bdr()
+                sv.alignment=_aln("right")
+                if isinstance(v,float): sv.number_format=NUM_FMT
+            ws_gsd.row_dimensions[r_gsd].height=15; r_gsd+=1
+            ann_gsd["tx"]+=m_tx; ann_gsd["cg"]+=m_cg; ann_gsd["sg"]+=m_sg; ann_gsd["ig"]+=m_ig
+    totrow(ws_gsd,r_gsd,["ANNUAL TOTAL","","","","",
+                          _fsum("F",3,r_gsd-1),_fsum("G",3,r_gsd-1),_fsum("H",3,r_gsd-1),_fsum("I",3,r_gsd-1)])
+    ws_gsd.sheet_properties.tabColor="2E75B6"
+
+    # -- SHEET: Turnover Match (AIS vs GST) -----------------------------
+    # Matches: Turnover_Match_Summary sheet in XLSM
+    ws_tm = wb.create_sheet("Turnover_AIS_Match")
+    ws_tm.sheet_view.showGridLines = False
+    tm_cols=[
+        ("Month",14),("GST Turnover ₹",18),("R1 Taxable ₹",18),("Difference ₹",16),
+        ("Match Status",14),("Variance %",12),("Notes",28),
+    ]
+    title(ws_tm, f"Turnover AIS vs GST Match — {client_name} ({gstin}) — FY {FY_LABEL}", len(tm_cols))
+    ws_tm.merge_cells(f"A2:{get_column_letter(len(tm_cols))}2")
+    sub_tm=ws_tm["A2"]
+    sub_tm.value="Comparison: GSTR-1 Taxable Turnover vs AIS Reported Turnover | Match=within ₹1 | Mismatch=difference>₹1"
+    sub_tm.font=_font(False,"000000",8); sub_tm.fill=_f("FFF2CC"); sub_tm.alignment=_aln("left")
+    ws_tm.row_dimensions[2].height=13
+    hdr(ws_tm, tm_cols, row=3, bg=HDR_BG)
+    ws_tm.freeze_panes="A4"
+    r_tm=4
+    ann_tm={"r1":0.}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; d1=g1[mk]
+        r1_tx=round(d1["b2b_tx"]+d1["b2cs_tx"],2)
+        # AIS turnover not available from downloads — mark as To Be Verified
+        diff=0.0; match_s="Verify vs AIS"; mbg="FFEB9C"
+        var_pct=0.0
+        note="Cross-check with AIS downloaded separately"
+        bgr=ALT2 if r_tm%2==0 else ALT1
+        vals=[f"{mn} {yr}",0,r1_tx,diff,match_s,var_pct,note]
+        for ci,v in enumerate(vals,1):
+            cv=ws_tm.cell(row=r_tm,column=ci,value=v)
+            cv.font=_font(False,"000000",9)
+            cv.fill=_f(mbg if ci==5 else bgr)
+            cv.alignment=_aln("right" if ci in (2,3,4,6) else "left"); cv.border=_bdr()
+            if isinstance(v,float) and ci not in (6,): cv.number_format=NUM_FMT
+            elif ci==6: cv.number_format="0.00%"
+        ws_tm.row_dimensions[r_tm].height=15; r_tm+=1
+        ann_tm["r1"]+=r1_tx
+    totrow(ws_tm,r_tm,["ANNUAL TOTAL",_fsum("B",3,r_tm-1),_fsum("C",3,r_tm-1),_fsum("D",3,r_tm-1),"Annual","","Full year GSTR-1 vs AIS"])
+    ws_tm.sheet_properties.tabColor="974706"
+
+    # ======================================================
+    # COMPANY-WISE MONTHLY DETAIL SHEET
+    # Each company as a row; 12 months + FY Total as columns
+    # Values: Taxable, CGST, SGST, IGST, Total Tax per month
+    # ======================================================
+    ws_cwm = wb.create_sheet("Company_Month_Detail")
+    ws_cwm.sheet_view.showGridLines = False
+    month_short=[mn[:3]+"-"+yr[2:] for mn,_,yr in MONTHS]
+    n_vals=5  # Taxable, IGST, CGST, SGST, Total Tax
+    total_cols=3+len(MONTHS)*n_vals+n_vals  # GSTIN+Name+Type + 12months + FYtotal
+
+    ws_cwm.merge_cells(f"A1:{get_column_letter(total_cols)}1")
+    tt=ws_cwm["A1"]
+    tt.value=f"Company-Wise Monthly Detail — {client_name} ({gstin}) — FY {FY_LABEL}"
+    tt.font=Font(name="Arial",bold=True,color="FFFFFF",size=12)
+    tt.fill=_f("1F3864"); tt.alignment=_aln("center"); tt.border=_bdr()
+    ws_cwm.row_dimensions[1].height=26
+    # Row 2: month group headers
+    col_s=4
+    for ml in month_short:
+        ws_cwm.merge_cells(start_row=2,start_column=col_s,end_row=2,end_column=col_s+n_vals-1)
+        mh=ws_cwm.cell(row=2,column=col_s,value=ml)
+        mh.font=_font(True,"FFFFFF",9); mh.fill=_f(HDR_BG)
+        mh.alignment=_aln("center"); mh.border=_bdr()
+        col_s+=n_vals
+    ws_cwm.merge_cells(start_row=2,start_column=col_s,end_row=2,end_column=col_s+n_vals-1)
+    ah=ws_cwm.cell(row=2,column=col_s,value="FY Total (APR-MAR)")
+    ah.font=_font(True,"FFFFFF",9); ah.fill=_f("C00000")
+    ah.alignment=_aln("center"); ah.border=_bdr()
+    # Row 3: sub-headers
+    for ci3,h3 in enumerate(["GSTIN","Company Name","Type"],1):
+        hc=ws_cwm.cell(row=3,column=ci3,value=h3)
+        hc.font=_font(True,"FFFFFF",9); hc.fill=_f(HDR_BG)
+        hc.alignment=_aln("center"); hc.border=_bdr()
+    col_s=4
+    for _mi in range(len(MONTHS)+1):
+        bg_s="C00000" if _mi==len(MONTHS) else HDR_BG
+        for sv in ["Taxable","IGST","CGST","SGST","Tax Total"]:
+            hc=ws_cwm.cell(row=3,column=col_s,value=sv)
+            hc.font=_font(True,"FFFFFF",8); hc.fill=_f(bg_s)
+            hc.alignment=_aln("center"); hc.border=_bdr()
+            ws_cwm.column_dimensions[get_column_letter(col_s)].width=13
+            col_s+=1
+    ws_cwm.column_dimensions["A"].width=22
+    ws_cwm.column_dimensions["B"].width=32
+    ws_cwm.column_dimensions["C"].width=8
+    ws_cwm.row_dimensions[2].height=20; ws_cwm.row_dimensions[3].height=18
+    ws_cwm.freeze_panes="D4"
+    rcwm=4
+
+    # Aggregate invoice data by company and month
+    comp_data={}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        for r in g1_inv_rows.get(mk,[]):
+            inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg=r
+            if not gstin_r or gstin_r=="-": continue
+            key=gstin_r.strip()
+            if key not in comp_data:
+                comp_data[key]={"name":nm or gstin_name_map.get(key,""),
+                                "type":inv_type,
+                                "months":{m:{"tx":0.,"ig":0.,"cg":0.,"sg":0.}
+                                          for mm,__,yy in MONTHS for m in [f"{mm}_{yy}"]}}
+            if not comp_data[key]["name"] and nm:
+                comp_data[key]["name"]=nm
+            comp_data[key]["months"][mk]["tx"]+=float(tv or 0)
+            comp_data[key]["months"][mk]["ig"]+=float(ig or 0)
+            comp_data[key]["months"][mk]["cg"]+=float(cg or 0)
+            comp_data[key]["months"][mk]["sg"]+=float(sg or 0)
+
+    # Sort by FY total descending
+    sorted_keys=sorted(comp_data.keys(),
+                       key=lambda k:sum(v["tx"] for v in comp_data[k]["months"].values()),
+                       reverse=True)
+
+    grand_m={mk:{"tx":0.,"ig":0.,"cg":0.,"sg":0.} for mn,_,yr in MONTHS for mk in [f"{mn}_{yr}"]}
+    grand_tot={"tx":0.,"ig":0.,"cg":0.,"sg":0.}
+
+    for key in sorted_keys:
+        d=comp_data[key]
+        atx=sum(v["tx"] for v in d["months"].values())
+        bgc="E2EFDA" if atx>=500000 else ("EBF3FB" if atx>=100000 else (ALT2 if rcwm%2==0 else ALT1))
+        for ci3,v3 in enumerate([key,d["name"] or gstin_name_map.get(key,""),d["type"]],1):
+            cc=ws_cwm.cell(row=rcwm,column=ci3,value=v3)
+            cc.font=_font(False,"000000",9); cc.fill=_f(bgc)
+            cc.alignment=_aln("left"); cc.border=_bdr()
+        col_d=4; r_ann={"tx":0.,"ig":0.,"cg":0.,"sg":0.}
+        for mn,_,yr in MONTHS:
+            mk=f"{mn}_{yr}"; md=d["months"][mk]
+            tx=round(md["tx"],2); ig=round(md["ig"],2)
+            cg=round(md["cg"],2); sg=round(md["sg"],2); tt2=round(ig+cg+sg,2)
+            for v3 in [tx,ig,cg,sg,tt2]:
+                cv=ws_cwm.cell(row=rcwm,column=col_d,value=v3 if v3 else "")
+                cv.font=_font(False,"000000",9); cv.fill=_f(bgc)
+                cv.alignment=_aln("right"); cv.border=_bdr()
+                if v3 and isinstance(v3,float): cv.number_format=NUM_FMT
+                col_d+=1
+            r_ann["tx"]+=md["tx"]; r_ann["ig"]+=md["ig"]
+            r_ann["cg"]+=md["cg"]; r_ann["sg"]+=md["sg"]
+            grand_m[mk]["tx"]+=md["tx"]; grand_m[mk]["ig"]+=md["ig"]
+            grand_m[mk]["cg"]+=md["cg"]; grand_m[mk]["sg"]+=md["sg"]
+        for v3 in [round(r_ann["tx"],2),round(r_ann["ig"],2),round(r_ann["cg"],2),
+                   round(r_ann["sg"],2),round(r_ann["ig"]+r_ann["cg"]+r_ann["sg"],2)]:
+            cv=ws_cwm.cell(row=rcwm,column=col_d,value=v3)
+            cv.font=_font(True,"000000",10); cv.fill=_f(TOT_BG)
+            cv.alignment=_aln("right"); cv.border=_bdr()
+            if v3: cv.number_format=NUM_FMT
+            col_d+=1
+        grand_tot["tx"]+=r_ann["tx"]; grand_tot["ig"]+=r_ann["ig"]
+        grand_tot["cg"]+=r_ann["cg"]; grand_tot["sg"]+=r_ann["sg"]
+        ws_cwm.row_dimensions[rcwm].height=16; rcwm+=1
+
+    # Grand total row
+    for ci3,v3 in enumerate([f"GRAND TOTAL ({len(sorted_keys)} companies)","",""],1):
+        cc=ws_cwm.cell(row=rcwm,column=ci3,value=v3)
+        cc.font=_font(True,"FFFFFF",10); cc.fill=_f("1F3864")
+        cc.alignment=_aln("left"); cc.border=_bdr()
+    col_d=4
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"; gm=grand_m[mk]
+        for v3 in [round(gm["tx"],2),round(gm["ig"],2),round(gm["cg"],2),
+                   round(gm["sg"],2),round(gm["ig"]+gm["cg"]+gm["sg"],2)]:
+            cv=ws_cwm.cell(row=rcwm,column=col_d,value=v3)
+            cv.font=_font(True,"FFFFFF",9); cv.fill=_f("1F3864")
+            cv.alignment=_aln("right"); cv.border=_bdr()
+            if v3: cv.number_format=NUM_FMT
+            col_d+=1
+    for v3 in [round(grand_tot["tx"],2),round(grand_tot["ig"],2),round(grand_tot["cg"],2),
+               round(grand_tot["sg"],2),round(grand_tot["ig"]+grand_tot["cg"]+grand_tot["sg"],2)]:
+        cv=ws_cwm.cell(row=rcwm,column=col_d,value=v3)
+        cv.font=_font(True,"FFFFFF",9); cv.fill=_f("C00000")
+        cv.alignment=_aln("right"); cv.border=_bdr()
+        if v3: cv.number_format=NUM_FMT
+        col_d+=1
+    ws_cwm.row_dimensions[rcwm].height=20
+    ws_cwm.sheet_properties.tabColor="1F3864"
+
+    # ==========================================================
+    # COMPANY-WISE VERTICAL SHEET
+    # Layout: Company name as section header, then one ROW per month
+    # Columns: Month | Taxable | IGST | CGST | SGST | Total Tax | Invoice Count
+    # At bottom of each company: FY Total row
+    # Then next company starts (separated by blank + header)
+    # ==========================================================
+    ws_vert = wb.create_sheet("Company_Wise_Vertical")
+    ws_vert.sheet_view.showGridLines = False
+    vert_cols=[("Month",14),("Taxable ₹",18),("IGST ₹",14),
+               ("CGST ₹",14),("SGST ₹",14),("Total Tax ₹",16),("Invoices",10)]
+    title(ws_vert, f"Company-Wise Monthly Detail (Vertical) — {client_name} ({gstin}) — FY {FY_LABEL}", len(vert_cols))
+    ws_vert.merge_cells(f"A2:{get_column_letter(len(vert_cols))}2")
+    sv2=ws_vert["A2"]
+    sv2.value="Each company shown as a separate block | Rows=Months | FY Total at bottom of each block | Sorted by annual taxable"
+    sv2.font=_font(False,"000000",8); sv2.fill=_f("FFF2CC"); sv2.alignment=_aln("left")
+    ws_vert.row_dimensions[2].height=13
+    for ci,(_,w) in enumerate(vert_cols,1):
+        ws_vert.column_dimensions[get_column_letter(ci)].width=w
+    ws_vert.freeze_panes="A3"
+    rv=3
+
+    # Build company→month data (same as Company_Month_Detail)
+    comp_v={}
+    for mn,_,yr in MONTHS:
+        mk=f"{mn}_{yr}"
+        for r in g1_inv_rows.get(mk,[]):
+            inv_type,gstin_r,nm,inum,idt,iv,pos,rate,tv,ig,cg,sg=r
+            if not gstin_r or gstin_r in ("-",""):  continue
+            key=gstin_r.strip()
+            if key not in comp_v:
+                comp_v[key]={"name":nm or gstin_name_map.get(key,""),
+                             "months":{f"{m}_{y}":{"tx":0.,"ig":0.,"cg":0.,"sg":0.,"inv":0}
+                                       for m,__,y in MONTHS}}
+            if not comp_v[key]["name"] and nm:
+                comp_v[key]["name"]=nm
+            comp_v[key]["months"][mk]["tx"]+=float(tv or 0)
+            comp_v[key]["months"][mk]["ig"]+=float(ig or 0)
+            comp_v[key]["months"][mk]["cg"]+=float(cg or 0)
+            comp_v[key]["months"][mk]["sg"]+=float(sg or 0)
+            comp_v[key]["months"][mk]["inv"]+=1
+
+    # Sort companies by annual taxable descending
+    sorted_comp=sorted(comp_v.keys(),
+                       key=lambda k:sum(v["tx"] for v in comp_v[k]["months"].values()),
+                       reverse=True)
+
+    grand_v={"tx":0.,"ig":0.,"cg":0.,"sg":0.,"inv":0}
+
+    for comp_key in sorted_comp:
+        cd=comp_v[comp_key]
+        comp_name=cd["name"] or gstin_name_map.get(comp_key,"")
+        ann_tx=sum(v["tx"] for v in cd["months"].values())
+        ann_ig=sum(v["ig"] for v in cd["months"].values())
+        ann_cg=sum(v["cg"] for v in cd["months"].values())
+        ann_sg=sum(v["sg"] for v in cd["months"].values())
+        ann_inv=sum(v["inv"] for v in cd["months"].values())
+
+        # Company header row (merged, coloured)
+        ws_vert.merge_cells(f"A{rv}:{get_column_letter(len(vert_cols))}{rv}")
+        ch=ws_vert.cell(row=rv,column=1,
+                        value=f"  {comp_key}  |  {comp_name}  |  Annual Total: ₹{round(ann_tx,0):,.0f}")
+        ch.font=_font(True,"FFFFFF",10); ch.fill=_f("2E75B6")
+        ch.alignment=_aln("left"); ch.border=_bdr()
+        ws_vert.row_dimensions[rv].height=18; rv+=1
+
+        # Column headers for this company
+        for ci,(h,_) in enumerate(vert_cols,1):
+            hc=ws_vert.cell(row=rv,column=ci,value=h)
+            hc.font=_font(True,"FFFFFF",9); hc.fill=_f(HDR_BG)
+            hc.alignment=_aln("center"); hc.border=_bdr()
+        ws_vert.row_dimensions[rv].height=16; rv+=1
+
+        # One row per month
+        for mn,_,yr in MONTHS:
+            mk=f"{mn}_{yr}"; md=cd["months"][mk]
+            tx=round(md["tx"],2); ig=round(md["ig"],2)
+            cg=round(md["cg"],2); sg=round(md["sg"],2); tt=round(ig+cg+sg,2)
+            bg_v=ALT2 if rv%2==0 else ALT1
+            for ci,v in enumerate([f"{mn[:3]}-{yr[2:]}",tx,ig,cg,sg,tt,md["inv"]],1):
+                cv=ws_vert.cell(row=rv,column=ci,value=v if v else "")
+                cv.font=_font(False,"000000",9); cv.fill=_f(bg_v)
+                cv.alignment=_aln("right" if ci>1 else "left"); cv.border=_bdr()
+                if isinstance(v,float) and v: cv.number_format=NUM_FMT
+            ws_vert.row_dimensions[rv].height=15; rv+=1
+
+        # FY Total row for this company
+        fy_bg="E2EFDA" if ann_tx>=500000 else ("EBF3FB" if ann_tx>=100000 else TOT_BG)
+        for ci,v in enumerate([f"FY TOTAL — {comp_name[:20]}",
+                                round(ann_tx,2),round(ann_ig,2),round(ann_cg,2),
+                                round(ann_sg,2),round(ann_ig+ann_cg+ann_sg,2),ann_inv],1):
+            cv=ws_vert.cell(row=rv,column=ci,value=v)
+            cv.font=_font(True,"000000",10); cv.fill=_f(fy_bg)
+            cv.alignment=_aln("right" if ci>1 else "left"); cv.border=_bdr()
+            if isinstance(v,float): cv.number_format=NUM_FMT
+        ws_vert.row_dimensions[rv].height=18; rv+=1; rv+=1  # blank row between companies
+
+        grand_v["tx"]+=ann_tx; grand_v["ig"]+=ann_ig
+        grand_v["cg"]+=ann_cg; grand_v["sg"]+=ann_sg; grand_v["inv"]+=ann_inv
+
+    # Grand total all companies
+    ws_vert.merge_cells(f"A{rv}:{get_column_letter(len(vert_cols))}{rv}")
+    gc=ws_vert.cell(row=rv,column=1,
+                    value=f"GRAND TOTAL — All {len(sorted_comp)} Companies — FY {FY_LABEL}")
+    gc.font=_font(True,"FFFFFF",11); gc.fill=_f("C00000")
+    gc.alignment=_aln("left"); gc.border=_bdr(); ws_vert.row_dimensions[rv].height=20; rv+=1
+    for ci,v in enumerate(["APR-MAR",round(grand_v["tx"],2),round(grand_v["ig"],2),
+                             round(grand_v["cg"],2),round(grand_v["sg"],2),
+                             round(grand_v["ig"]+grand_v["cg"]+grand_v["sg"],2),grand_v["inv"]],1):
+        cv=ws_vert.cell(row=rv,column=ci,value=v)
+        cv.font=_font(True,"FFFFFF",10); cv.fill=_f("C00000")
+        cv.alignment=_aln("right" if ci>1 else "left"); cv.border=_bdr()
+        if isinstance(v,float): cv.number_format=NUM_FMT
+    ws_vert.row_dimensions[rv].height=20
+    ws_vert.sheet_properties.tabColor="C00000"
+
+    wb.save(rp)
+    log.info(f"  Annual Reconciliation saved: {rp.name}")
+
+    # ======================================================
+    # SEPARATE WORKBOOK 1: GSTR3B vs R1 — Portal exact format
+    # Sheets: Read me | Q1-APR-JUN | Q2-JUL-SEP | Q3-OCT-DEC | Q4-JAN-MAR | Annual-APR-MAR
+    # ======================================================
+    p_r1 = Path(client_dir)/f"{gstin}_GSTR1R3B_RECONCILED_Summary_{FY_LABEL}.xlsx"
+    wb_r1 = Workbook()
+    wb_r1.remove(wb_r1.active)
+
+    def _r1_readme():
+        ws = wb_r1.create_sheet("Read me")
+        ws.column_dimensions["A"].width=22; ws.column_dimensions["B"].width=34
+        ws.column_dimensions["C"].width=18; ws.column_dimensions["D"].width=16
+        data=[
+            ["Taxpayer's GSTIN", gstin, "Financial year", FY_LABEL],
+            ["Trade name", client_name, "Date of generation",
+             __import__("datetime").datetime.now().strftime("%d-%m-%Y")],
+            [f"Taxpayer GSTIN: {gstin}\nName: {client_name}\nFY: {FY_LABEL}\n"
+             f"GSTR-3B Vs GSTR-1 RECONCILED\n\n"
+             f"NOTE: Data is sourced from downloaded GSTR files."]
+        ]
+        for ri_rm, row in enumerate(data,1):
+            for ci_rm, v in enumerate(row,1):
+                ws.cell(row=ri_rm, column=ci_rm, value=v)
+        ws.row_dimensions[3].height=80
+    _r1_readme()
+
+    # Quarter definitions
+    QUARTERS_R1=[
+        ("Q1 - APR-JUN", MONTHS[0:3]),
+        ("Q2 - JUL-SEP", MONTHS[3:6]),
+        ("Q3 - OCT-DEC", MONTHS[6:9]),
+        ("Q4 - JAN-MAR", MONTHS[9:12]),
+    ]
+
+    def _build_r1_sheet(ws_name, months_list, is_annual=False):
+        gstr1a_row = False  # FIX: must be at function scope, not just before loop
+        ws = wb_r1.create_sheet(ws_name)
+        # Column widths — A/B fixed; all data columns set to 14 so numbers never show #####
+        ws.column_dimensions["A"].width=24
+        ws.column_dimensions["B"].width=52
+        ws.column_dimensions["C"].width=3
+        # Pre-set data columns (col 4 onwards) width=14 for all possible periods
+        _max_data_cols = (4 + 1) * 6 if not is_annual else 6
+        for _ci in range(4, 4 + _max_data_cols + 6):
+            ws.column_dimensions[get_column_letter(_ci)].width = 14
+        col=4
+        if is_annual:
+            labels=["Annual (APR-MAR)"]
+            cols_per_period=6  # Taxable IGST CGST SGST Cess Total
+        else:
+            labels=[m[0] for m in months_list]+[f"Quarter - {ws_name[1]}"]
+            cols_per_period=6
+        for lbl in labels:
+            ws.merge_cells(start_row=4,start_column=col,end_row=4,end_column=col+cols_per_period-2)
+            c4=ws.cell(row=4,column=col,value=lbl)
+            c4.font=Font(name="Arial",bold=True,size=9)
+            c4.alignment=Alignment(horizontal="center")
+            col+=cols_per_period
+        # Header row 5
+        col=4
+        for _ in labels:
+            for hh in ["Taxable","IGST","CGST","SGST","Cess","Total"]:
+                h5=ws.cell(row=5,column=col,value=hh)
+                h5.font=Font(name="Arial",bold=True,size=8)
+                h5.alignment=Alignment(horizontal="center")
+                col+=1
+
+        # Title row
+        ws.merge_cells("A1:B1")
+        t1=ws["A1"]
+        t1.value=f"{FY_LABEL}   Name: {client_name}   GSTIN: {gstin}   GSTR-3B Vs GSTR-1 RECONCILED"
+        t1.font=Font(name="Arial",bold=True,size=10)
+
+        # Data rows
+        ROWS_R1=[
+            # ── SECTION A: GSTR-1 Supply Details (shown FIRST) ──────────────
+            ("GSTR-1 Supply Details","B2B Supplies","r1_b2b"),
+            ("GSTR-1 Supply Details","B2C Small Supplies","r1_b2cs"),
+            ("GSTR-1 Supply Details","B2C Large Supplies","r1_b2cl"),
+            ("GSTR-1 Supply Details","Exports","r1_exp"),
+            ("GSTR-1 Supply Details","Credit/Debit Notes - Registered (Net)","r1_cdncr"),
+            ("GSTR-1 Supply Details","Credit/Debit Notes - Debit Notes","r1_cdndr"),
+            ("GSTR-1 Supply Details","Advance Receipts","zero"),
+            ("GSTR-1 Supply Details","Tax Adjustments","zero"),
+            ("GSTR-1 Supply Details","Nil Rated / Exempt Supplies","r1_nil"),
+            ("GSTR-1 Supply Details","Non-GST Supplies","r1_nongst"),
+            # ── SECTION A1: GSTR-1A — All Table Headers Separately ──────
+            # Direct current-period supplies in GSTR-1A (Tables 4A, 4B, 5, 6A, 6B, 6C, 7)
+            ("GSTR-1A: Direct Supplies","4A - B2B Regular","r1a_4a"),
+            ("GSTR-1A: Direct Supplies","4B - B2B Reverse Charge","r1a_4b"),
+            ("GSTR-1A: Direct Supplies","5 - B2CL Large (inter-state > ₹1L)","r1a_5"),
+            ("GSTR-1A: Direct Supplies","6A - Exports (EXPWP/EXPWOP)","r1a_6a"),
+            ("GSTR-1A: Direct Supplies","6B - SEZ (SEZWP/SEZWOP)","r1a_6b"),
+            ("GSTR-1A: Direct Supplies","6C - Deemed Exports (DE)","r1a_6c"),
+            ("GSTR-1A: Direct Supplies","7 - B2CS Small (Others)","r1a_7"),
+            # 9A Amendments (FULL amended values, not differentials)
+            ("GSTR-1A: 9A Amendments","9A - B2B Regular Amended (Full)","r1a_9a_b2b"),
+            ("GSTR-1A: 9A Amendments","9A - B2B Reverse Charge Amended","r1a_9a_rcm"),
+            ("GSTR-1A: 9A Amendments","9A - B2CL Amended","r1a_9a_b2cl"),
+            ("GSTR-1A: 9A Amendments","9A - Exports Amended (EXPWP/EXPWOP)","r1a_9a_exp"),
+            ("GSTR-1A: 9A Amendments","9A - SEZ Amended (SEZWP/SEZWOP)","r1a_9a_sez"),
+            ("GSTR-1A: 9A Amendments","9A - Deemed Exports Amended (DE)","r1a_9a_de"),
+            # 9B Credit/Debit Notes
+            ("GSTR-1A: Credit Notes","9B CDNR - Credit/Debit Notes Registered (Net)","r1a_9b_cdnr"),
+            ("GSTR-1A: Credit Notes","9B CDNUR - Credit/Debit Notes Unregistered (Net)","r1a_9b_cdnur"),
+            # 9C Amended Credit/Debit Notes
+            ("GSTR-1A: Credit Notes","9C CDNRA - Amended Credit Notes Registered (Net Diff)","r1a_9c"),
+            # Net liability (authoritative portal total — cross-check row)
+            ("GSTR-1A Amendment","Total Liability from GSTR-1A (Portal Net)","r1a_net_liab"),
+            # Grand total rows
+            ("GSTR-1A Amendment","Total from GSTR-1A Only (Calculated)","r1a_tot"),
+            (None,"Total from GSTR-1 + GSTR-1A (B)","tot_r1_incl_1a"),
+            (None,None,None),
+            # ── SECTION B: GSTR-3B Supply Details (shown BELOW) ─────────────
+            ("GSTR-3B Supply Details","3.1(a) - Outward taxable supplies (other than zero rated, nil rated and exempted)","3b_31a"),
+            ("GSTR-3B Supply Details","3.1(b) - Outward taxable supplies (zero rated)","3b_zero"),
+            ("GSTR-3B Supply Details","3.1(c) - Other outward supplies (nil rated, exempted)","3b_nil"),
+            ("GSTR-3B Supply Details","3.1(e) - Non GST outward supplies","3b_nongst"),
+            ("GSTR-3B Supply Details","3.1.1(i) - Taxable supplies where tax is paid by recipient on RCM basis","zero"),
+            ("GSTR-3B Supply Details","3.1.1(ii) - Taxable supplies between distinct persons where tax is paid on RCM","zero"),
+            ("GSTR-3B Supply Details","3.2 - Inter-state supplies to unregistered persons, comp.dealers, UIN holders","zero"),
+            (None,"Total from GSTR-3B (A)","tot_3b"),
+            (None,None,None),
+            (None,None,None),
+            (None,"Difference (A - B)","diff_incl_1a"),
+        ]
+
+        def get_vals(key, months):
+            result=[]
+            for mn,_,yr in months:
+                mk=f"{mn}_{yr}"; d=g1[mk]; d3b=g3b_monthly.get(mk,{})
+                tx_3b=round(d3b.get("taxable",0),2)
+                ig_3b=round(d3b.get("o_igst",0),2); cg_3b=round(d3b.get("o_cgst",0),2); sg_3b=round(d3b.get("o_sgst",0),2)
+                tot_3b_v=round(ig_3b+cg_3b+sg_3b,2)
+                tx_r1=round(d["b2b_tx"]+d["b2cs_tx"],2)
+                ig_r1=round(d["igst"],2); cg_r1=round(d["cgst"],2); sg_r1=round(d["sgst"],2)
+                tot_r1_v=round(ig_r1+cg_r1+sg_r1,2)
+                b2b_ig=round(d["igst"]*d["b2b_tx"]/(tx_r1 or 1),2)
+                b2b_cg=round(d["cgst"]*d["b2b_tx"]/(tx_r1 or 1),2)
+                b2b_sg=round(d["sgst"]*d["b2b_tx"]/(tx_r1 or 1),2)
+                b2cs_cg=round(d["cgst"]*d["b2cs_tx"]/(tx_r1 or 1),2)
+                b2cs_sg=round(d["sgst"]*d["b2cs_tx"]/(tx_r1 or 1),2)
+                # CDN values from g1 dict
+                cdn_cr_v = round(d.get("cdn_cr",0),2)
+                cdn_dr_v = round(d.get("cdn_dr",0),2)
+                cdn_cr_cg= round(d.get("cdn_cg",0)*cdn_cr_v/(cdn_cr_v+cdn_dr_v+0.001),2) if cdn_cr_v else 0
+                cdn_cr_sg= round(d.get("cdn_sg",0)*cdn_cr_v/(cdn_cr_v+cdn_dr_v+0.001),2) if cdn_cr_v else 0
+                cdn_cr_ig= round(d.get("cdn_ig",0)*cdn_cr_v/(cdn_cr_v+cdn_dr_v+0.001),2) if cdn_cr_v else 0
+                cdn_dr_cg= round(d.get("cdn_cg",0)*cdn_dr_v/(cdn_cr_v+cdn_dr_v+0.001),2) if cdn_dr_v else 0
+                cdn_dr_sg= round(d.get("cdn_sg",0)*cdn_dr_v/(cdn_cr_v+cdn_dr_v+0.001),2) if cdn_dr_v else 0
+                cdn_dr_ig= round(d.get("cdn_ig",0)*cdn_dr_v/(cdn_cr_v+cdn_dr_v+0.001),2) if cdn_dr_v else 0
+                nil_v = round(d.get("nil_exempt",0),2)
+                non_gst_v=round(d.get("non_gst",0),2)
+                # --- extra values ---
+                zero_tx_3b = round(d3b.get("zero_taxable",0),2)
+                zero_ig_3b = round(d3b.get("zero_igst",0),2)
+                nongst_3b  = round(d3b.get("non_gst",0),2)
+                exp_r1_tx  = round(d.get("exp_tx",0),2)
+                exp_r1_ig  = round(d.get("exp_igst",0),2)
+                b2cl_r1_tx = round(d.get("b2cl_tx",0),2)
+                # Grand total from 3B = 3.1(a) + 3.1(b) zero + 3.1(c) nil
+                grand_3b_tx = round(tx_3b + zero_tx_3b + round(d3b.get("nil_exempt",0),2),2)
+                # Grand total from R1 = B2B + B2CS + B2CL + Exp + Nil + NonGST - CDN_cr + CDN_dr
+                grand_r1_tx = round(d["b2b_tx"]+d["b2cs_tx"]+b2cl_r1_tx+exp_r1_tx+nil_v+non_gst_v-cdn_cr_v+cdn_dr_v,2)
+                # Net R1 tax = raw GSTR-1 tax MINUS credit-note tax PLUS debit-note tax
+                # cdn_cr_ig/cg/sg are the CDN tax portions already split above
+                grand_r1_ig  = round(ig_r1 - cdn_cr_ig + cdn_dr_ig, 2)
+                grand_r1_cg  = round(cg_r1 - cdn_cr_cg + cdn_dr_cg, 2)
+                grand_r1_sg  = round(sg_r1 - cdn_cr_sg + cdn_dr_sg, 2)
+                grand_r1_tax = round(grand_r1_ig + grand_r1_cg + grand_r1_sg, 2)
+                if   key=="3b_31a":   v=[tx_3b,ig_3b,cg_3b,sg_3b,0,tot_3b_v]
+                elif key=="3b_zero":  v=[zero_tx_3b,zero_ig_3b,0,0,0,zero_ig_3b]
+                elif key=="3b_nil":   v=[round(d3b.get("nil_exempt",0),2),0,0,0,0,0]
+                elif key=="3b_nongst":v=[nongst_3b,0,0,0,0,0]
+                elif key=="tot_3b":
+                    # Grand total 3B = 3.1(a) taxable+tax + 3.1(b) zero + 3.1(c) nil
+                    v=[grand_3b_tx, round(ig_3b+zero_ig_3b,2), cg_3b, sg_3b, 0, round(tot_3b_v+zero_ig_3b,2)]
+                elif key=="r1_b2b":   v=[d["b2b_tx"],b2b_ig,b2b_cg,b2b_sg,0,round(b2b_ig+b2b_cg+b2b_sg,2)]
+                elif key=="r1_b2cs":  v=[d["b2cs_tx"],0,b2cs_cg,b2cs_sg,0,round(b2cs_cg+b2cs_sg,2)]
+                elif key=="r1_b2cl":  v=[b2cl_r1_tx,0,0,0,0,0]
+                elif key=="r1_exp":   v=[exp_r1_tx,exp_r1_ig,0,0,0,exp_r1_ig]
+                elif key=="r1_nil":   v=[nil_v,0,0,0,0,nil_v]
+                elif key=="r1_nongst":v=[non_gst_v,0,0,0,0,non_gst_v]
+                elif key=="r1_cdncr": v=[-cdn_cr_v,-cdn_cr_ig,-cdn_cr_cg,-cdn_cr_sg,0,-round(cdn_cr_ig+cdn_cr_cg+cdn_cr_sg,2)]
+                elif key=="r1_cdndr": v=[cdn_dr_v,cdn_dr_ig,cdn_dr_cg,cdn_dr_sg,0,round(cdn_dr_ig+cdn_dr_cg+cdn_dr_sg,2)]
+                elif key=="tot_r1":
+                    # Taxable: net of CDN (correct). Tax: must also be net of CDN tax.
+                    v=[grand_r1_tx, grand_r1_ig, grand_r1_cg, grand_r1_sg, 0, grand_r1_tax]
+                elif key=="diff":
+                    # Difference = 3B minus net R1 (taxable and tax both CDN-adjusted)
+                    v=[round(grand_3b_tx-grand_r1_tx,2),
+                       round(ig_3b-grand_r1_ig,2), round(cg_3b-grand_r1_cg,2),
+                       round(sg_3b-grand_r1_sg,2), 0, round(tot_3b_v-grand_r1_tax,2)]
+                # ── GSTR-1A amendment rows — per-header (new in v16) ──────
+                # Helper to read a p1a_* field safely
+                elif key=="r1a_4a":
+                    tx=round(d.get("p1a_t4a_b2b_tx",0),2); ig=round(d.get("p1a_t4a_b2b_ig",0),2)
+                    cg=round(d.get("p1a_t4a_b2b_cg",0),2); sg=round(d.get("p1a_t4a_b2b_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_4b":
+                    tx=round(d.get("p1a_t4b_rcm_tx",0),2); ig=round(d.get("p1a_t4b_rcm_ig",0),2)
+                    cg=round(d.get("p1a_t4b_rcm_cg",0),2); sg=round(d.get("p1a_t4b_rcm_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_5":
+                    tx=round(d.get("p1a_t5_b2cl_tx",0),2); ig=round(d.get("p1a_t5_b2cl_ig",0),2)
+                    v=[tx,ig,0,0,0,ig]
+                elif key=="r1a_6a":
+                    tx=round(d.get("p1a_t6a_exp_tx",0),2); ig=round(d.get("p1a_t6a_exp_ig",0),2)
+                    v=[tx,ig,0,0,0,ig]
+                elif key=="r1a_6b":
+                    tx=round(d.get("p1a_t6b_sez_tx",0),2); ig=round(d.get("p1a_t6b_sez_ig",0),2)
+                    v=[tx,ig,0,0,0,ig]
+                elif key=="r1a_6c":
+                    tx=round(d.get("p1a_t6c_de_tx",0),2); ig=round(d.get("p1a_t6c_de_ig",0),2)
+                    cg=round(d.get("p1a_t6c_de_cg",0),2); sg=round(d.get("p1a_t6c_de_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_7":
+                    tx=round(d.get("p1a_t7_b2cs_tx",0),2); ig=round(d.get("p1a_t7_b2cs_ig",0),2)
+                    cg=round(d.get("p1a_t7_b2cs_cg",0),2); sg=round(d.get("p1a_t7_b2cs_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_9a_b2b":
+                    tx=round(d.get("p1a_t9a_b2b_tx",0),2); ig=round(d.get("p1a_t9a_b2b_ig",0),2)
+                    cg=round(d.get("p1a_t9a_b2b_cg",0),2); sg=round(d.get("p1a_t9a_b2b_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_9a_rcm":
+                    tx=round(d.get("p1a_t9a_rcm_tx",0),2); ig=round(d.get("p1a_t9a_rcm_ig",0),2)
+                    cg=round(d.get("p1a_t9a_rcm_cg",0),2); sg=round(d.get("p1a_t9a_rcm_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_9a_b2cl":
+                    tx=round(d.get("p1a_t9a_b2cl_tx",0),2); ig=round(d.get("p1a_t9a_b2cl_ig",0),2)
+                    v=[tx,ig,0,0,0,ig]
+                elif key=="r1a_9a_exp":
+                    tx=round(d.get("p1a_t9a_exp_tx",0),2); ig=round(d.get("p1a_t9a_exp_ig",0),2)
+                    v=[tx,ig,0,0,0,ig]
+                elif key=="r1a_9a_sez":
+                    tx=round(d.get("p1a_t9a_sez_tx",0),2); ig=round(d.get("p1a_t9a_sez_ig",0),2)
+                    v=[tx,ig,0,0,0,ig]
+                elif key=="r1a_9a_de":
+                    tx=round(d.get("p1a_t9a_de_tx",0),2); ig=round(d.get("p1a_t9a_de_ig",0),2)
+                    cg=round(d.get("p1a_t9a_de_cg",0),2); sg=round(d.get("p1a_t9a_de_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_9b_cdnr":
+                    # 9B CDNR: portal stores as signed negative — display as negative
+                    tx=round(d.get("p1a_t9b_cdnr_tx",0),2); ig=round(d.get("p1a_t9b_cdnr_ig",0),2)
+                    cg=round(d.get("p1a_t9b_cdnr_cg",0),2); sg=round(d.get("p1a_t9b_cdnr_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_9b_cdnur":
+                    tx=round(d.get("p1a_t9b_cdnur_tx",0),2); ig=round(d.get("p1a_t9b_cdnur_ig",0),2)
+                    v=[tx,ig,0,0,0,ig]
+                elif key=="r1a_9c":
+                    tx=round(d.get("p1a_t9c_cdnra_tx",0),2); ig=round(d.get("p1a_t9c_cdnra_ig",0),2)
+                    cg=round(d.get("p1a_t9c_cdnra_cg",0),2); sg=round(d.get("p1a_t9c_cdnra_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_net_liab":
+                    # Total Liability from portal PDF — authoritative net cross-check row
+                    tx=round(d.get("p1a_total_liab_tx",0),2); ig=round(d.get("p1a_total_liab_ig",0),2)
+                    cg=round(d.get("p1a_total_liab_cg",0),2); sg=round(d.get("p1a_total_liab_sg",0),2)
+                    v=[tx,ig,cg,sg,0,round(ig+cg+sg,2)]
+                elif key=="r1a_b2b":
+                    # Legacy key: keep for backward compat
+                    b1a_tx= round(d.get("b2b_1a_tx", 0), 2)
+                    b1a_ig= round(d.get("b2b_1a_ig", 0), 2)
+                    b1a_cg= round(d.get("b2b_1a_cg", 0), 2)
+                    b1a_sg= round(d.get("b2b_1a_sg", 0), 2)
+                    if b1a_tx == 0 and b1a_cg == 0:
+                        v=[0,0,0,0,0,0]
+                    else:
+                        v=[b1a_tx, b1a_ig, b1a_cg, b1a_sg, 0, round(b1a_ig+b1a_cg+b1a_sg, 2)]
+                elif key=="r1a_cdncr":
+                    # Row 17: GSTR-1A CDNR credit notes (stored as negatives)
+                    c1a = round(d.get("cdn_1a_cr", 0), 2)
+                    ig1a= round(d.get("cdn_1a_ig", 0), 2)
+                    cg1a= round(d.get("cdn_1a_cg", 0), 2)
+                    sg1a= round(d.get("cdn_1a_sg", 0), 2)
+                    v=[-c1a, -ig1a, -cg1a, -sg1a, 0, -round(ig1a+cg1a+sg1a, 2)]
+                elif key=="r1a_tot":
+                    # Row 18: Total from GSTR-1A Only.
+                    # PRIMARY: use Total Liability directly from the PDF — this is the
+                    # authoritative portal net that already accounts for ALL sections
+                    # (4A + 9A amended B2B + 9B CDNR etc.) internally.
+                    # FALLBACK: calculate B2B - CDNR when no PDF data is available.
+                    nl_tx = round(d.get("p1a_total_liab_tx", 0), 2)
+                    nl_ig = round(d.get("p1a_total_liab_ig", 0), 2)
+                    nl_cg = round(d.get("p1a_total_liab_cg", 0), 2)
+                    nl_sg = round(d.get("p1a_total_liab_sg", 0), 2)
+                    b1a_tx= round(d.get("b2b_1a_tx", 0), 2)
+                    b1a_cg= round(d.get("b2b_1a_cg", 0), 2)
+                    has_1a = (b1a_tx != 0 or b1a_cg != 0
+                              or nl_tx != 0 or nl_ig != 0)
+                    if not has_1a:
+                        v=[0,0,0,0,0,0]   # No GSTR-1A filed this month
+                    elif nl_tx != 0 or nl_ig != 0:
+                        # Use PDF Total Liability (authoritative portal net)
+                        v=[nl_tx, nl_ig, nl_cg, nl_sg, 0, round(nl_ig+nl_cg+nl_sg, 2)]
+                    else:
+                        # Fallback: B2B - CDNR calculation
+                        b1a_ig= round(d.get("b2b_1a_ig", 0), 2)
+                        b1a_sg= round(d.get("b2b_1a_sg", 0), 2)
+                        c1a = round(d.get("cdn_1a_cr", 0), 2)
+                        ig1a= round(d.get("cdn_1a_ig", 0), 2)
+                        cg1a= round(d.get("cdn_1a_cg", 0), 2)
+                        sg1a= round(d.get("cdn_1a_sg", 0), 2)
+                        net_tx = round(b1a_tx - c1a, 2)
+                        net_ig = round(b1a_ig - ig1a, 2)
+                        net_cg = round(b1a_cg - cg1a, 2)
+                        net_sg = round(b1a_sg - sg1a, 2)
+                        v=[net_tx, net_ig, net_cg, net_sg, 0, round(net_ig+net_cg+net_sg, 2)]
+                elif key=="tot_r1_incl_1a":
+                    # Row 19: Total GSTR-1 + GSTR-1A (B)
+                    # GSTR-1A net = PDF Total Liability (authoritative) when available,
+                    # else fallback to B2B - CDNR calculation.
+                    # ADD GSTR-1A net on top of full GSTR-1 total (original B2B intact).
+                    nl_tx = round(d.get("p1a_total_liab_tx", 0), 2)
+                    nl_ig = round(d.get("p1a_total_liab_ig", 0), 2)
+                    nl_cg = round(d.get("p1a_total_liab_cg", 0), 2)
+                    nl_sg = round(d.get("p1a_total_liab_sg", 0), 2)
+                    b1a_tx= round(d.get("b2b_1a_tx", 0), 2)
+                    b1a_ig= round(d.get("b2b_1a_ig", 0), 2)
+                    b1a_cg= round(d.get("b2b_1a_cg", 0), 2)
+                    b1a_sg= round(d.get("b2b_1a_sg", 0), 2)
+                    c1a   = round(d.get("cdn_1a_cr", 0), 2)
+                    ig1a  = round(d.get("cdn_1a_ig", 0), 2)
+                    cg1a  = round(d.get("cdn_1a_cg", 0), 2)
+                    sg1a  = round(d.get("cdn_1a_sg", 0), 2)
+                    has_1a = (b1a_tx != 0 or b1a_cg != 0 or nl_tx != 0 or nl_ig != 0)
+                    if not has_1a:
+                        combined_tx = grand_r1_tx
+                        combined_ig = grand_r1_ig; combined_cg = grand_r1_cg; combined_sg = grand_r1_sg
+                    elif nl_tx != 0 or nl_ig != 0:
+                        # Use PDF Total Liability as authoritative GSTR-1A net
+                        combined_tx = round(grand_r1_tx + nl_tx, 2)
+                        combined_ig = round(grand_r1_ig + nl_ig, 2)
+                        combined_cg = round(grand_r1_cg + nl_cg, 2)
+                        combined_sg = round(grand_r1_sg + nl_sg, 2)
+                    else:
+                        # Fallback: B2B - CDNR calculation
+                        combined_tx = round(grand_r1_tx + b1a_tx - c1a, 2)
+                        combined_ig = round(grand_r1_ig + b1a_ig - ig1a, 2)
+                        combined_cg = round(grand_r1_cg + b1a_cg - cg1a, 2)
+                        combined_sg = round(grand_r1_sg + b1a_sg - sg1a, 2)
+                    combined_tot = round(combined_ig+combined_cg+combined_sg, 2)
+                    v=[combined_tx, combined_ig, combined_cg, combined_sg, 0, combined_tot]
+                elif key=="diff_incl_1a":
+                    # Difference = GSTR-3B (A) - Total GSTR-1+1A (B)
+                    # Uses PDF Total Liability as GSTR-1A net (same as tot_r1_incl_1a)
+                    nl_tx = round(d.get("p1a_total_liab_tx", 0), 2)
+                    nl_ig = round(d.get("p1a_total_liab_ig", 0), 2)
+                    nl_cg = round(d.get("p1a_total_liab_cg", 0), 2)
+                    nl_sg = round(d.get("p1a_total_liab_sg", 0), 2)
+                    b1a_tx= round(d.get("b2b_1a_tx", 0), 2)
+                    b1a_ig= round(d.get("b2b_1a_ig", 0), 2)
+                    b1a_cg= round(d.get("b2b_1a_cg", 0), 2)
+                    b1a_sg= round(d.get("b2b_1a_sg", 0), 2)
+                    c1a   = round(d.get("cdn_1a_cr", 0), 2)
+                    ig1a  = round(d.get("cdn_1a_ig", 0), 2)
+                    cg1a  = round(d.get("cdn_1a_cg", 0), 2)
+                    sg1a  = round(d.get("cdn_1a_sg", 0), 2)
+                    has_1a = (b1a_tx != 0 or b1a_cg != 0 or nl_tx != 0 or nl_ig != 0)
+                    if not has_1a:
+                        combined_tx=grand_r1_tx; combined_ig=grand_r1_ig; combined_cg=grand_r1_cg; combined_sg=grand_r1_sg
+                    elif nl_tx != 0 or nl_ig != 0:
+                        combined_tx=round(grand_r1_tx+nl_tx,2); combined_ig=round(grand_r1_ig+nl_ig,2)
+                        combined_cg=round(grand_r1_cg+nl_cg,2); combined_sg=round(grand_r1_sg+nl_sg,2)
+                    else:
+                        combined_tx=round(grand_r1_tx+b1a_tx-c1a,2); combined_ig=round(grand_r1_ig+b1a_ig-ig1a,2)
+                        combined_cg=round(grand_r1_cg+b1a_cg-cg1a,2); combined_sg=round(grand_r1_sg+b1a_sg-sg1a,2)
+                    v=[round(grand_3b_tx-combined_tx,2),
+                       round(ig_3b-combined_ig,2),round(cg_3b-combined_cg,2),
+                       round(sg_3b-combined_sg,2),0,round(tot_3b_v-(combined_ig+combined_cg+combined_sg),2)]
+                else:                 v=[0,0,0,0,0,0]
+                result.extend(v)
+            # Quarter total (appended as extra column after month columns)
+            if not is_annual:
+                for i in range(6):
+                    result.append(round(sum(result[i::6][:len(months)]),2))
+            return result
+
+        def get_annual_vals(key):
+            """For annual sheet: sum the given key across ALL 12 months."""
+            # Sum each of the 6 columns across all 12 months
+            totals = [0.0]*6
+            for mn,_,yr in MONTHS:
+                mk=f"{mn}_{yr}"; d=g1[mk]; d3b=g3b_monthly.get(mk,{})
+                tx_3b=round(d3b.get("taxable",0),2)
+                ig_3b=round(d3b.get("o_igst",0),2); cg_3b=round(d3b.get("o_cgst",0),2); sg_3b=round(d3b.get("o_sgst",0),2)
+                tot_3b_v=round(ig_3b+cg_3b+sg_3b,2)
+                tx_r1=round(d["b2b_tx"]+d["b2cs_tx"],2)
+                ig_r1=round(d["igst"],2); cg_r1=round(d["cgst"],2); sg_r1=round(d["sgst"],2)
+                tot_r1_v=round(ig_r1+cg_r1+sg_r1,2)
+                b2b_ig=round(d["igst"]*d["b2b_tx"]/(tx_r1 or 1),2)
+                b2b_cg=round(d["cgst"]*d["b2b_tx"]/(tx_r1 or 1),2)
+                b2b_sg=round(d["sgst"]*d["b2b_tx"]/(tx_r1 or 1),2)
+                b2cs_cg=round(d["cgst"]*d["b2cs_tx"]/(tx_r1 or 1),2)
+                b2cs_sg=round(d["sgst"]*d["b2cs_tx"]/(tx_r1 or 1),2)
+                cdn_cr_v=round(d.get("cdn_cr",0),2); cdn_dr_v=round(d.get("cdn_dr",0),2)
+                cdn_ig=round(d.get("cdn_ig",0),2); cdn_cg=round(d.get("cdn_cg",0),2); cdn_sg=round(d.get("cdn_sg",0),2)
+                nil_v=round(d.get("nil_exempt",0),2); non_gst_v=round(d.get("non_gst",0),2)
+                zero_tx_3b = round(d3b.get("zero_taxable",0),2)
+                zero_ig_3b = round(d3b.get("zero_igst",0),2)
+                nongst_3b  = round(d3b.get("non_gst",0),2)
+                exp_r1_tx  = round(d.get("exp_tx",0),2)
+                exp_r1_ig  = round(d.get("exp_igst",0),2)
+                b2cl_r1_tx = round(d.get("b2cl_tx",0),2)
+                grand_3b_tx = round(tx_3b+zero_tx_3b+round(d3b.get("nil_exempt",0),2),2)
+                grand_r1_tx = round(d["b2b_tx"]+d["b2cs_tx"]+b2cl_r1_tx+exp_r1_tx+nil_v+non_gst_v-cdn_cr_v+cdn_dr_v,2)
+                # Split combined cdn_ig/cg/sg into credit-note and debit-note portions
+                _cdn_total = cdn_cr_v + cdn_dr_v + 0.001
+                cdn_cr_ig = round(cdn_ig * cdn_cr_v / _cdn_total, 2) if cdn_cr_v else 0
+                cdn_cr_cg = round(cdn_cg * cdn_cr_v / _cdn_total, 2) if cdn_cr_v else 0
+                cdn_cr_sg = round(cdn_sg * cdn_cr_v / _cdn_total, 2) if cdn_cr_v else 0
+                cdn_dr_ig = round(cdn_ig * cdn_dr_v / _cdn_total, 2) if cdn_dr_v else 0
+                cdn_dr_cg = round(cdn_cg * cdn_dr_v / _cdn_total, 2) if cdn_dr_v else 0
+                cdn_dr_sg = round(cdn_sg * cdn_dr_v / _cdn_total, 2) if cdn_dr_v else 0
+                # Net R1 tax = raw GSTR-1 tax minus credit-note tax plus debit-note tax
+                grand_r1_ig  = round(ig_r1 - cdn_cr_ig + cdn_dr_ig, 2)
+                grand_r1_cg  = round(cg_r1 - cdn_cr_cg + cdn_dr_cg, 2)
+                grand_r1_sg  = round(sg_r1 - cdn_cr_sg + cdn_dr_sg, 2)
+                grand_r1_tax = round(grand_r1_ig + grand_r1_cg + grand_r1_sg, 2)
+                if   key=="3b_31a":   v=[tx_3b,ig_3b,cg_3b,sg_3b,0,tot_3b_v]
+                elif key=="3b_zero":  v=[zero_tx_3b,zero_ig_3b,0,0,0,zero_ig_3b]
+                elif key=="3b_nil":   v=[round(d3b.get("nil_exempt",0),2),0,0,0,0,0]
+                elif key=="3b_nongst":v=[nongst_3b,0,0,0,0,0]
+                elif key=="tot_3b":   v=[grand_3b_tx,round(ig_3b+zero_ig_3b,2),cg_3b,sg_3b,0,round(tot_3b_v+zero_ig_3b,2)]
+                elif key=="r1_b2b":   v=[d["b2b_tx"],b2b_ig,b2b_cg,b2b_sg,0,round(b2b_ig+b2b_cg+b2b_sg,2)]
+                elif key=="r1_b2cs":  v=[d["b2cs_tx"],0,b2cs_cg,b2cs_sg,0,round(b2cs_cg+b2cs_sg,2)]
+                elif key=="r1_b2cl":  v=[b2cl_r1_tx,0,0,0,0,0]
+                elif key=="r1_exp":   v=[exp_r1_tx,exp_r1_ig,0,0,0,exp_r1_ig]
+                elif key=="r1_nil":   v=[nil_v,0,0,0,0,nil_v]
+                elif key=="r1_nongst":v=[non_gst_v,0,0,0,0,non_gst_v]
+                elif key=="r1_cdncr": v=[-cdn_cr_v,0,0,0,0,0]
+                elif key=="r1_cdndr": v=[cdn_dr_v,0,0,0,0,0]
+                elif key=="tot_r1":   v=[grand_r1_tx, grand_r1_ig, grand_r1_cg, grand_r1_sg, 0, grand_r1_tax]
+                elif key=="diff":     v=[round(grand_3b_tx-grand_r1_tx,2), round(ig_3b-grand_r1_ig,2),
+                                        round(cg_3b-grand_r1_cg,2), round(sg_3b-grand_r1_sg,2), 0, round(tot_3b_v-grand_r1_tax,2)]
+                elif key=="r1a_b2b":
+                    # FULL GSTR-1A B2B amount — GUARD: zero if no GSTR-1A filed
+                    b1a_tx=round(d.get("b2b_1a_tx",0),2); b1a_ig=round(d.get("b2b_1a_ig",0),2)
+                    b1a_cg=round(d.get("b2b_1a_cg",0),2); b1a_sg=round(d.get("b2b_1a_sg",0),2)
+                    if b1a_tx==0 and b1a_cg==0:
+                        v=[0,0,0,0,0,0]
+                    else:
+                        v=[b1a_tx,b1a_ig,b1a_cg,b1a_sg,0,round(b1a_ig+b1a_cg+b1a_sg,2)]
+                elif key=="r1a_cdncr":
+                    c1a=round(d.get("cdn_1a_cr",0),2); ig1a=round(d.get("cdn_1a_ig",0),2)
+                    cg1a=round(d.get("cdn_1a_cg",0),2); sg1a=round(d.get("cdn_1a_sg",0),2)
+                    v=[-c1a,-ig1a,-cg1a,-sg1a,0,-round(ig1a+cg1a+sg1a,2)]
+                elif key=="r1a_tot":
+                    # GSTR-1A Sub-total (Annual): use PDF Total Liability when available
+                    nl_tx=round(d.get("p1a_total_liab_tx",0),2); nl_ig=round(d.get("p1a_total_liab_ig",0),2)
+                    nl_cg=round(d.get("p1a_total_liab_cg",0),2); nl_sg=round(d.get("p1a_total_liab_sg",0),2)
+                    b1a_tx=round(d.get("b2b_1a_tx",0),2); b1a_cg=round(d.get("b2b_1a_cg",0),2)
+                    has_1a=(b1a_tx!=0 or b1a_cg!=0 or nl_tx!=0 or nl_ig!=0)
+                    if not has_1a:
+                        v=[0,0,0,0,0,0]
+                    elif nl_tx!=0 or nl_ig!=0:
+                        v=[nl_tx,nl_ig,nl_cg,nl_sg,0,round(nl_ig+nl_cg+nl_sg,2)]
+                    else:
+                        b1a_ig=round(d.get("b2b_1a_ig",0),2); b1a_sg=round(d.get("b2b_1a_sg",0),2)
+                        c1a=round(d.get("cdn_1a_cr",0),2); ig1a=round(d.get("cdn_1a_ig",0),2)
+                        cg1a=round(d.get("cdn_1a_cg",0),2); sg1a=round(d.get("cdn_1a_sg",0),2)
+                        nt=round(b1a_tx-c1a,2); ni=round(b1a_ig-ig1a,2); nc=round(b1a_cg-cg1a,2); ns=round(b1a_sg-sg1a,2)
+                        v=[nt,ni,nc,ns,0,round(ni+nc+ns,2)]
+                elif key=="tot_r1_incl_1a":
+                    # Total = Full GSTR-1 total (CDN-netted) + GSTR-1A net
+                    # PRIORITY: use PDF Total Liability (authoritative portal net) when available
+                    nl_tx=round(d.get("p1a_total_liab_tx",0),2); nl_ig=round(d.get("p1a_total_liab_ig",0),2)
+                    nl_cg=round(d.get("p1a_total_liab_cg",0),2); nl_sg=round(d.get("p1a_total_liab_sg",0),2)
+                    b1a_tx=round(d.get("b2b_1a_tx",0),2); b1a_ig=round(d.get("b2b_1a_ig",0),2)
+                    b1a_cg=round(d.get("b2b_1a_cg",0),2); b1a_sg=round(d.get("b2b_1a_sg",0),2)
+                    c1a=round(d.get("cdn_1a_cr",0),2); ig1a=round(d.get("cdn_1a_ig",0),2)
+                    cg1a=round(d.get("cdn_1a_cg",0),2); sg1a=round(d.get("cdn_1a_sg",0),2)
+                    has_1a=(b1a_tx!=0 or b1a_cg!=0 or nl_tx!=0 or nl_ig!=0)
+                    if not has_1a:
+                        comb_tx=grand_r1_tx; comb_ig=grand_r1_ig; comb_cg=grand_r1_cg; comb_sg=grand_r1_sg
+                    elif nl_tx!=0 or nl_ig!=0:
+                        # Use PDF Total Liability as GSTR-1A net (same logic as get_vals)
+                        comb_tx=round(grand_r1_tx+nl_tx,2); comb_ig=round(grand_r1_ig+nl_ig,2)
+                        comb_cg=round(grand_r1_cg+nl_cg,2); comb_sg=round(grand_r1_sg+nl_sg,2)
+                    else:
+                        comb_tx=round(grand_r1_tx+b1a_tx-c1a,2)
+                        comb_ig=round(grand_r1_ig+b1a_ig-ig1a,2)
+                        comb_cg=round(grand_r1_cg+b1a_cg-cg1a,2)
+                        comb_sg=round(grand_r1_sg+b1a_sg-sg1a,2)
+                    v=[comb_tx,comb_ig,comb_cg,comb_sg,0,round(comb_ig+comb_cg+comb_sg,2)]
+                elif key=="diff_incl_1a":
+                    # Difference = GSTR-3B (A) - Total GSTR-1+1A (B) — same PDF priority logic
+                    nl_tx=round(d.get("p1a_total_liab_tx",0),2); nl_ig=round(d.get("p1a_total_liab_ig",0),2)
+                    nl_cg=round(d.get("p1a_total_liab_cg",0),2); nl_sg=round(d.get("p1a_total_liab_sg",0),2)
+                    b1a_tx=round(d.get("b2b_1a_tx",0),2); b1a_ig=round(d.get("b2b_1a_ig",0),2)
+                    b1a_cg=round(d.get("b2b_1a_cg",0),2); b1a_sg=round(d.get("b2b_1a_sg",0),2)
+                    c1a=round(d.get("cdn_1a_cr",0),2); ig1a=round(d.get("cdn_1a_ig",0),2)
+                    cg1a=round(d.get("cdn_1a_cg",0),2); sg1a=round(d.get("cdn_1a_sg",0),2)
+                    has_1a=(b1a_tx!=0 or b1a_cg!=0 or nl_tx!=0 or nl_ig!=0)
+                    if not has_1a:
+                        comb_tx=grand_r1_tx; comb_ig=grand_r1_ig; comb_cg=grand_r1_cg; comb_sg=grand_r1_sg
+                    elif nl_tx!=0 or nl_ig!=0:
+                        comb_tx=round(grand_r1_tx+nl_tx,2); comb_ig=round(grand_r1_ig+nl_ig,2)
+                        comb_cg=round(grand_r1_cg+nl_cg,2); comb_sg=round(grand_r1_sg+nl_sg,2)
+                    else:
+                        comb_tx=round(grand_r1_tx+b1a_tx-c1a,2)
+                        comb_ig=round(grand_r1_ig+b1a_ig-ig1a,2)
+                        comb_cg=round(grand_r1_cg+b1a_cg-cg1a,2)
+                        comb_sg=round(grand_r1_sg+b1a_sg-sg1a,2)
+                    v=[round(grand_3b_tx-comb_tx,2),round(ig_3b-comb_ig,2),
+                       round(cg_3b-comb_cg,2),round(sg_3b-comb_sg,2),0,round(tot_3b_v-(comb_ig+comb_cg+comb_sg),2)]
+                else:                 v=[0,0,0,0,0,0]
+                for i in range(6): totals[i]+=float(v[i] if i<len(v) else 0)
+            return [round(x,2) for x in totals]
+
+        data_r=6
+        for sect,part,key in ROWS_R1:
+            if key is None:
+                data_r+=1; continue
+            is_1a_row  = key in ("r1a_b2b", "r1a_cdncr", "r1a_tot")
+            is_diff_row= key in ("diff", "diff_incl_1a")
+            bold_row   = key in ("tot_3b","tot_r1","tot_r1_incl_1a","r1a_tot","diff","diff_incl_1a")
+            # Label cells — normal black, bold for 1A rows to distinguish them
+            lbl_font = Font(name="Arial", bold=is_1a_row, size=9)
+            ws.cell(row=data_r,column=1,value=sect).font=lbl_font
+            ws.cell(row=data_r,column=2,value=part).font=Font(name="Arial",bold=is_1a_row,size=9)
+            # Subtle amber background for GSTR-1A amendment rows
+            if is_1a_row:
+                for ci_bg in range(1, NCOLS+1):
+                    ws.cell(row=data_r,column=ci_bg).fill=PatternFill("solid",fgColor="FFF2CC")
+            vals = get_annual_vals(key) if is_annual else get_vals(key, months_list)
+            col=4
+            for v in vals:
+                cv=ws.cell(row=data_r,column=col,value=v)
+                cv.font=Font(name="Arial",bold=(bold_row or is_1a_row),size=9)
+                if isinstance(v,(int,float)) and v!=0:
+                    cv.number_format="#,##0.00"
+                # Green fill if difference = 0, red if non-zero
+                if is_diff_row and isinstance(v,(int,float)):
+                    if abs(v) < 1:
+                        cv.fill=PatternFill("solid", fgColor="C6EFCE")
+                        cv.font=Font(name="Arial",bold=True,color="276221",size=9)
+                    else:
+                        cv.fill=PatternFill("solid", fgColor="FFC7CE")
+                        cv.font=Font(name="Arial",bold=True,color="9C0006",size=9)
+                col+=1
+            data_r+=1
+
+    for q_name, q_months in QUARTERS_R1:
+        _build_r1_sheet(q_name, q_months)
+    _build_r1_sheet("Annual - APR-MAR", MONTHS, is_annual=True)
+
+    wb_r1.save(str(p_r1))
+    log.info(f"  Saved R1  Recon: {p_r1.name}")
+
+    # ======================================================
+    # SEPARATE WORKBOOK 2: GSTR3B vs R2A — Portal exact format
+    # ======================================================
+    p_r2a = Path(client_dir)/f"{gstin}_GSTR3BR2A_RECONCILED_Summary_{FY_LABEL}.xlsx"
+    wb_r2a = Workbook()
+    wb_r2a.remove(wb_r2a.active)
+
+    def _r2a_readme():
+        ws = wb_r2a.create_sheet("Read me")
+        ws.column_dimensions["A"].width=22; ws.column_dimensions["B"].width=34
+        ws.column_dimensions["C"].width=18; ws.column_dimensions["D"].width=16
+        data=[
+            ["Taxpayer's GSTIN", gstin, "Financial year", FY_LABEL],
+            ["Trade name", client_name, "Date of generation",
+             __import__("datetime").datetime.now().strftime("%d-%m-%Y")],
+            [f"Taxpayer GSTIN: {gstin}\nName: {client_name}\nFY: {FY_LABEL}\n"
+             f"GSTR-3B Vs GSTR-2A RECONCILED\n\n"
+             f"NOTE: Data is sourced from downloaded GSTR files."]
+        ]
+        for ri_rm, row in enumerate(data,1):
+            for ci_rm, v in enumerate(row,1):
+                ws.cell(row=ri_rm, column=ci_rm, value=v)
+        ws.row_dimensions[3].height=80
+    _r2a_readme()
+
+    QUARTERS_R2A=[
+        ("Q1 - APR-JUN", MONTHS[0:3]),
+        ("Q2 - JUL-SEP", MONTHS[3:6]),
+        ("Q3 - OCT-DEC", MONTHS[6:9]),
+        ("Q4 - JAN-MAR", MONTHS[9:12]),
+    ]
+
+    def _build_r2a_sheet(ws_name, months_list, is_annual=False):
+        ws = wb_r2a.create_sheet(ws_name)
+        ws.column_dimensions["A"].width=24
+        ws.column_dimensions["B"].width=52
+        ws.column_dimensions["C"].width=3
+        _max_data_cols2 = (4 + 1) * 5 if not is_annual else 5
+        for _ci2 in range(4, 4 + _max_data_cols2 + 5):
+            ws.column_dimensions[get_column_letter(_ci2)].width = 14
+        col=4
+        if is_annual:
+            labels=["Annual (APR-MAR)"]
+        else:
+            labels=[m[0] for m in months_list]+[f"Quarter - {ws_name[1]}"]
+        for lbl in labels:
+            ws.merge_cells(start_row=4,start_column=col,end_row=4,end_column=col+4)
+            c4=ws.cell(row=4,column=col,value=lbl)
+            c4.font=Font(name="Arial",bold=True,size=9); c4.alignment=Alignment(horizontal="center")
+            col+=5
+        col=4
+        for _ in labels:
+            for hh in ["IGST","CGST","SGST","Cess","Total"]:
+                h5=ws.cell(row=5,column=col,value=hh)
+                h5.font=Font(name="Arial",bold=True,size=8); h5.alignment=Alignment(horizontal="center")
+                col+=1
+        ws.merge_cells("A1:B1")
+        t1=ws["A1"]
+        t1.value=f"{FY_LABEL}   Name: {client_name}   GSTIN: {gstin}   GSTR-3B Vs GSTR-2A RECONCILED"
+        t1.font=Font(name="Arial",bold=True,size=10)
+
+        ROWS_R2A=[
+            ("GSTR-3B ITC Details (Table 4)","4A(5) - All other ITC (excluding ISD, Import of Services)","3b_itc"),
+            (None,"4B - ITC Reversed","zero"),
+            (None,"Total from GSTR-3B (A)","tot_3b"),
+            (None,None,None),(None,None,None),(None,None,None),
+            ("GSTR-2A ITC Details","B2B","r2a_b2b"),
+            (None,"CDNR","zero"),(None,"TDS","zero"),(None,"TCS","zero"),
+            (None,"Total from GSTR-2A (B)","tot_r2a"),
+            (None,None,None),(None,None,None),(None,None,None),
+            (None,"Difference (A - B)","diff_itc"),
+            (None,None,None),(None,None,None),(None,None,None),(None,None,None),
+            ("ISD Details",None,None),
+            ("GSTR-3B ISD Details","4A(4) - Inward supplies from ISD","zero"),
+            ("GSTR-2A ISD Details","Total from GSTR-2A (D)","zero"),
+            (None,"Difference (C - D)","zero"),
+        ]
+
+        def get_r2a_vals(key, months):
+            """For quarterly sheets: returns per-month values + quarter total."""
+            result=[]
+            for mn,_,yr in months:
+                mk=f"{mn}_{yr}"
+                d3b=g3b_monthly.get(mk,{})
+                ig_3b=round(d3b.get("itc_igst",0),2); cg_3b=round(d3b.get("itc_cgst",0),2)
+                sg_3b=round(d3b.get("itc_sgst",0),2); tot_3b_v=round(ig_3b+cg_3b+sg_3b,2)
+                ig_2a=round(g2a[mk]["tot"].get("igst",0),2); cg_2a=round(g2a[mk]["tot"].get("cgst",0),2)
+                sg_2a=round(g2a[mk]["tot"].get("sgst",0),2); tot_2a=round(ig_2a+cg_2a+sg_2a,2)
+                if   key=="3b_itc":  v=[ig_3b,cg_3b,sg_3b,0,tot_3b_v]
+                elif key=="tot_3b":  v=[ig_3b,cg_3b,sg_3b,0,tot_3b_v]
+                elif key=="r2a_b2b": v=[ig_2a,cg_2a,sg_2a,0,tot_2a]
+                elif key=="tot_r2a": v=[ig_2a,cg_2a,sg_2a,0,tot_2a]
+                elif key=="diff_itc":v=[round(ig_3b-ig_2a,2),round(cg_3b-cg_2a,2),round(sg_3b-sg_2a,2),0,round(tot_3b_v-tot_2a,2)]
+                else:                v=[0,0,0,0,0]
+                result.extend(v)
+            # Quarter total column
+            for i in range(5):
+                result.append(round(sum(result[i::5][:len(months)]),2))
+            return result
+
+        def get_annual_r2a_vals(key):
+            """For annual sheet: SUM all 12 months into a single 5-value list."""
+            totals=[0.0]*5
+            for mn,_,yr in MONTHS:   # always iterate ALL 12 months
+                mk=f"{mn}_{yr}"
+                d3b=g3b_monthly.get(mk,{})
+                ig_3b=round(d3b.get("itc_igst",0),2); cg_3b=round(d3b.get("itc_cgst",0),2)
+                sg_3b=round(d3b.get("itc_sgst",0),2); tot_3b_v=round(ig_3b+cg_3b+sg_3b,2)
+                ig_2a=round(g2a[mk]["tot"].get("igst",0),2); cg_2a=round(g2a[mk]["tot"].get("cgst",0),2)
+                sg_2a=round(g2a[mk]["tot"].get("sgst",0),2); tot_2a=round(ig_2a+cg_2a+sg_2a,2)
+                if   key=="3b_itc":  v=[ig_3b,cg_3b,sg_3b,0,tot_3b_v]
+                elif key=="tot_3b":  v=[ig_3b,cg_3b,sg_3b,0,tot_3b_v]
+                elif key=="r2a_b2b": v=[ig_2a,cg_2a,sg_2a,0,tot_2a]
+                elif key=="tot_r2a": v=[ig_2a,cg_2a,sg_2a,0,tot_2a]
+                elif key=="diff_itc":v=[round(ig_3b-ig_2a,2),round(cg_3b-cg_2a,2),round(sg_3b-sg_2a,2),0,round(tot_3b_v-tot_2a,2)]
+                else:                v=[0,0,0,0,0]
+                for i in range(5): totals[i]+=float(v[i] if i<len(v) else 0)
+            return [round(x,2) for x in totals]
+
+        data_r=6
+        for sect,part,key in ROWS_R2A:
+            if sect=="ISD Details" and part is None:
+                ws.cell(row=data_r,column=1,value="ISD Details").font=Font(name="Arial",bold=True,size=9)
+                data_r+=1; continue
+            if key is None:
+                data_r+=1; continue
+            ws.cell(row=data_r,column=1,value=sect).font=Font(name="Arial",size=9)
+            ws.cell(row=data_r,column=2,value=part).font=Font(name="Arial",size=9)
+            # KEY FIX: annual uses get_annual_r2a_vals (sums all 12); quarterly uses get_r2a_vals
+            vals = get_annual_r2a_vals(key) if is_annual else get_r2a_vals(key, months_list)
+            bold_row=key in ("tot_3b","tot_r2a","diff_itc")
+            col=4
+            for v in vals:
+                cv=ws.cell(row=data_r,column=col,value=v)
+                cv.font=Font(name="Arial",bold=bold_row,size=9)
+                if isinstance(v,(int,float)) and v!=0: cv.number_format="#,##0.00"
+                col+=1
+            data_r+=1
+
+    for q_name,q_months in QUARTERS_R2A:
+        _build_r2a_sheet(q_name, q_months)
+    _build_r2a_sheet("Annual - APR-MAR", MONTHS, is_annual=True)
+
+    wb_r2a.save(str(p_r2a))
+    log.info(f"  Saved R2A Recon: {p_r2a.name}")
+
+    return str(rp)
+
+def zip_all_outputs(base_dir, log=None):
+    """
+    After all processing is done, collect every generated output file
+    (ANNUAL_RECONCILIATION, GSTR1R3B_RECONCILED, GSTR3BR2A_RECONCILED,
+     MASTER_REPORT, GSTR1_*.xlsx, TaxLiability_*, GSTR2B_*.xlsx,
+     GSTR2A_*.xlsx, GSTR3B_*.pdf, GSTR1_*.zip, GSTR2A_*.zip)
+    from the entire base_dir tree, bundle them into a single ZIP, and
+    open the containing folder in Windows Explorer so the user can
+    download / copy everything in one click.
+    """
+    import zipfile as _zf, shutil as _sh
+
+    _log = log.info if log else print
+
+    # ── Patterns to collect ──────────────────────────────────────────
+    INCLUDE_PATTERNS = [
+        "ANNUAL_RECONCILIATION_*.xlsx",
+        "*_GSTR1R3B_RECONCILED_*.xlsx",
+        "*_GSTR3BR2A_RECONCILED_*.xlsx",
+        "MASTER_REPORT_*.xlsx",
+        "GSTR1_*.xlsx",          # per-client monthly invoice Excel
+        "TaxLiability_*.xlsx",
+        "TaxLiability_*.xls",
+        "TaxLiability_*.csv",
+        "GSTR2B_*.xlsx",
+        "GSTR2A_*.xlsx",
+        "*_R2A*.xlsx",
+        "*_R2B*.xlsx",
+        "GSTR3B_*.pdf",
+        "GSTR1_*.zip",
+        "GSTR1A_*.pdf",
+        "GSTR2A_*.zip",
+        "GSTR2B_*.zip",
+    ]
+    EXCLUDE_DIRS = {"_MERGED_"}   # temp merge dirs we created
+
+    base_path = Path(base_dir)
+    collected = []
+
+    for pattern in INCLUDE_PATTERNS:
+        for f in base_path.rglob(pattern):
+            if any(part.startswith("_MERGED_") for part in f.parts):
+                continue
+            # Skip ALL extraction sub-dirs (GSTR1_*_ex, GSTR1_*_ex2 etc)
+            if any(("_ex" in part and part.startswith("GSTR1_")) for part in f.parts):
+                continue
+            # For GSTR1_*.zip: verify fp field before including in bundle
+            if f.is_file() and f.name.startswith("GSTR1_") and f.suffix == ".zip":
+                _p = f.stem.split("_")
+                _MMAP3 = {"January":1,"February":2,"March":3,"April":4,
+                           "May":5,"June":6,"July":7,"August":8,
+                           "September":9,"October":10,"November":11,"December":12}
+                _mm3 = _MMAP3.get(_p[1], 0) if len(_p) >= 3 else 0
+                _yr3 = int(_p[2]) if len(_p) >= 3 and _p[2].isdigit() else 0
+                if _mm3 and _yr3 and not verify_gstr1_zip(f, _mm3, _yr3):
+                    _log(f"  Skipping corrupt/wrong-period ZIP from bundle: {f.name}")
+                    continue
+            if f.is_file() and f not in collected:
+                collected.append(f)
+
+    if not collected:
+        _log("  zip_all_outputs: no output files found to zip")
+        return None
+
+    zip_name = f"GST_ALL_OUTPUTS_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+    zip_path = base_path / zip_name
+
+    _log(f"\n  Bundling {len(collected)} file(s) into {zip_name} ...")
+    with _zf.ZipFile(zip_path, "w", _zf.ZIP_DEFLATED) as zout:
+        for f in sorted(collected):
+            # Keep relative path from base_dir so folder structure is preserved
+            arcname = str(f.relative_to(base_path))
+            zout.write(str(f), arcname)
+            _log(f"    + {arcname}")
+
+    size_mb = zip_path.stat().st_size / (1024*1024)
+    _log(f"  ✓ ZIP created: {zip_path.name}  ({size_mb:.1f} MB)")
+
+    # ── Open folder in Windows Explorer ─────────────────────────────
+    try:
+        import subprocess
+        # /select, highlights the zip file itself in Explorer
+        subprocess.Popen(["explorer", "/select,", str(zip_path)])
+        _log(f"  ✓ Opened folder in Explorer: {base_dir}")
+    except Exception as ex:
+        _log(f"  (Could not open Explorer: {ex})")
+
+    return str(zip_path)
+
+
+def write_master_report(all_results, base_dir):
+    wb = Workbook()
+    ws = wb.active; ws.title = "Master Dashboard"
+    ws.sheet_view.showGridLines = False
+
+    ws.merge_cells("A1:N1")
+    c = ws["A1"]
+    c.value = f"GST DOWNLOAD MASTER REPORT — AY 2025-26 — {datetime.now().strftime('%d-%b-%Y %I:%M %p')}"
+    c.font = Font(name="Arial",bold=True,color="FFFFFF",size=13)
+    c.fill = fill(DARK_BLUE); c.alignment = aln()
+    ws.row_dimensions[1].height = 38
+
+    hdrs = ["Client","GSTIN","Month","GSTR-1","GSTR-2B","GSTR-2A","GSTR-3B"]
+    wdts = [28,22,14,12,12,12,12]
+    for ci,(h,w) in enumerate(zip(hdrs,wdts),1):
+        c = ws.cell(row=2,column=ci,value=h)
+        sc(c,bold=True,fg="FFFFFF",bg=MED_BLUE,size=10)
+        ws.column_dimensions[get_column_letter(ci)].width = w
+    ws.row_dimensions[2].height = 28
+    ws.freeze_panes = "A3"
+
+    ri = 3
+    for res in all_results:
+        # ── If login failed entirely, write a single highlighted row ──
+        if res.get("login_failed"):
+            msg = "LOGIN FAILED — credentials rejected after 3 attempts"
+            for ci, val in enumerate([
+                res.get("name", ""), res.get("gstin", ""), "ALL MONTHS",
+                msg, msg, msg, msg,
+            ], 1):
+                cell = ws.cell(row=ri, column=ci, value=val)
+                sc(cell, bold=True, fg=RED_FG, bg=RED_BG, size=10,
+                   h="left" if ci <= 3 else "center")
+            ws.row_dimensions[ri].height = 20
+            ri += 1
+            continue
+
+        for month_res in res.get("months", []):
+            row_bg = GREY_BG if ri%2==0 else WHITE
+            for ci,val in enumerate([
+                res.get("name",""), res.get("gstin",""),
+                month_res.get("month",""),
+                month_res.get("GSTR1",""),
+                month_res.get("GSTR2B",""),
+                month_res.get("GSTR2A",""),
+                month_res.get("GSTR3B",""),
+            ],1):
+                cell = ws.cell(row=ri,column=ci,value=val)
+                if ci >= 4:
+                    ok = val == "OK"
+                    bg = GREEN_BG if ok else (YELLOW_BG if "NOT_FOUND" in str(val) else RED_BG)
+                    fg = GREEN_FG if ok else (YELLOW_FG if "NOT_FOUND" in str(val) else RED_FG)
+                    sc(cell,bold=True,fg=fg,bg=bg,size=10)
+                else:
+                    sc(cell,fg="000000",bg=row_bg,size=10,h="left")
+            ws.row_dimensions[ri].height = 20
+            ri += 1
+
+    report_path = os.path.join(base_dir,
+        f"MASTER_REPORT_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx")
+    wb.save(report_path)
+    return report_path
+
+
+# ==========================================================
+# LOAD CLIENTS
+# ==========================================================
+def load_clients(script_dir):
+    # ── Try Excel files first ──────────────────────────────────────
+    for fname in ["Client_Manager_Secure_AY2025-26.xlsx","clients_manager.xlsx","clients.xlsx"]:
+        p = os.path.join(script_dir, fname)
+        if not os.path.exists(p): continue
+        try:
+            df = pd.read_excel(p, sheet_name="🔐 Client Credentials", header=2, dtype=str)
+            df.columns = [str(c).strip() for c in df.columns]
+            col_map = {}
+            for col in df.columns:
+                cl = col.lower().replace("\n","").strip()
+                if "client name" in cl:  col_map["name"]     = col
+                elif "gstin" in cl:      col_map["gstin"]    = col
+                elif "entity" in cl:     col_map["entity"]   = col
+                elif "username" in cl:   col_map["username"] = col
+                elif "password" in cl:
+                    # Prefer GST Portal Password over IT_Password.
+                    # Rule: only set col_map["password"] if not already set,
+                    # OR if this column is the GST portal one (contains "gst"
+                    # or does NOT start with "it").
+                    is_gst_pwd = "gst" in cl or not cl.startswith("it")
+                    if "password" not in col_map or is_gst_pwd:
+                        col_map["password"] = col
+                elif "active" in cl:     col_map["active"]   = col
+            clients = []
+            for _, row in df.iterrows():
+                name   = clean_str(row.get(col_map.get("name",""),""))
+                user   = clean_str(row.get(col_map.get("username",""),""))
+                pwd    = clean_str(row.get(col_map.get("password",""),""))
+                active = str(row.get(col_map.get("active",""),"Yes")).strip().upper()
+                if not name or "sample" in name.lower(): continue
+                if active == "NO": continue
+                if not user or not pwd:
+                    print(f"  ⚠  WARNING: '{name}' has missing username/password — skipped."
+                          f" Fix in {fname} → '🔐 Client Credentials' sheet.")
+                    continue
+                clients.append({
+                    "name":name,
+                    "gstin":  clean_str(row.get(col_map.get("gstin",""),"")),
+                    "entity": clean_str(row.get(col_map.get("entity",""),"")),
+                    "username": user,
+                    "password": pwd,
+                })
+            if clients:
+                print(f"  Loaded {len(clients)} client(s) from {fname}")
+                return clients
+            else:
+                print(f"  ⚠  {fname} found but no valid client rows loaded.")
+        except Exception as e:
+            print(f"  Excel read error ({fname}): {e}")
+
+    # ── CSV fallback ───────────────────────────────────────────────
+    for fname in ["clients.csv"]:
+        p = os.path.join(script_dir, fname)
+        if not os.path.exists(p): continue
+        try:
+            import csv
+            clients = []
+            with open(p, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    row = {k.strip().lower(): v.strip() for k, v in row.items()}
+                    name = row.get("name","") or row.get("client name","") or row.get("client","")
+                    user = row.get("username","") or row.get("user","")
+                    pwd  = row.get("password","") or row.get("pwd","")
+                    if not name or "sample" in name.lower(): continue
+                    if str(row.get("active","yes")).strip().upper() == "NO": continue
+                    if not user or not pwd:
+                        print(f"  ⚠  WARNING: '{name}' in clients.csv has no username/password — skipped.")
+                        continue
+                    clients.append({
+                        "name": name,
+                        "gstin": row.get("gstin",""),
+                        "entity": row.get("entity",""),
+                        "username": user,
+                        "password": pwd,
+                    })
+            if clients:
+                print(f"  Loaded {len(clients)} client(s) from {fname}")
+                return clients
+        except Exception as e:
+            print(f"  CSV read error ({fname}): {e}")
+
+    # ── Nothing found ──────────────────────────────────────────────
+    print()
+    print("  " + "="*60)
+    print("  ✗  NO CLIENT FILE FOUND")
+    print("  " + "-"*60)
+    print("  Please place ONE of these files in the same folder as this script:")
+    print("    • Client_Manager_Secure_AY2025-26.xlsx  (sheet: 🔐 Client Credentials)")
+    print("    • clients_manager.xlsx                  (sheet: 🔐 Client Credentials)")
+    print("    • clients.xlsx                          (sheet: 🔐 Client Credentials)")
+    print("    • clients.csv  (columns: name, username, password, gstin, entity, active)")
+    print()
+    print("  Required columns: Client Name, Username, Password")
+    print("  Optional columns: GSTIN, Entity, Active (YES/NO)")
+    print("  " + "="*60)
+    input("  Press Enter to close...")
+    sys.exit(1)
+
+
+# ==========================================================
+# PROCESS ONE CLIENT
+# ==========================================================
+def process_client(client, base_dir, log, returns_todo=None):
+    global CURRENT_CLIENT
+    name = client["name"]
+    log.info(f"\n{'='*60}")
+    log.info(f"CLIENT: {name}  |  GSTIN: {client.get('gstin','')}")
+    log.info(f"{'='*60}")
+
+    safe = name.replace(" ","_").replace("/","_")
+    cdir = os.path.join(base_dir, safe)
+    os.makedirs(cdir, exist_ok=True)
+
+    result = {
+        "name":   name,
+        "gstin":  client.get("gstin",""),
+        "entity": client.get("entity",""),
+        "months": [],
+    }
+
+    driver = None
+    try:
+        # ★ Session start: delete ALL stale GSTR1_*.zip that have wrong/no fp field
+        # and ALL extraction folders (GSTR1_*_ex, GSTR1_*/) from previous runs
+        log.info("  Session start: cleaning stale GSTR-1 files from previous runs...")
+        import shutil as _ssh
+        _cdir_p = Path(cdir)
+        _cleaned = 0
+        for _f in list(_cdir_p.iterdir()):
+            try:
+                # Delete extraction folders: GSTR1_April_2025_ex, GSTR1_April_2025_ex2
+                if _f.is_dir() and _f.name.startswith("GSTR1_"):
+                    _ssh.rmtree(str(_f))
+                    log.info(f"    Deleted stale extraction folder: {_f.name}")
+                    _cleaned += 1
+                    continue
+                # Verify existing GSTR1_*.zip files — delete if fp wrong or no JSON
+                if _f.is_file() and _f.name.startswith("GSTR1_") and _f.suffix.lower() == ".zip":
+                    _parts = _f.stem.split("_")
+                    _MMAP2 = {"January":1,"February":2,"March":3,"April":4,
+                               "May":5,"June":6,"July":7,"August":8,
+                               "September":9,"October":10,"November":11,"December":12}
+                    if len(_parts) >= 3:
+                        _mm2 = _MMAP2.get(_parts[1], 0)
+                        _yr2 = int(_parts[2]) if _parts[2].isdigit() else 0
+                        if _mm2 and _yr2:
+                            if not verify_gstr1_zip(_f, _mm2, _yr2, log):
+                                _f.unlink()
+                                log.warning(f"    Deleted stale/corrupt ZIP: {_f.name}")
+                                _cleaned += 1
+            except Exception: pass
+        if _cleaned:
+            log.info(f"    Session cleanup: removed {_cleaned} stale file(s)")
+
+        driver = make_driver(cdir)
+        # ★ FIX 10: Lock ALL tab download dirs to client folder immediately
+        try: set_download_dir_all_tabs(driver, cdir)
+        except Exception: pass
+
+        # Pre-initialize so finally/except blocks never see UnboundLocalError
+        dl_results      = {}
+        _client_ok_count = 0   # renamed to avoid clash with multitab ok_count scope
+
+        # Store credentials globally so relogin_if_needed can use them
+        CURRENT_CLIENT = {
+            "username": client["username"],
+            "password": client["password"],
+        }
+
+        if not do_login(driver, client["username"], client["password"], log):
+            print()
+            print("  " + "="*56)
+            print(f"  ✗  SKIPPING CLIENT: {name}")
+            print("     Login failed after all attempts.")
+            print("     Check credentials in clients.xlsx / clients.csv")
+            print("     and use Option 12 (Retry Failed) to re-run this client.")
+            print("  " + "="*56)
+            log.error(f"  SKIPPED {name} — login failed after all attempts")
+            result["login_failed"] = True
+            return result
+
+        # -- PHASE 1: Trigger/download for selected returns × all months --
+        log.info(f"\n  Returns selected: {sorted(returns_todo)}")
+        triggered = phase1_trigger_all(driver, cdir, log, returns_todo)
+
+        # No fixed wait — Phase 2 polls until download link appears
+
+        # -- PHASE 2: Download GSTR-1 / GSTR-1A / GSTR-2A --
+        dl_results = phase2_download_all(driver, cdir, triggered, log, returns_todo)
+
+        # -- AUTO-RETRY: Re-attempt failed downloads (up to 2 rounds) --
+        FAIL_TAGS = {"TILE_FAIL","NOT_FOUND","TILE_NOT_FOUND","GEN_FAIL","ERR","MISS","MISMATCH","LINK_NOT_FOUND"}
+        for _retry_round in range(1, 3):  # Round 1, Round 2
+            failed_months = []
+            for month_name, month_num, year in MONTHS:
+                key = f"{month_name}_{year}"
+                for rt in returns_todo:
+                    if rt not in ("GSTR1","GSTR2B","GSTR2A","GSTR3B"): continue
+                    status = (dl_results.get(f"{key}_{rt}","")
+                              or triggered.get(f"{key}_{rt}",""))
+                    status = str(status).upper()
+                    file_ok = False
+                    suf = {rt: {
+                        "GSTR1":".zip","GSTR1A":".zip","GSTR2A":".zip",
+                        "GSTR2B":".xlsx","GSTR3B":".pdf"
+                    }.get(rt,".zip")}.get(rt,".zip")
+                    fpath = os.path.join(cdir, f"{rt}_{month_name}_{year}{suf}")
+                    if os.path.exists(fpath) and os.path.getsize(fpath) > 200:
+                        if rt == "GSTR1":
+                            # MUST verify fp field — old/wrong zips from previous runs
+                            # (e.g. Python scripts, other tools) sit in folder and fool
+                            # the size check. Only accept if JSON inside has correct fp.
+                            if verify_gstr1_zip(Path(fpath), month_num, year, log):
+                                file_ok = True
+                            else:
+                                log.warning(f"  [AutoRetry] GSTR1 {month_name}: zip INVALID/WRONG PERIOD — deleting")
+                                try: Path(fpath).unlink()
+                                except Exception: pass
+                                status = "MISMATCH"
+                                dl_results[f"{key}_{rt}"] = "MISMATCH"
+                        else:
+                            file_ok = True
+                    if not file_ok and (any(t in status for t in FAIL_TAGS) or not status or status=="SKIP"):
+                        # Never retry NOT_AVAILABLE — means portal confirmed no data exists
+                        if "NOT_AVAILABLE" in status:
+                            continue
+                        failed_months.append((month_name, month_num, year, rt))
+
+            if not failed_months:
+                log.info(f"  Auto-retry round {_retry_round}: nothing to retry - all OK ✓")
+                break
+
+            log.info(f"  Auto-retry round {_retry_round}: {len(failed_months)} missing file(s)")
+            for month_name, month_num, year, rt in failed_months:
+                key = f"{month_name}_{year}"
+                log.info(f"    Retrying {rt} {month_name} {year}...")
+                try:
+                    safe_go_to_dashboard(driver, log)
+                    select_and_search(driver, month_name, log)
+                    time.sleep(2)
+                    if rt == "GSTR3B":
+                        save = f"GSTR3B_{month_name}_{year}.pdf"
+                        save_path = Path(cdir) / save
+                        # GSTR-3B downloads instantly on click — snap BEFORE click
+                        _snap_3b = {str(f): f.stat().st_mtime
+                            for f in Path(cdir).iterdir()
+                            if f.suffix.lower() == ".pdf"
+                            and not f.name.endswith((".crdownload",".tmp",".part"))}
+                        if click_tile_download(driver, "GSTR3B", log):
+                            # Poll for PDF file (instant download)
+                            deadline_3b = time.time() + 90
+                            got_3b = None
+                            while time.time() < deadline_3b:
+                                time.sleep(0.5)
+                                for _f in Path(cdir).iterdir():
+                                    if _f.suffix.lower() != ".pdf": continue
+                                    if _f.name.endswith((".crdownload",".tmp",".part")): continue
+                                    if _f.stat().st_size < 5000: continue
+                                    prev = _snap_3b.get(str(_f))
+                                    if prev is None or _f.stat().st_mtime > prev + 0.1:
+                                        got_3b = _f; break
+                                if got_3b: break
+                            if got_3b:
+                                try:
+                                    if str(got_3b) != str(save_path):
+                                        got_3b.rename(save_path)
+                                except Exception:
+                                    import shutil as _sh
+                                    _sh.copy2(str(got_3b), str(save_path))
+                            if save_path.exists() and save_path.stat().st_size > 5000:
+                                triggered[f"{key}_GSTR3B"] = "OK"
+                    elif rt in ("GSTR1",):
+                        save = f"{rt}_{month_name}_{year}.zip"
+                        save_path = Path(cdir) / save
+                        _snap_g1 = {str(_f): _f.stat().st_mtime
+                            for _f in Path(cdir).iterdir()
+                            if _f.suffix.lower() in {".zip",".json"}
+                            and not _f.name.endswith((".crdownload",".tmp",".part"))}
+                        if click_tile_download(driver, rt, log):
+                            # FIX: Wait for generate page to load (not dashboard URL)
+                            try:
+                                WebDriverWait(driver, 15).until(
+                                    lambda d: "dashboard" not in d.current_url.lower()
+                                    or "offline" in d.current_url.lower()
+                                    or "download" in d.current_url.lower()
+                                    or "gstr1" in d.current_url.lower())
+                            except Exception: pass
+                            time.sleep(1)
+                            log.info(f"    [Retry {rt} {month_name}] Page: {driver.current_url[:70]}")
+
+                            # FIX: Check for existing download link before GENERATE
+                            _retry_link = None
+                            for _xp in ["//a[contains(text(),'Click here to download')]",
+                                        "//a[contains(text(),'click here to download')]",
+                                        "//a[contains(@href,'.zip')]",
+                                        "//a[contains(@href,'filedownload')]"]:
+                                try:
+                                    _els = driver.find_elements(By.XPATH, _xp)
+                                    for _el in _els:
+                                        if _el.is_displayed() and len(_el.get_attribute("href") or "") > 20:
+                                            _retry_link = _el; break
+                                    if _retry_link: break
+                                except Exception: pass
+
+                            _got_f = None
+                            if _retry_link:
+                                log.info(f"    [Retry {rt} {month_name}] Link already present — clicking")
+                                try:
+                                    _href = _retry_link.get_attribute("href") or ""
+                                    driver.execute_script("arguments[0].click();", _retry_link)
+                                    _deadline = time.time() + 60
+                                    while time.time() < _deadline:
+                                        time.sleep(0.5)
+                                        for _f in Path(cdir).iterdir():
+                                            if _f.suffix.lower() not in {".zip",".json"}: continue
+                                            if _f.name.endswith((".crdownload",".tmp",".part")): continue
+                                            if _f.stat().st_size < 1000: continue
+                                            prev = _snap_g1.get(str(_f))
+                                            if prev is None or _f.stat().st_mtime > prev + 0.1:
+                                                _got_f = _f; break
+                                        if _got_f: break
+                                    if not _got_f and _href:
+                                        try:
+                                            driver.get(_href); time.sleep(4)
+                                            for _f in Path(cdir).iterdir():
+                                                if _f.suffix.lower() in {".zip",".json"} and _f.stat().st_size > 1000:
+                                                    prev = _snap_g1.get(str(_f))
+                                                    if prev is None or _f.stat().st_mtime > prev + 0.1:
+                                                        _got_f = _f; break
+                                        except Exception: pass
+                                except Exception as _le:
+                                    log.warning(f"    Link click error: {_le}")
+                            else:
+                                # Click GENERATE, then poll for link + file
+                                click_generate_only(driver, log)
+                                _deadline = time.time() + 180
+                                while time.time() < _deadline and not _got_f:
+                                    time.sleep(3)
+                                    try: driver.refresh(); time.sleep(1.5)
+                                    except Exception: pass
+                                    _got_f_check = download_ready_file(driver, cdir, save, log)
+                                    if _got_f_check:
+                                        _got_f = save_path if save_path.exists() else None
+                                        break
+
+                            if _got_f or save_path.exists():
+                                if _got_f and not save_path.exists():
+                                    try: _got_f.rename(save_path)
+                                    except Exception:
+                                        import shutil as _shu
+                                        _shu.copy2(str(_got_f), str(save_path))
+                                dl_results[f"{key}_{rt}"] = "OK"
+                                log.info(f"    ✅ {rt} {month_name}: retry OK")
+                    elif rt == "GSTR2B":
+                        save = f"GSTR2B_{month_name}_{year}.xlsx"
+                        # Check for no-data error BEFORE tile click
+                        if click_tile_download(driver, "GSTR2B", log):
+                            # Check for no-data error on the GSTR-2B page
+                            time.sleep(0.5)
+                            try:
+                                _pg = driver.find_element(By.TAG_NAME,"body").text.lower()
+                                if any(p in _pg for p in [
+                                    "no record for gstr 2b",
+                                    "gstr 2b for current return period is not generated",
+                                    "kindly go to ims dashboard",
+                                ]):
+                                    log.info(f"    {month_name}: GSTR-2B not available (no data)")
+                                    triggered[f"{key}_GSTR2B"] = "NO_DATA"
+                                    continue
+                            except Exception: pass
+                            ok = generate_then_download_immediate(driver, cdir, save, log, max_wait=120)
+                            if ok: triggered[f"{key}_GSTR2B"] = "OK"
+                    elif rt == "GSTR2A":
+                        save = f"GSTR2A_{month_name}_{year}.zip"
+                        if click_tile_download(driver, "GSTR2A", log):
+                            time.sleep(2)
+                            # Inline poll for download link (replaces missing poll_and_download)
+                            save_path = Path(cdir) / save
+                            _deadline = time.time() + 180
+                            _got = False
+                            while time.time() < _deadline and not _got:
+                                time.sleep(3)
+                                try:
+                                    driver.refresh()
+                                    time.sleep(1)
+                                except Exception: pass
+                                _got = download_ready_file(driver, cdir, save, log)
+                            if _got or save_path.exists():
+                                dl_results[f"{key}_GSTR2A"] = "OK"
+                except Exception as _re:
+                    log.warning(f"    Retry failed [{rt} {month_name}]: {_re}")
+            time.sleep(3)
+
+        # -- PHASE 3: Extract GSTR-1 JSON → monthly invoice Excel --
+        if "GSTR1" in returns_todo:
+            g1_zips = list(Path(cdir).glob("GSTR1_*.zip"))
+            if g1_zips:
+                log.info(f"  Phase 3: Extracting {len(g1_zips)} GSTR-1 ZIP(s) to Excel...")
+
+                # ── Step A: Individual monthly Excels (existing logic) ──────────
+                try:
+                    extract_json_to_excel(cdir, client["name"], log)
+                except Exception as _e3:
+                    import traceback as _tb
+                    log.warning(f"  Phase 3 monthly extract error: {_e3}")
+                    log.warning(_tb.format_exc())
+
+                # ── Step B: Full FY combined Excel via gstr1_fy_v5 ─────────────
+                # This produces the master GSTR1_FY_YYYY-YY_*.xlsx with all 26 sheets:
+                # B2B monthly, CDNR, B2CS, Exports, Amendments, Recon, GSTIN summary,
+                # Master all-invoices — replacing the limited per-month extracts.
+                try:
+                    _fy_zips = sorted(
+                        [str(z) for z in Path(cdir).glob("GSTR1_*.zip")
+                         if not z.name.startswith("GSTR1A_")],
+                        key=lambda p: (
+                            lambda parts: (
+                                {"April":"04","May":"05","June":"06","July":"07",
+                                 "August":"08","September":"09","October":"10",
+                                 "November":"11","December":"12",
+                                 "January":"01","February":"02","March":"03"
+                                }.get(parts[1] if len(parts)>1 else "", "99"),
+                                parts[2] if len(parts)>2 else ""
+                            )
+                        )(Path(p).stem.split("_"))
+                    )
+                    if _fy_zips:
+                        # Import gstr1_fy_v5 from same folder as this script
+                        import importlib.util as _ilu, sys as _sys
+                        _v5_path = Path(os.path.abspath(__file__)).parent / "gstr1_fy_v5.py"
+                        if not _v5_path.exists():
+                            # Try same dir as client_dir (offline mode)
+                            _v5_path = Path(cdir).parent.parent.parent / "gstr1_fy_v5.py"
+                        if not _v5_path.exists():
+                            # Last resort: search upward 3 levels
+                            for _lvl in range(1, 5):
+                                _try = Path(os.path.abspath(__file__)).parents[_lvl] / "gstr1_fy_v5.py"
+                                if _try.exists():
+                                    _v5_path = _try
+                                    break
+
+                        if _v5_path.exists():
+                            log.info(f"  Phase 3b: Running gstr1_fy_v5 → full FY Excel...")
+                            _spec = _ilu.spec_from_file_location("gstr1_fy_v5", str(_v5_path))
+                            _v5   = _ilu.module_from_spec(_spec)
+                            _spec.loader.exec_module(_v5)
+
+                            _fy_out = Path(cdir) / f"GSTR1_FY_{FY_LABEL.replace('-','_')}_{client.get('gstin','')}.xlsx"
+                            _result_path = _v5.extract_fy(
+                                _fy_zips,
+                                trader_name=client["name"],
+                                out_path=str(_fy_out),
+                            )
+                            log.info(f"  Phase 3b: GSTR-1 FY Excel saved → {Path(_result_path).name} ✓")
+                        else:
+                            log.warning(f"  Phase 3b: gstr1_fy_v5.py not found at {_v5_path} — skipping full FY Excel")
+                    else:
+                        log.warning("  Phase 3b: No GSTR1_*.zip files for FY Excel")
+                except Exception as _e3b:
+                    import traceback as _tb3b
+                    log.warning(f"  Phase 3b gstr1_fy_v5 error: {_e3b}")
+                    log.warning(_tb3b.format_exc())
+            else:
+                log.warning("  Phase 3: No GSTR1_*.zip files found — skipping extraction")
+
+        # -- PHASE 4: Annual Reconciliation Report ----------
+        try:
+            log.info("  Phase 4: Building Annual Reconciliation Excel...")
+            write_annual_reconciliation(
+                cdir, client["name"], client.get("gstin",""), log)
+            log.info("  Phase 4: Reconciliation Excel created ✓")
+        except Exception as e:
+            import traceback as _tb4
+            log.warning(f"  Reconciliation report error: {e}")
+            log.warning(_tb4.format_exc())
+            # Attempt offline recon as fallback
+            log.info("  Phase 4: Retrying reconciliation (offline mode)...")
+            try:
+                write_annual_reconciliation(
+                    cdir, client["name"], client.get("gstin",""), log)
+            except Exception as _e4b:
+                log.warning(f"  Reconciliation retry also failed: {_e4b}")
+
+        # Build month results for master report
+        for month_name, month_num, year in MONTHS:
+            key = f"{month_name}_{year}"
+            result["months"].append({
+                "month":  f"{month_name} {year}",
+                "GSTR1":  dl_results.get(f"{key}_GSTR1",  triggered.get(f"{key}_GSTR1",  "SKIP")),
+                "GSTR1A": dl_results.get(f"{key}_GSTR1A", triggered.get(f"{key}_GSTR1A", "SKIP")),
+                "GSTR2B": triggered.get(f"{key}_GSTR2B", "SKIP"),   # Phase 1 result
+                "GSTR2A": dl_results.get(f"{key}_GSTR2A", triggered.get(f"{key}_GSTR2A", "SKIP")),
+                "GSTR3B": triggered.get(f"{key}_GSTR3B", "SKIP"),   # Phase 1 result
+            })
+
+        with open(os.path.join(base_dir, "progress.json"), "w") as f:
+            json.dump(result, f, indent=2, default=str)
+
+    except Exception as e:
+        log.error(f"  Client error: {e}")
+    finally:
+        CURRENT_CLIENT = {}
+        if driver:
+            try: driver.quit()
+            except Exception: pass
+        log.info(f"  Client done. Waiting {CLIENT_GAP}s...")
+        time.sleep(CLIENT_GAP)
+
+    return result
+
+
+
+# ==========================================================
+# OFFLINE RECONCILIATION — Run from already-downloaded files
+# No browser, no login, no CAPTCHA.
+# Reads existing GSTR1_*.zip / GSTR2B_*.zip / GSTR2A_*.zip /
+#   GSTR3B_*.pdf from a client folder and generates the
+#   ANNUAL_RECONCILIATION_*.xlsx report.
+# ==========================================================
+def run_offline_reconciliation(log=None):
+    """
+    Ask user for the folder where files are already downloaded,
+    then generate the reconciliation Excel for each client sub-folder.
+    No browser required.
+    """
+    if log is None:
+        logging.basicConfig(level=logging.INFO,
+            format="%(asctime)s | %(levelname)-8s | %(message)s",
+            handlers=[logging.StreamHandler(sys.stdout)])
+        log = logging.getLogger("gst_offline")
+
+    print("\n" + "="*60)
+    print("  OFFLINE RECONCILIATION — Use Already Downloaded Files")
+    print("="*60)
+    print("\n  This option reads your existing GST download folder and")
+    print("  generates the Annual Reconciliation Excel for each client.")
+    print("  No browser / login / CAPTCHA needed.")
+    print()
+
+    # -- Find the base folder ------------------------------
+
+def _find_output_base():
+    """Auto-detect OUTPUT base: checks OneDrive/Desktop/OUTPUT, then Downloads."""
+    import pathlib
+    home = pathlib.Path.home()
+    candidates = [
+        home / "OneDrive" / "Desktop" / "OUTPUT",
+        home / "OneDrive - Personal" / "Desktop" / "OUTPUT",
+        home / "Desktop" / "OUTPUT",
+        home / "Downloads",
+    ]
+    try:
+        candidates[2:2] = [p / "Desktop" / "OUTPUT" for p in home.glob("OneDrive*") if p.is_dir()]
+    except Exception:
+        pass
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    import os
+    return os.path.join(os.path.expanduser("~"), "Downloads")
+
+    default_base = os.path.join(_find_output_base(), "GST_Automation")
+
+    print(f"  Default folder: {default_base}")
+    choice = input("  Press ENTER to use default, or type a different folder path: ").strip()
+    if choice:
+        base_dir = choice
+    else:
+        base_dir = default_base
+
+    if not os.path.isdir(base_dir):
+        print(f"\n  ✗ Folder not found: {base_dir}")
+        input("  Press Enter to exit..."); return
+
+    # -- List available run-folders (AY2025-26_YYYYMMDD_HHMM) --
+    run_folders = sorted([
+        d for d in Path(base_dir).iterdir()
+        if d.is_dir() and (d.name.startswith("AY") or d.name.startswith("20"))
+    ], reverse=True)
+
+    if not run_folders:
+        # Maybe the user pointed directly at a run folder
+        run_folders = [Path(base_dir)]
+
+    print(f"\n  Found {len(run_folders)} run folder(s):")
+    for i, rf in enumerate(run_folders[:10], 1):
+        print(f"    [{i}] {rf.name}")
+    if len(run_folders) > 10:
+        print(f"    ... and {len(run_folders)-10} more")
+
+    if len(run_folders) == 1:
+        selected_run = run_folders[0]
+    else:
+        idx = input("\n  Enter number to select (ENTER = most recent [1]): ").strip()
+        try:
+            selected_run = run_folders[int(idx)-1] if idx else run_folders[0]
+        except (ValueError, IndexError):
+            selected_run = run_folders[0]
+
+    print(f"\n  Selected: {selected_run}")
+
+    # -- Find client sub-folders ---------------------------
+    # Accept folders with ZIPs, PDFs, or direct xlsx files (portal naming)
+    def _has_gst_files(d):
+        return (any(d.glob("*.zip")) or any(d.glob("*.pdf")) or
+                any(d.glob("*_R2A*.xlsx")) or any(d.glob("*_R2B*.xlsx")) or
+                any(d.glob("GSTR*.xlsx")))
+
+    raw_dirs = [d for d in Path(selected_run).iterdir()
+                if d.is_dir() and _has_gst_files(d)]
+
+    if not raw_dirs:
+        if _has_gst_files(Path(selected_run)):
+            raw_dirs = [Path(selected_run)]
+
+    if not raw_dirs:
+        print(f"\n  \u2717 No client folders with GST files found in: {selected_run}")
+        print("  Expected files: GSTR1_*.zip  GSTR2B_*.xlsx  *_R2A*.xlsx  GSTR3B_*.pdf")
+        input("  Press Enter to exit..."); return
+
+    # ── GSTIN-grouping: detect per-month folders for the same GSTIN ──────────
+    # When the portal downloads one month per folder (e.g. GSTR2A_April_2025_nm/
+    # contains only 33AYNPV2214Q1ZU_042025_R2A.xlsx), we group all such folders
+    # by GSTIN and merge their files into a single temp folder so that
+    # write_annual_reconciliation can see all 12 months at once.
+
+    def _extract_gstin_from_dir(d):
+        """Try to find the 15-char GSTIN from any GST file in folder d."""
+        import zipfile as _zf
+        for zp in d.glob("GSTR1_*.zip"):
+            try:
+                with _zf.ZipFile(zp) as z:
+                    for n in z.namelist():
+                        if n.endswith(".json"):
+                            with z.open(n) as jf:
+                                data = json.load(jf)
+                                g = (data.get("gstin","") or
+                                     data.get("data",{}).get("gstin","") or "")
+                                if g: return g
+            except Exception: pass
+        for xl in list(d.glob("*_R2A*.xlsx")) + list(d.glob("*_R2B*.xlsx")) + \
+                  list(d.glob("GSTR2B_*.xlsx")) + list(d.glob("GSTR1_*.zip")):
+            parts = xl.stem.split("_")
+            if parts and len(parts[0]) == 15:
+                return parts[0]
+        return ""
+
+    # Group raw_dirs by GSTIN
+    gstin_to_dirs   = {}   # gstin -> [list of source dirs]
+    gstin_to_name   = {}   # gstin -> friendly client name
+    no_gstin_dirs   = []   # dirs where GSTIN could not be determined
+
+    for d in raw_dirs:
+        g = _extract_gstin_from_dir(d)
+        if g:
+            gstin_to_dirs.setdefault(g, []).append(d)
+            # Build a clean client name: strip month/year suffix from folder name
+            # e.g. "GSTR2A_April_2025_nm" -> try to strip month words to get base name
+            import re as _re
+            month_words = r"(January|February|March|April|May|June|July|August|" \
+                          r"September|October|November|December|" \
+                          r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+            base = _re.sub(r"(?i)[_\s]*" + month_words + r"[_\s]*\d{4}[_\s]*", "_", d.name)
+            base = _re.sub(r"[_\s]+", " ", base).strip(" _")
+            # Only update name if we haven't stored one, or if this one is shorter/cleaner
+            if g not in gstin_to_name:
+                gstin_to_name[g] = base.title()
+        else:
+            no_gstin_dirs.append(d)
+
+    # Build the effective client list:
+    # For each GSTIN group with >1 folder, create a merged temp dir inside selected_run
+    import shutil as _shutil, tempfile as _tempfile
+
+    client_jobs = []  # list of (cdir_path, client_name, gstin)
+
+    for gstin, dirs in gstin_to_dirs.items():
+        if len(dirs) == 1:
+            # Single folder — use as-is (original behaviour)
+            client_jobs.append((dirs[0], dirs[0].name.replace("_"," ").title(), gstin))
+        else:
+            # Multiple per-month folders → merge into one temp folder
+            merge_dir = Path(selected_run) / f"_MERGED_{gstin}"
+            merge_dir.mkdir(exist_ok=True)
+            copied = 0
+            for src_dir in dirs:
+                for f in src_dir.iterdir():
+                    if f.is_file():
+                        dst = merge_dir / f.name
+                        if not dst.exists():
+                            _shutil.copy2(str(f), str(dst))
+                            copied += 1
+            name = gstin_to_name.get(gstin, gstin)
+            log.info(f"  Merged {len(dirs)} month-folders for GSTIN {gstin} "
+                     f"into {merge_dir.name}  ({copied} files copied)")
+            client_jobs.append((merge_dir, name, gstin))
+
+    # Dirs with unknown GSTIN — fall back to old behaviour (process individually)
+    for d in no_gstin_dirs:
+        client_jobs.append((d, d.name.replace("_"," ").title(), ""))
+
+    # ── Display summary ───────────────────────────────────────────────────────
+    print(f"\n  Found {len(client_jobs)} client(s) to process "
+          f"(from {len(raw_dirs)} folder(s)):")
+    for cdir, cname, cgstin in client_jobs:
+        xls2a = list(cdir.glob("*_R2A*.xlsx"))
+        xls2b = list(cdir.glob("*_R2B*.xlsx")) + list(cdir.glob("GSTR2B_*.xlsx"))
+        zips  = list(cdir.glob("*.zip"))
+        pdfs  = list(cdir.glob("*.pdf"))
+        print(f"    \u2022 {cname}  ({cgstin or 'GSTIN?'})")
+        print(f"      ZIPs={len(zips)}  PDFs={len(pdfs)}  "
+              f"2A_xlsx={len(xls2a)}  2B_xlsx={len(xls2b)}")
+
+    if input("\n  Generate reconciliation for ALL? (YES/no): ").strip().upper() not in ("YES","Y",""):
+        print("  Cancelled."); return
+
+    # -- Process each client -------------------------------
+    generated = 0
+    for cdir, client_name, gstin in client_jobs:
+
+        print(f"\n  Processing: {client_name}  ({gstin or 'GSTIN unknown'})")
+        log.info(f"\n{'='*55}")
+        log.info(f"OFFLINE RECON: {client_name}  GSTIN: {gstin}")
+
+        g1  = len(list(cdir.glob("GSTR1_*.zip")))
+        g2b = len(list(cdir.glob("GSTR2B_*.xlsx")) + list(cdir.glob("GSTR2B_*.zip")) +
+                  list(cdir.glob("*_R2B*.xlsx")))
+        g2a = len(list(cdir.glob("GSTR2A_*.zip")) + list(cdir.glob("*_R2A*.xlsx")))
+        g3b = len(list(cdir.glob("GSTR3B_*.pdf")))
+        print(f"    GSTR1={g1}  GSTR2B={g2b}  GSTR2A={g2a}  GSTR3B={g3b}")
+
+        try:
+            rp = write_annual_reconciliation(str(cdir), client_name, gstin, log)
+            print(f"    \u2713 Saved: {Path(rp).name}")
+            generated += 1
+        except Exception as e:
+            print(f"    \u2717 Error: {e}")
+            log.error(f"    Offline recon error [{client_name}]: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+
+        # ── Also build full FY GSTR-1 Excel via gstr1_fy_v5 ──────────────────
+        _g1_zips = sorted([str(z) for z in cdir.glob("GSTR1_*.zip")
+                           if not z.name.startswith("GSTR1A_")])
+        if _g1_zips:
+            try:
+                import importlib.util as _ilu
+                _v5_path = Path(os.path.abspath(__file__)).parent / "gstr1_fy_v5.py"
+                if not _v5_path.exists():
+                    for _lvl in range(1, 5):
+                        _try = Path(os.path.abspath(__file__)).parents[_lvl] / "gstr1_fy_v5.py"
+                        if _try.exists():
+                            _v5_path = _try; break
+                if _v5_path.exists():
+                    _spec = _ilu.spec_from_file_location("gstr1_fy_v5", str(_v5_path))
+                    _v5   = _ilu.module_from_spec(_spec)
+                    _spec.loader.exec_module(_v5)
+                    _fy_out = cdir / f"GSTR1_FY_{FY_LABEL.replace('-','_')}_{gstin}.xlsx"
+                    _r = _v5.extract_fy(_g1_zips, trader_name=client_name, out_path=str(_fy_out))
+                    print(f"    \u2713 GSTR-1 FY Excel: {Path(_r).name}")
+                    log.info(f"    GSTR-1 FY Excel saved: {Path(_r).name} ✓")
+                else:
+                    log.warning(f"    gstr1_fy_v5.py not found — skipping FY Excel")
+            except Exception as _efv:
+                log.warning(f"    gstr1_fy_v5 error: {_efv}")
+    # ── Auto-run GSTR-2B Extractor (Option 11 offline) ─────────────
+    print("\n  Running GSTR-2B Consolidated Extractor...")
+    for cdir, client_name, gstin in client_jobs:
+        _g2b = list(cdir.glob("GSTR2B_*.xlsx"))
+        if _g2b:
+            print(f"    [{client_name}] {len(_g2b)} GSTR-2B file(s)")
+            run_gstr2b_extractor(str(cdir), FY_LABEL, log)
+
+        else:
+            log.info(f"    No GSTR1_*.zip files in {cdir.name} — skipping FY Excel")
+
+    print(f"\n{'='*60}")
+    print(f"  DONE \u2014 {generated}/{len(client_jobs)} reconciliation reports generated")
+    print(f"  Folder: {selected_run}")
+    print("="*60)
+
+    # ── Auto-bundle ALL output files and open folder ───────────────
+    if generated > 0:
+        print("\n  Bundling all output files into a single ZIP for easy download...")
+        zip_path = zip_all_outputs(str(selected_run), log)
+        if zip_path:
+            print(f"  ZIP: {os.path.basename(zip_path)}  ← all files bundled here")
+            print(f"  Windows Explorer has been opened at: {selected_run}")
+
+    input("\n  Press Enter to close...")
+
+
+
+# ==========================================================
+# OPTION 12: RETRY FAILED — Read Master Report Excel
+# Parses MASTER_REPORT*.xlsx, finds TILE_FAIL / NOT_FOUND rows,
+# asks user to confirm, then re-downloads just those months.
+# ==========================================================
+def retry_from_master_excel(log=None):
+    """
+    Read a MASTER_REPORT*.xlsx and retry all failed downloads.
+    No need to re-download months that already have OK files.
+    """
+    import glob as _glob
+    if log is None:
+        logging.basicConfig(level=logging.INFO,
+                            format="%(asctime)s | %(levelname)-8s | %(message)s",
+                            datefmt="%Y-%m-%d %H:%M:%S")
+        log = logging.getLogger(__name__)
+
+    script_dir  = os.path.dirname(os.path.abspath(__file__))
+    base_dir_def= os.path.join(_find_output_base(), "GST_Automation")
+
+    print("\n" + "="*60)
+    print("  RETRY FAILED — Read Master Report Excel")
+    print("="*60)
+    print(f"  Default folder: {base_dir_def}")
+    user_dir = input("  Press ENTER for default, or type folder path: ").strip()
+    base_dir = user_dir if user_dir else base_dir_def
+
+    # Find most recent MASTER_REPORT*.xlsx
+    master_files = sorted(_glob.glob(os.path.join(base_dir, "MASTER_REPORT*.xlsx")), reverse=True)
+    if not master_files:
+        master_files = sorted(_glob.glob(os.path.join(base_dir, "*", "MASTER_REPORT*.xlsx")), reverse=True)
+    if not master_files:
+        print("  No MASTER_REPORT*.xlsx found. Please enter path:")
+        custom = input("  Path: ").strip().strip('"')
+        if os.path.exists(custom):
+            master_files = [custom]
+        else:
+            print("  File not found. Exiting."); return
+
+    if len(master_files)==1:
+        master_path = master_files[0]
+        print(f"  Reading: {os.path.basename(master_path)}")
+    else:
+        print("  Found multiple Master Reports:")
+        for i,f in enumerate(master_files[:10],1):
+            print(f"    [{i}] {os.path.basename(f)}")
+        idx = input("  Select (ENTER=1): ").strip()
+        try: master_path = master_files[int(idx)-1] if idx else master_files[0]
+        except: master_path = master_files[0]
+
+    # Parse the Master Excel
+    try:
+        df_master = pd.read_excel(master_path, sheet_name="Master Dashboard",
+                                   header=1, dtype=str)
+        df_master.columns = [str(c).strip() for c in df_master.columns]
+    except Exception as e:
+        print(f"  Error reading master: {e}"); return
+
+    FAIL_TAGS = ("TILE_FAIL","NOT_FOUND","TILE_NOT_FOUND","ERR")
+    failed_items = []
+    for _, row in df_master.iterrows():
+        client = str(row.get("Client","")).strip()
+        gstin  = str(row.get("GSTIN","")).strip()
+        month_str = str(row.get("Month","")).strip()
+        if not client or client=="nan" or not month_str or month_str=="nan": continue
+        parts  = month_str.split()
+        if len(parts) < 2: continue
+        mn_name, mn_year = parts[0], parts[1]
+        bad_returns = []
+        for ret_key in ("GSTR-1","GSTR-2B","GSTR-2A","GSTR-3B","GSTR1","GSTR2B","GSTR2A","GSTR3B"):
+            val = str(row.get(ret_key, row.get(ret_key.replace("-",""),""))).strip()
+            if any(t in val for t in FAIL_TAGS):
+                # Normalize return name
+                rkey = ret_key.replace("-","")
+                if rkey not in bad_returns: bad_returns.append(rkey)
+        if bad_returns:
+            failed_items.append({"client":client,"gstin":gstin,
+                                  "month":mn_name,"year":mn_year,
+                                  "returns":bad_returns})
+
+    if not failed_items:
+        print("  ✓ No failed items found in master report! All OK."); return
+
+    print(f"\n  Found {len(failed_items)} failed item(s):")
+    print(f"  {'#':3} {'Client':28} {'Month':12} {'Returns'}")
+    print("  " + "-"*65)
+    for i,fi in enumerate(failed_items,1):
+        print(f"  [{i:2d}] {fi['client']:28} {fi['month']} {fi['year']}  → {', '.join(fi['returns'])}")
+
+    print("\n  Options: YES=retry all  |  no=cancel  |  1 3 5=select by number")
+    ans = input("  Retry? ").strip().lower()
+    items_to_retry = []
+    if ans in ("","yes","y","all"):
+        items_to_retry = list(failed_items)
+    elif ans in ("no","n","cancel"):
+        return
+    else:
+        for ns in ans.split():
+            try:
+                idx = int(ns)-1
+                if 0<=idx<len(failed_items): items_to_retry.append(failed_items[idx])
+            except Exception: pass
+
+    if not items_to_retry:
+        print("  Nothing selected."); return
+
+    # Find the client folders
+    run_dirs = sorted([d for d in _glob.glob(os.path.join(base_dir,"AY*"))
+                       if os.path.isdir(d)], reverse=True)
+
+    # Load clients for credentials
+    clients = load_clients(os.path.dirname(os.path.abspath(__file__)))
+    client_map = {c["name"].strip().lower(): c for c in clients}
+
+    # Determine which run folder to use
+    if run_dirs:
+        print(f"\n  Available run folders:")
+        for i,d in enumerate(run_dirs[:5],1):
+            print(f"    [{i}] {os.path.basename(d)}")
+        sel = input("  Select run folder (ENTER=1): ").strip()
+        try: chosen_run = run_dirs[int(sel)-1] if sel else run_dirs[0]
+        except: chosen_run = run_dirs[0]
+    else:
+        chosen_run = base_dir
+    print(f"  Run folder: {chosen_run}")
+
+    # Group by client
+    from collections import defaultdict
+    by_client = defaultdict(list)
+    for fi in items_to_retry:
+        by_client[fi["client"]].append(fi)
+
+    for cname, mlist in by_client.items():
+        client = client_map.get(cname.strip().lower())
+        if not client:
+            # Try partial match
+            for k,v in client_map.items():
+                if cname.lower() in k or k in cname.lower():
+                    client = v; break
+        if not client:
+            print(f"  ✗ Credentials not found for {cname}"); continue
+
+        cdir_r = os.path.join(chosen_run, cname.replace(" ","_").replace("/","_"))
+        os.makedirs(cdir_r, exist_ok=True)
+        print(f"\n  Retrying {cname} ({len(mlist)} month(s))...")
+
+        driver_r = None
+        try:
+            driver_r = make_driver(cdir_r)
+            try: set_download_dir_all_tabs(driver_r, cdir_r)
+            except Exception: pass
+            global CURRENT_CLIENT
+            CURRENT_CLIENT = {"username":client["username"],"password":client["password"]}
+            if not do_login(driver_r, client["username"], client["password"], log):
+                print()
+                print("  " + "="*56)
+                print(f"  ✗  SKIPPING: {cname}")
+                print("     Login failed after all attempts.")
+                print("     Fix credentials in clients.xlsx then retry again.")
+                print("  " + "="*56)
+                driver_r.quit(); continue
+
+            for fi in mlist:
+                mn_r = fi["month"]; yr_r = fi["year"]
+                print(f"    {mn_r} {yr_r}: {fi['returns']}...")
+                try:
+                    # CORRECT ORDER: navigate to dashboard first, THEN set FY/Period
+                    safe_go_to_dashboard(driver_r, log)
+                    select_and_search(driver_r, mn_r, log)
+                    time.sleep(2)
+                    for rtype in fi["returns"]:
+                        suf = {"GSTR3B":".pdf","GSTR2B":".xlsx"}.get(rtype,".zip")
+                        save = f"{rtype}_{mn_r}_{yr_r}{suf}"
+                        save_path = os.path.join(cdir_r, save)
+                        if os.path.exists(save_path):
+                            print(f"      → {save} already exists, skipping")
+                            continue
+                        if click_tile_download(driver_r, rtype, log):
+                            if rtype in ("GSTR3B", "GSTR2B"):
+                                # Both GSTR-3B and GSTR-2B: single-level direct download
+                                time.sleep(2)
+                                ok = rename_latest(cdir_r, save, [suf], log)
+                                if not ok and rtype == "GSTR2B":
+                                    # Fallback: portal showed generate page
+                                    log.info(f"    GSTR-2B retry [{mn_r}] — generate page fallback...")
+                                    _GEN_XP = [
+                                        "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+                                        "//button[contains(text(),'GENERATE EXCEL')]",
+                                        "//button[contains(text(),'Generate Excel')]",
+                                        "//a[contains(text(),'GENERATE EXCEL')]",
+                                        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+                                        "//button[contains(text(),'Generate JSON')]",
+                                    ]
+                                    ok = generate_then_download_immediate(
+                                        driver_r, cdir_r, save, log,
+                                        gen_xpaths=_GEN_XP, max_wait=120)
+                            else:
+                                time.sleep(2)
+                                ok = generate_then_download_immediate(
+                                    driver_r, cdir_r, save, log, max_wait=120)
+                            print(f"      {'✓' if ok else '✗'} {save}")
+                        else:
+                            print(f"      ✗ Tile not found for {rtype}")
+                except Exception as _re:
+                    print(f"      ✗ Error: {_re}")
+
+        except Exception as _me:
+            print(f"  ✗ Session error: {_me}")
+        finally:
+            if driver_r:
+                try: driver_r.quit()
+                except Exception: pass
+            CURRENT_CLIENT = {}
+
+    print("\n  Retry complete. Run option 11 (Offline Recon) to rebuild reconciliation.")
+    input("  Press Enter to close...")
+
+
+
+# ==========================================================
+# GSTR-2B CONSOLIDATED EXTRACTOR — AUTO-RUN AFTER DOWNLOAD
+# Triggered after Option 4 / 17 / 11 (offline).
+# Output saved to same Downloads folder as GSTR2B files.
+# ==========================================================
+
+def run_gstr2b_extractor(client_folder, fy_label, log=None):
+    """
+    Scan client_folder for GSTR2B_*.xlsx and build:
+      GSTR2B_Consolidated_Analysis_<ClientName>_<FY>.xlsx
+    Saved in the SAME folder as the downloaded GSTR2B files.
+    """
+    import importlib.util as _ilu
+    from pathlib import Path as _P
+
+    def _log(msg):
+        if log: log.info(msg)
+        print(f"    {msg}")
+
+    client_folder = _P(client_folder)
+    gstr2b_files  = sorted(client_folder.glob("GSTR2B_*.xlsx"))
+    if not gstr2b_files:
+        _log(f"  ⚠  No GSTR2B_*.xlsx files in {client_folder.name} — skipping")
+        return None
+
+    _log(f"  GSTR-2B Extractor: {len(gstr2b_files)} file(s) in {client_folder.name}")
+
+    script_dir     = _P(__file__).parent
+    extractor_path = script_dir / "gstr2b_extractor_v2.py"
+    if not extractor_path.exists():
+        _log("  ⚠  gstr2b_extractor_v2.py not found in FT6 folder — skipping")
+        return None
+
+    try:
+        spec   = _ilu.spec_from_file_location("gstr2b_extractor_v2", str(extractor_path))
+        extmod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(extmod)
+    except Exception as e:
+        _log(f"  ⚠  Could not load gstr2b_extractor_v2.py: {e}")
+        return None
+
+    try:
+        _log("  Reading all months ...")
+        records = extmod.load_all_files(str(client_folder))
+        if not records:
+            _log("  ⚠  No invoice records extracted")
+            return None
+        _log(f"  {len(records)} invoice records loaded")
+
+        fy_safe          = fy_label.replace("/", "-")
+        client_name_safe = client_folder.name.replace(" ", "_")
+        out_name         = f"GSTR2B_Consolidated_Analysis_{client_name_safe}_{fy_safe}.xlsx"
+        out_path         = str(client_folder / out_name)
+
+        _log("  Building consolidated workbook ...")
+        extmod.build_workbook(records, out_path)
+        _log(f"  ✓ Saved: {out_name}")
+        return out_path
+    except Exception as e:
+        _log(f"  ✗ Extractor error: {e}")
+        import traceback; traceback.print_exc()
+        return None
+
+def ask_returns_menu():
+    """
+    Show a numbered menu so the user can choose which returns to download.
+    Returns a set of return-type strings, or the string "OFFLINE_RECON".
+    """
+    ALL = {"GSTR1", "GSTR2B", "GSTR2A", "GSTR3B"}
+
+    OPTIONS = [
+        # ── FULL SUITE ─────────────────────────────────────────────
+        ("1",  "FULL SUITE — GSTR-1 + GSTR-2B + GSTR-2A + GSTR-3B + Tax Liability"
+               "  [Phased: Generate 1&2A → Download 2B&3B → Collect 1&2A links]",
+                {"GSTR1","GSTR2B","GSTR2A","GSTR3B","TAX_LIABILITY"}),
+
+        # ── FAST CASES (Direct download only — no generate wait) ───
+        ("16", "⚡ FULL OPTIMISED — GSTR-1 + 2B + 3B + 2A + Tax (optimal order)"
+               "  [1A→2B→3B→Tax→2A: INSTANT downloads first, generates in background]",
+                {"GSTR1","GSTR2B","GSTR2A","GSTR3B","TAX_LIABILITY"}),
+        ("15", "⚡ FAST — GSTR-2B + GSTR-3B only  (Direct download, no generate, ~10 min)",
+                {"GSTR2B", "GSTR3B"}),
+        ("4",  "⚡ FAST — GSTR-2B only  (Excel, direct download, ~5 min)",
+                {"GSTR2B"}),
+        ("6",  "⚡ FAST — GSTR-3B only  (PDF, direct download, ~5 min)",
+                {"GSTR3B"}),
+
+        # ── GENERATE-FIRST CASES ──────────────────────────────────
+        ("2",  "GSTR-1  only  (JSON — generate first, then download)",
+                {"GSTR1"}),
+        ("5",  "GSTR-2A only  (Excel — generate first, then download)",
+                {"GSTR2A"}),
+
+        # ── COMBO CASES ───────────────────────────────────────────
+        ("7",  "GSTR-1 + GSTR-3B",
+                {"GSTR1", "GSTR3B"}),
+        ("8",  "GSTR-2B + GSTR-2A  (both purchase returns)",
+                {"GSTR2B", "GSTR2A"}),
+        ("9",  "GSTR-1 + GSTR-2B + GSTR-2A  (no 3B)",
+                {"GSTR1", "GSTR2B", "GSTR2A"}),
+        ("13", "GSTR-1 + GSTR-2B + GSTR-3B  (no 2A, no 1A)"
+               "  [Phased: Generate 1 → Download 2B&3B → Collect 1]",
+                {"GSTR1", "GSTR2B", "GSTR3B"}),
+        ("14", "GSTR-1 + GSTR-2B + GSTR-3B  (no 2A, no 1A)"
+               "",
+                {"GSTR1", "GSTR2B", "GSTR3B"}),
+        ("17", "⚡ FAST COMBO — GSTR-1 + GSTR-1A (per-month check) + GSTR-2B + GSTR-3B + Tax Liability 2025-26 & 2024-25"
+               "  [1&1A generate simultaneously → 2B&3B instant download → Tax both FY → collect 1&1A]",
+                {"GSTR1", "GSTR1A", "GSTR2B", "GSTR3B", "TAX_LIABILITY"}),
+        ("10", "Tax Liability & ITC Comparison only  (downloads 2024-25 + 2023-24)",
+                {"TAX_LIABILITY"}),
+
+        # ── UTILITY OPTIONS ───────────────────────────────────────
+        ("11", "OFFLINE — Make Reconciliation Excel from already-downloaded files (no browser)",
+                "OFFLINE_RECON"),
+        ("12", "RETRY FAILED — Read Master Report Excel and re-download failed months (T1/T2/T3)",
+                "RETRY_FROM_MASTER"),
+        ("18", "📊 GSTR-3B SUMMARY REPORT — Read PDFs → Generate Summary Excel (XLSM format)",
+                "3B_SUMMARY"),
+        ("C",  "Custom — type return names manually",
+                None),
+    ]
+
+    print("\n" + "="*70)
+    print("  GST PORTAL DOWNLOAD — SELECT CASE")
+    print("="*70)
+    print("  FAST CASES (No generate needed — direct download):")
+    for num, label, _ in OPTIONS:
+        if num in ("15","4","6"):
+            print(f"  [{num}]  {label}")
+    print()
+    print("  FULL / COMBO CASES (Phased: Generate → Direct → Collect):")
+    for num, label, _ in OPTIONS:
+        if num not in ("15","4","6","11","12","18","C","10"):
+            print(f"  [{num}]  {label}")
+    print()
+    print("  UTILITIES:")
+    for num, label, _ in OPTIONS:
+        if num in ("10","11","12","18","C"):
+            print(f"  [{num}]  {label}")
+    print("="*70)
+    print("  PHASED FLOW: Phase1A=Generate(1,1A) → Phase2=Download(2B) →")
+    print("               Phase3=Download(3B) → Phase4=TaxLiability →")
+    print("               Phase5=Generate(2A) → Collect all links")
+    print("  OPTION 16  : ⚡ FULL OPTIMISED — runs all phases in optimal order")
+    print("  RETRY LOGIC: T1 → wait 30s → T2 → wait 60s → T3 → report fail")
+    print("  SESSION TIP: Downloading 2B & 3B keeps session alive during generate wait")
+    print("="*70)
+
+    while True:
+        choice = input("  Enter choice: ").strip().upper()
+        for num, label, ret_set in OPTIONS:
+            if choice == num:
+                if ret_set == "OFFLINE_RECON":
+                    return "OFFLINE_RECON"
+                elif ret_set == "RETRY_FROM_MASTER":
+                    return "RETRY_FROM_MASTER"
+                elif ret_set == "3B_SUMMARY":
+                    return "3B_SUMMARY"
+                elif ret_set is not None:
+                    print(f"\n  Selected: {label}")
+                    return ret_set
+                else:
+                    print("\n  Enter return names separated by commas.")
+                    print("  Valid names: GSTR1  GSTR1A  GSTR2B  GSTR2A  GSTR3B  TAX_LIABILITY")
+                    raw = input("  Your selection: ").strip().upper()
+                    VALID = {"GSTR1","GSTR2B","GSTR2A","GSTR3B","TAX_LIABILITY"}
+                    chosen = {r.strip() for r in raw.replace(" ","").split(",") if r.strip() in VALID}
+                    if chosen:
+                        print(f"  Selected: {sorted(chosen)}")
+                        return chosen
+                    else:
+                        print("  No valid names entered. Try again.")
+        print(f"  Invalid choice '{choice}'. Enter 1-11 or C.")
+
+
+# ==========================================================
+# FINANCIAL YEAR RANGE SELECTION
+# ==========================================================
+def ask_fy_range():
+    """
+    Ask the user for a range of Financial Years to process.
+    Returns a list of FY label strings, e.g. ['2021-22', '2022-23', ..., '2025-26'].
+    Supports:
+      • Single FY  → e.g.  2025-26
+      • Range      → e.g.  2021-22 to 2025-26
+    """
+    ALL_FY = [
+        "2017-18", "2018-19", "2019-20", "2020-21",
+        "2021-22", "2022-23", "2023-24", "2024-25", "2025-26",
+    ]
+    print("\n" + "="*70)
+    print("  SELECT FINANCIAL YEAR(S) TO DOWNLOAD")
+    print("="*70)
+    print("  Available FYs:", "  |  ".join(ALL_FY))
+    print()
+    print("  Enter a SINGLE year  →  e.g.  2025-26")
+    print("  Enter a RANGE        →  e.g.  2021-22 to 2025-26")
+    print("="*70)
+
+    while True:
+        raw = input("  Your selection: ").strip()
+
+        # Range input: "2021-22 to 2025-26"
+        if " to " in raw.lower():
+            parts = [p.strip() for p in raw.lower().split(" to ")]
+            if len(parts) == 2:
+                start, end = parts[0], parts[1]
+                # Normalise e.g. "2021-22" → keep as-is
+                if start in ALL_FY and end in ALL_FY:
+                    s_idx = ALL_FY.index(start)
+                    e_idx = ALL_FY.index(end)
+                    if s_idx <= e_idx:
+                        selected = ALL_FY[s_idx : e_idx + 1]
+                        print(f"\n  Selected FYs: {', '.join(selected)}")
+                        return selected
+                    else:
+                        print("  ✗ Start FY must be before End FY. Try again.")
+                else:
+                    print(f"  ✗ Invalid FY(s). Use format like 2021-22. Try again.")
+            else:
+                print("  ✗ Invalid range format. Use: 2021-22 to 2025-26")
+
+        # Single FY
+        elif raw in ALL_FY:
+            print(f"\n  Selected FY: {raw}")
+            return [raw]
+
+        else:
+            print(f"  ✗ '{raw}' not recognised. Use a value from the list above.")
+
+
+# ==========================================================
+# MAIN
+# ==========================================================
+def main():
+    print("\n" + "="*70)
+    print("  GST COMPLETE SUITE v33 — MULTI-YEAR EDITION")
+    print("  Downloads: GSTR-1 (JSON) + GSTR-1A (JSON)")
+    print("             GSTR-2B (Excel) + GSTR-2A (Excel)")
+    print("             GSTR-3B (PDF) + Tax Liability & ITC")
+    print()
+    print("  NEW in v33 — GSTR-3B SUMMARY REPORT (Option 18):")
+    print("  • Reads GSTR-3B PDFs → Generates Summary Excel")
+    print("  • Matches ARUN_ENTERPRISES_BOTH_FY XLSM format")
+    print("  • Sections: Sales | Purchase | Tax Liability | ITC | Cash Offset")
+    print("="*70)
+
+    if MISSING:
+        print(f"\n  Missing packages: pip install {' '.join(MISSING)}")
+        input("  Press Enter..."); return
+
+    # -- Ask what to do -------------------------------------
+    action = ask_returns_menu()
+
+    # -- Option 11: Offline reconciliation (no browser) ----
+    if action == "OFFLINE_RECON":
+        run_offline_reconciliation()
+        return
+
+    # -- Option 12: Retry failed from Master Excel ----------
+    if action == "RETRY_FROM_MASTER":
+        retry_from_master_excel()
+        return
+
+    # -- Option 18: GSTR-3B Summary Report (PDF → Excel) ---
+    if action == "3B_SUMMARY":
+        run_3b_summary_report()
+        return
+
+    returns_todo = action   # it's a set of return types
+
+    # ── Ask for Financial Year range ───────────────────────
+    fy_list = ask_fy_range()   # e.g. ['2021-22', '2022-23', ..., '2025-26']
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    clients    = load_clients(script_dir)
+
+    session_ts = datetime.now().strftime('%Y%m%d_%H%M')
+    session_root = os.path.join(
+        os.path.expanduser("~"), "Downloads", "GST_Automation",
+        f"MultiYear_{session_ts}")
+    os.makedirs(session_root, exist_ok=True)
+    print(f"\n  Session root folder: {session_root}")
+
+    print("\n  HOW IT WORKS:")
+    print("  1. Browser opens → username & password auto-filled")
+    print("  2. CAPTCHA appears → type it in browser → press ENTER here")
+    print(f"  3. Script downloads: {', '.join(sorted(returns_todo))}")
+    print(f"  4. Repeats for each FY: {', '.join(fy_list)}")
+    print("  5. Separate output folder + Reconciliation Excel per FY")
+
+    if input("\n  Type YES to start: ").strip().upper() != "YES":
+        print("  Cancelled."); return
+
+    # ── Loop over each requested Financial Year ────────────
+    for fy_label in fy_list:
+
+        # ── Update globals so every function uses the correct FY ──
+        global FY_LABEL, MONTHS
+        FY_LABEL = fy_label
+        MONTHS   = _build_months_for_fy(fy_label)
+
+        print("\n" + "="*70)
+        print(f"  ▶  PROCESSING FY {fy_label}  ({len(MONTHS)} months)  "
+              f"Clients: {len(clients)}")
+        print("="*70)
+
+        # Per-FY output folder
+        fy_tag   = fy_label.replace("-", "_")
+        base_dir = os.path.join(session_root, f"AY{fy_tag}")
+        os.makedirs(base_dir, exist_ok=True)
+        print(f"\n  Output folder: {base_dir}")
+
+        log = setup_logger(base_dir)
+
+        all_results = []
+        for i, client in enumerate(clients, 1):
+            print(f"\n  [{i}/{len(clients)}] {client['name']}  (FY {fy_label})")
+            result = process_client(client, base_dir, log, returns_todo)
+            all_results.append(result)
+
+        print(f"\n  Generating master report for FY {fy_label}...")
+        report = write_master_report(all_results, base_dir)
+
+        # ── Auto-run GSTR-2B Consolidated Extractor per client ─────────
+        if "GSTR2B" in returns_todo:
+            print(f"\n  Running GSTR-2B Consolidated Extractor for FY {fy_label}...")
+            _ext_ok, _ext_fail = [], []
+            for _res in all_results:
+                _cname   = _res.get("name", "")
+                # Match folder name: spaces→underscores and special chars
+                _cname_disk = _cname.replace(" ", "_")
+                _cfolder = os.path.join(base_dir, _cname_disk)
+                if not os.path.isdir(_cfolder):
+                    # Fallback: search by partial name match
+                    _matches = [d for d in os.listdir(base_dir)
+                                if os.path.isdir(os.path.join(base_dir, d))
+                                and _cname.upper().replace(" ","")[:8]
+                                    in d.upper().replace("_","")[:10]]
+                    _cfolder = os.path.join(base_dir, _matches[0]) if _matches else _cfolder
+                print(f"    [{_cname}] → {os.path.basename(_cfolder)}")
+                _out = run_gstr2b_extractor(_cfolder, fy_label, log)
+                (_ext_ok if _out else _ext_fail).append(_cname)
+            print(f"  GSTR-2B Extractor: ✔ {len(_ext_ok)} done", end="")
+            if _ext_fail:
+                print(f"   ✘ {len(_ext_fail)} skipped: {', '.join(_ext_fail)}", end="")
+            print()
+
+        print(f"\n  Bundling FY {fy_label} files into ZIP...")
+        zip_path = zip_all_outputs(base_dir, log)
+
+        failed_logins = [r["name"] for r in all_results if r.get("login_failed")]
+
+        print("\n" + "="*60)
+        print(f"  FY {fy_label} — DONE!")
+        print(f"  Returns  : {', '.join(sorted(returns_todo))}")
+        print(f"  Clients  : {len(all_results)} processed")
+        if failed_logins:
+            print(f"  ✗ Login FAILED ({len(failed_logins)}): {', '.join(failed_logins)}")
+            print("    → Fix credentials in clients.xlsx, then use Option 12 to retry.")
+        else:
+            print(f"  ✓ All {len(all_results)} client(s) logged in successfully")
+        print(f"  Report   : {os.path.basename(report)}")
+        if zip_path:
+            print(f"  ZIP      : {os.path.basename(zip_path)}  ← all files bundled here")
+        print(f"  Folder   : {base_dir}")
+        print("="*60)
+
+    # ── All FYs complete ───────────────────────────────────
+    print("\n" + "="*70)
+    print(f"  ✅  ALL FINANCIAL YEARS COMPLETE!")
+    print(f"  FYs processed : {', '.join(fy_list)}")
+    print(f"  Session folder: {session_root}")
+    print("="*70)
+    input("\n  Press Enter to close...")
+
+
+# ==========================================================
+# GSTR-3B SUMMARY REPORT GENERATOR
+# Reads GSTR-3B PDFs and outputs Excel in XLSM Summary Format
+# Added in v33 — matches ARUN_ENTERPRISES_BOTH_FY_*.xlsm layout
+# ==========================================================
+
+def generate_3b_summary_excel(pdf_folder, fy_label, out_path):
+    """
+    Reads all GSTR3B_<Month>_<Year>.pdf files from pdf_folder and produces
+    a Summary Report Excel exactly matching the XLSM template format:
+
+      Row layout (matches ARUN_ENTERPRISES_BOTH_FY_2024-25.xlsm):
+        Sales Summary      — 3.1(a), 3.1(b), 3.1(c), 3.1(e), Total
+        Exempt/Nil/Non-GST — 5 Inward exempt, Non-GST inward, Total
+        Purchase Summary   — 3.1(d) RCM, Total
+        Opening ITC Balance— IGST, CGST, SGST, Cess, Total
+        Tax Liability NRC  — IGST, CGST, SGST, Cess, Total
+        Tax Liability RC   — IGST, CGST, SGST, Cess, Total
+        Tax Liability Total— Total (incl. RC)
+        Late Fee           — IGST, CGST, SGST, Cess, Total
+        ITC (Non-RC)       — IGST, CGST, SGST, Cess, Total
+        ITC (RC)           — IGST, CGST, SGST, Cess, Total
+        ITC Total          — Total (incl. RC)
+        Cash Offset        — IGST, CGST, SGST, Cess, Total
+        Closing ITC Balance— IGST, CGST, SGST, Cess
+
+    Columns: Section | Particulars | Apr | May | Jun | Jul | Aug | Sep |
+             Oct | Nov | Dec | Jan | Feb | Mar | Total
+    """
+    from pathlib import Path as _P
+    import openpyxl as _xl
+    from openpyxl.styles import Font as _Fnt, PatternFill as _PF, Alignment as _Al, Border as _Bd, Side as _Si
+    from openpyxl.utils import get_column_letter as _gcl
+
+    months_info = _build_months_for_fy(fy_label)  # list of (name, mm, yyyy)
+    pdf_folder  = _P(pdf_folder)
+
+    # -- Extract all PDFs --
+    monthly = {}
+    for mn, mm, yr in months_info:
+        pdf_p = pdf_folder / f"GSTR3B_{mn}_{yr}.pdf"
+        monthly[(mn, yr)] = extract_3b_pdf(pdf_p)
+
+    # -- Helpers --
+    def _f(h): return _PF("solid", fgColor=h)
+    def _fnt(b=False, c="000000", s=10): return _Fnt(name="Arial", bold=b, color=c, size=s)
+    def _bdr():
+        s = _Si(style="thin")
+        return _Bd(left=s, right=s, top=s, bottom=s)
+    def _aln(h="center", wrap=False):
+        return _Al(horizontal=h, vertical="center", wrap_text=wrap)
+    NUM = '#,##0.00'
+
+    # Color palette
+    HDR_BG   = "1F3864"; HDR_FG  = "FFFFFF"
+    SEC_SALE = "2E75B6"; SEC_PUR = "375623"; SEC_ITC = "843C0C"
+    SEC_TAX  = "C00000"; SEC_CASH= "7030A0"; ALT1 = "FFFFFF"; ALT2 = "F2F2F2"
+    TOT_BG   = "D9D9D9"; TOT_FG  = "000000"
+    MISSING_BG = "FFC7CE"
+
+    wb = _xl.Workbook()
+    ws = wb.active
+    ws.title = "Summary Report"
+    ws.sheet_view.showGridLines = False
+
+    # --- Column widths ---
+    # A=Section(18), B=Particulars(56), C=blank(2),
+    # D..O = Apr..Mar (13 each), P=Total(15)
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 56
+    ws.column_dimensions["C"].width = 2
+    for ci in range(4, 17):   # D=4 .. O=15
+        ws.column_dimensions[_gcl(ci)].width = 13
+    ws.column_dimensions["P"].width = 15
+
+    month_names = [mn for mn, _, _ in months_info]  # Apr..Mar
+
+    # ── Row 1: Title ─────────────────────────────────────────
+    ws.merge_cells("A1:P1")
+    c = ws["A1"]
+    # Extract meta from first available PDF
+    first_d = next((v for v in monthly.values() if v.get("gstin")), list(monthly.values())[0])
+    gstin_val = first_d.get("gstin", "")
+    name_val  = first_d.get("trade_name") or first_d.get("legal_name", "")
+    c.value = f"GSTR-3B SUMMARY REPORT — {name_val} | GSTIN: {gstin_val} | FY {fy_label}"
+    c.font = _fnt(True, HDR_FG, 12)
+    c.fill = _f(HDR_BG)
+    c.alignment = _aln("center")
+    c.border = _bdr()
+    ws.row_dimensions[1].height = 28
+
+    # ── Row 2: Column Headers ─────────────────────────────────
+    headers = ["Section", "Particulars", ""] + month_names + ["Total"]
+    for ci, h in enumerate(headers, 1):
+        hc = ws.cell(row=2, column=ci, value=h)
+        hc.font = _fnt(True, HDR_FG, 9)
+        hc.fill = _f(HDR_BG)
+        hc.alignment = _aln("center")
+        hc.border = _bdr()
+    ws.row_dimensions[2].height = 18
+    ws.freeze_panes = "D3"
+
+    row = 3  # current data row
+
+    def _write_section_label(r, label, bg):
+        """Write a vertically-merged section label in col A."""
+        ws.cell(row=r, column=1, value=label)
+
+    def _write_row(r, section_label, particulars, values_dict, bg_sec, show_sec=False, bold=False, fg="000000", bg_data=None):
+        """
+        Write one data row. values_dict: {(mn,yr): float}
+        Returns the next row number.
+        """
+        nonlocal row
+        bdata = bg_data or ALT2
+
+        # A: section label
+        ca = ws.cell(row=r, column=1, value=section_label if show_sec else "")
+        ca.font = _fnt(True, HDR_FG, 9)
+        ca.fill = _f(bg_sec)
+        ca.alignment = _aln("center", wrap=True)
+        ca.border = _bdr()
+
+        # B: particulars
+        cb = ws.cell(row=r, column=2, value=particulars)
+        cb.font = _fnt(bold, fg, 9)
+        cb.fill = _f(bdata)
+        cb.alignment = _aln("left")
+        cb.border = _bdr()
+
+        # C: blank
+        cc = ws.cell(row=r, column=3, value="")
+        cc.fill = _f(bdata); cc.border = _bdr()
+
+        # D..O: monthly values
+        col_letters = []
+        for ci, (mn, _, yr) in enumerate(months_info, 4):
+            v = values_dict.get((mn, yr), 0.0)
+            cv = ws.cell(row=r, column=ci, value=v if v else 0.0)
+            cv.font = _fnt(bold, fg, 9)
+            cv.fill = _f(bdata)
+            cv.alignment = _aln("right")
+            cv.border = _bdr()
+            cv.number_format = NUM
+            col_letters.append(_gcl(ci))
+
+        # P: Total (SUM formula)
+        d_col = _gcl(4)
+        o_col = _gcl(4 + len(months_info) - 1)
+        ct = ws.cell(row=r, column=16, value=f"=SUM({d_col}{r}:{o_col}{r})")
+        ct.font = _fnt(True, fg, 9)
+        ct.fill = _f(TOT_BG if not bold else bdata)
+        ct.alignment = _aln("right")
+        ct.border = _bdr()
+        ct.number_format = NUM
+
+        ws.row_dimensions[r].height = 15
+
+    def _blank_row(r):
+        for ci in range(1, 17):
+            c2 = ws.cell(row=r, column=ci, value="")
+            c2.fill = _f("FFFFFF"); c2.border = _bdr()
+        ws.row_dimensions[r].height = 6
+
+    def _total_row(r, section_label, label, row_refs, bg_sec, bg_data=TOT_BG):
+        """Write a SUM total row referencing given row numbers."""
+        ca = ws.cell(row=r, column=1, value=section_label)
+        ca.font = _fnt(True, HDR_FG, 9)
+        ca.fill = _f(bg_sec); ca.alignment = _aln("center", wrap=True); ca.border = _bdr()
+
+        cb = ws.cell(row=r, column=2, value=label)
+        cb.font = _fnt(True, "000000", 9)
+        cb.fill = _f(bg_data); cb.alignment = _aln("left"); cb.border = _bdr()
+
+        cc = ws.cell(row=r, column=3, value="")
+        cc.fill = _f(bg_data); cc.border = _bdr()
+
+        for ci in range(4, 17):
+            refs = "+".join(f"{_gcl(ci)}{rr}" for rr in row_refs)
+            cv = ws.cell(row=r, column=ci, value=f"={refs}")
+            cv.font = _fnt(True, "000000", 9)
+            cv.fill = _f(bg_data); cv.alignment = _aln("right"); cv.border = _bdr()
+            cv.number_format = NUM
+        ws.row_dimensions[r].height = 16
+
+    # =========================================================
+    # SECTION 1: SALES SUMMARY
+    # =========================================================
+    sec_start = row
+    rows_sales = {}
+
+    # 3.1(a) Taxable
+    vd = {(mn, yr): d["taxable"] for (mn, yr), d in monthly.items()}
+    _write_row(row, "Sales Summary", "3.1(a) - Outward taxable supplies (Other than zero rated, nil rated and exempted)",
+               vd, SEC_SALE, show_sec=True)
+    rows_sales["a"] = row; row += 1
+
+    # 3.1(b) Zero rated
+    vd = {(mn, yr): d["zero_taxable"] for (mn, yr), d in monthly.items()}
+    _write_row(row, "", "3.1(b) - Outward taxable supplies (zero rated)", vd, SEC_SALE)
+    rows_sales["b"] = row; row += 1
+
+    # 3.1(c) Nil/Exempt
+    vd = {(mn, yr): d["nil_exempt"] for (mn, yr), d in monthly.items()}
+    _write_row(row, "", "3.1(c) - Other outward supplies (nil rated, exempted)", vd, SEC_SALE)
+    rows_sales["c"] = row; row += 1
+
+    # 3.1(e) Non-GST
+    vd = {(mn, yr): d["non_gst"] for (mn, yr), d in monthly.items()}
+    _write_row(row, "", "3.1(e) - Non GST outward supplies", vd, SEC_SALE)
+    rows_sales["e"] = row; row += 1
+
+    # Total
+    _total_row(row, "Sales Summary", "Total",
+               [rows_sales["a"], rows_sales["b"], rows_sales["c"], rows_sales["e"]], SEC_SALE)
+    rows_sales["total"] = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 2: EXEMPT / NIL / NON-GST INWARD
+    # =========================================================
+    # 5 - Inward from composition/exempt/nil
+    vd = {(mn, yr): 0.0 for (mn, yr), d in monthly.items()}  # not in 3B PDF directly
+    _write_row(row, "Exempt Nil And\nNon-GST Inward\nSupplies",
+               "5 - From a supplier under composition scheme, exempt and nil rated supply",
+               vd, SEC_SALE, show_sec=True)
+    rows_exempt_1 = row; row += 1
+
+    vd = {(mn, yr): 0.0 for (mn, yr), d in monthly.items()}
+    _write_row(row, "", "5 - Non GST supply", vd, SEC_SALE)
+    rows_exempt_2 = row; row += 1
+
+    _total_row(row, "Exempt Nil And\nNon-GST Inward\nSupplies", "Total",
+               [rows_exempt_1, rows_exempt_2], SEC_SALE)
+    rows_exempt_total = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 3: PURCHASE SUMMARY (RCM)
+    # =========================================================
+    vd = {(mn, yr): d["rcm_taxable"] for (mn, yr), d in monthly.items()}
+    _write_row(row, "Purchase Summary", "3.1(d) - Inward supplies (liable to reverse charge)",
+               vd, SEC_PUR, show_sec=True)
+    rows_pur_rcm = row; row += 1
+
+    _total_row(row, "Purchase Summary", "Total", [rows_pur_rcm], SEC_PUR)
+    rows_pur_total = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 4: OPENING ITC BALANCE
+    # (Carried forward — not in 3B PDF, leave as 0 / user fills)
+    # =========================================================
+    vd0 = {(mn, yr): 0.0 for (mn, yr), d in monthly.items()}
+    _write_row(row, "Opening ITC\nBalance", "IGST", vd0, SEC_ITC, show_sec=True)
+    rows_opn_ig = row; row += 1
+    _write_row(row, "", "CGST", vd0, SEC_ITC)
+    rows_opn_cg = row; row += 1
+    _write_row(row, "", "SGST", vd0, SEC_ITC)
+    rows_opn_sg = row; row += 1
+    _write_row(row, "", "Cess", vd0, SEC_ITC)
+    rows_opn_cs = row; row += 1
+    _total_row(row, "Opening ITC\nBalance", "Total",
+               [rows_opn_ig, rows_opn_cg, rows_opn_sg, rows_opn_cs], SEC_ITC)
+    rows_opn_tot = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 5: TAX LIABILITY (Non-Reverse Charge)
+    # =========================================================
+    vd_ig = {(mn, yr): d["o_igst"] for (mn, yr), d in monthly.items()}
+    vd_cg = {(mn, yr): d["o_cgst"] for (mn, yr), d in monthly.items()}
+    vd_sg = {(mn, yr): d["o_sgst"] for (mn, yr), d in monthly.items()}
+    vd_cs = {(mn, yr): d["o_cess"] for (mn, yr), d in monthly.items()}
+
+    _write_row(row, "Tax Liability\n(Non Reverse Charge)", "IGST", vd_ig, SEC_TAX, show_sec=True)
+    rows_nrc_ig = row; row += 1
+    _write_row(row, "", "CGST", vd_cg, SEC_TAX)
+    rows_nrc_cg = row; row += 1
+    _write_row(row, "", "SGST", vd_sg, SEC_TAX)
+    rows_nrc_sg = row; row += 1
+    _write_row(row, "", "Cess", vd_cs, SEC_TAX)
+    rows_nrc_cs = row; row += 1
+    _total_row(row, "Tax Liability\n(Non Reverse Charge)", "Total",
+               [rows_nrc_ig, rows_nrc_cg, rows_nrc_sg, rows_nrc_cs], SEC_TAX)
+    rows_nrc_tot = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 6: TAX LIABILITY (Reverse Charge)
+    # =========================================================
+    vd_rc_ig = {(mn, yr): d["rcm_igst"] for (mn, yr), d in monthly.items()}
+    vd_rc_cg = {(mn, yr): d["rcm_cgst"] for (mn, yr), d in monthly.items()}
+    vd_rc_sg = {(mn, yr): d["rcm_sgst"] for (mn, yr), d in monthly.items()}
+
+    _write_row(row, "Tax Liability\n(Reverse Charge)", "IGST", vd_rc_ig, SEC_TAX, show_sec=True)
+    rows_rc_ig = row; row += 1
+    _write_row(row, "", "CGST", vd_rc_cg, SEC_TAX)
+    rows_rc_cg = row; row += 1
+    _write_row(row, "", "SGST", vd_rc_sg, SEC_TAX)
+    rows_rc_sg = row; row += 1
+    _write_row(row, "", "Cess", vd0, SEC_TAX)
+    rows_rc_cs = row; row += 1
+    _total_row(row, "Tax Liability\n(Reverse Charge)", "Total",
+               [rows_rc_ig, rows_rc_cg, rows_rc_sg, rows_rc_cs], SEC_TAX)
+    rows_rc_tot = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # Total tax liability (NRC + RC)
+    _total_row(row, "Tax Liability", "Total (Including Reverse Charge)",
+               [rows_nrc_tot, rows_rc_tot], SEC_TAX, bg_data="FFD7CC")
+    rows_tax_grand = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 7: LATE FEE
+    # =========================================================
+    vd_lf_cg = {(mn, yr): d["late_fee_cgst"] for (mn, yr), d in monthly.items()}
+    vd_lf_sg = {(mn, yr): d["late_fee_sgst"] for (mn, yr), d in monthly.items()}
+
+    _write_row(row, "Late Fee", "IGST", vd0, SEC_CASH, show_sec=True)
+    rows_lf_ig = row; row += 1
+    _write_row(row, "", "CGST", vd_lf_cg, SEC_CASH)
+    rows_lf_cg = row; row += 1
+    _write_row(row, "", "SGST", vd_lf_sg, SEC_CASH)
+    rows_lf_sg = row; row += 1
+    _write_row(row, "", "Cess", vd0, SEC_CASH)
+    rows_lf_cs = row; row += 1
+    _total_row(row, "Late Fee", "Total",
+               [rows_lf_ig, rows_lf_cg, rows_lf_sg, rows_lf_cs], SEC_CASH)
+    rows_lf_tot = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 8: INPUT TAX CREDIT (Non-Reverse Charge)
+    # =========================================================
+    vd_itc_ig = {(mn, yr): d["itc_igst"] for (mn, yr), d in monthly.items()}
+    vd_itc_cg = {(mn, yr): d["itc_cgst"] for (mn, yr), d in monthly.items()}
+    vd_itc_sg = {(mn, yr): d["itc_sgst"] for (mn, yr), d in monthly.items()}
+
+    _write_row(row, "Input Tax Credit\n(Non Reverse Charge)", "IGST", vd_itc_ig, SEC_ITC, show_sec=True)
+    rows_itc_ig = row; row += 1
+    _write_row(row, "", "CGST", vd_itc_cg, SEC_ITC)
+    rows_itc_cg = row; row += 1
+    _write_row(row, "", "SGST", vd_itc_sg, SEC_ITC)
+    rows_itc_sg = row; row += 1
+    _write_row(row, "", "Cess", vd0, SEC_ITC)
+    rows_itc_cs = row; row += 1
+    _total_row(row, "Input Tax Credit\n(Non Reverse Charge)", "Total",
+               [rows_itc_ig, rows_itc_cg, rows_itc_sg, rows_itc_cs], SEC_ITC)
+    rows_itc_nrc_tot = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 9: INPUT TAX CREDIT (Reverse Charge)
+    # =========================================================
+    vd_rcitc_cg = {(mn, yr): d["itc_rcm"] for (mn, yr), d in monthly.items()}  # 4A(3)
+    vd_rcitc_sg = {(mn, yr): d["itc_rcm"] for (mn, yr), d in monthly.items()}  # same for intra
+
+    _write_row(row, "Input Tax Credit\n(Reverse Charge)", "IGST", vd0, SEC_ITC, show_sec=True)
+    rows_rcitc_ig = row; row += 1
+    _write_row(row, "", "CGST", vd_rcitc_cg, SEC_ITC)
+    rows_rcitc_cg = row; row += 1
+    _write_row(row, "", "SGST", vd_rcitc_sg, SEC_ITC)
+    rows_rcitc_sg = row; row += 1
+    _write_row(row, "", "Cess", vd0, SEC_ITC)
+    rows_rcitc_cs = row; row += 1
+    _total_row(row, "Input Tax Credit\n(Reverse Charge)", "Total",
+               [rows_rcitc_ig, rows_rcitc_cg, rows_rcitc_sg, rows_rcitc_cs], SEC_ITC)
+    rows_itc_rc_tot = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # ITC Grand Total
+    _total_row(row, "Input Tax Credit", "Total (Including Reverse Charge)",
+               [rows_itc_nrc_tot, rows_itc_rc_tot], SEC_ITC, bg_data="D9E1F2")
+    rows_itc_grand = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 10: CASH OFFSET (Tax paid in cash)
+    # =========================================================
+    vd_cash_ig = {(mn, yr): d["tax_paid_igst"] for (mn, yr), d in monthly.items()}
+    vd_cash_cg = {(mn, yr): d["tax_paid_cgst"] for (mn, yr), d in monthly.items()}
+    vd_cash_sg = {(mn, yr): d["tax_paid_sgst"] for (mn, yr), d in monthly.items()}
+
+    _write_row(row, "Cash Offset", "IGST", vd_cash_ig, SEC_CASH, show_sec=True)
+    rows_cash_ig = row; row += 1
+    _write_row(row, "", "CGST", vd_cash_cg, SEC_CASH)
+    rows_cash_cg = row; row += 1
+    _write_row(row, "", "SGST", vd_cash_sg, SEC_CASH)
+    rows_cash_sg = row; row += 1
+    _write_row(row, "", "Cess", vd0, SEC_CASH)
+    rows_cash_cs = row; row += 1
+    _total_row(row, "Cash Offset", "Total",
+               [rows_cash_ig, rows_cash_cg, rows_cash_sg, rows_cash_cs], SEC_CASH)
+    rows_cash_tot = row; row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # SECTION 11: CLOSING ITC BALANCE (informational)
+    # =========================================================
+    _write_row(row, "Closing ITC\nBalance\n(Not in 3B PDF\n— fill manually)",
+               "IGST (Carried Forward)", vd0, SEC_ITC, show_sec=True)
+    row += 1
+    _write_row(row, "", "CGST (Carried Forward)", vd0, SEC_ITC)
+    row += 1
+    _write_row(row, "", "SGST (Carried Forward)", vd0, SEC_ITC)
+    row += 1
+    _write_row(row, "", "Cess (Carried Forward)", vd0, SEC_ITC)
+    row += 1
+
+    _blank_row(row); row += 1
+
+    # =========================================================
+    # PDF STATUS ROW
+    # =========================================================
+    ws.merge_cells(f"A{row}:P{row}")
+    sc = ws.cell(row=row, column=1, value="PDF Status Check")
+    sc.font = _fnt(True, HDR_FG, 9); sc.fill = _f(HDR_BG)
+    sc.alignment = _aln("center"); sc.border = _bdr()
+    ws.row_dimensions[row].height = 16; row += 1
+
+    for mn, mm, yr in months_info:
+        pdf_p = pdf_folder / f"GSTR3B_{mn}_{yr}.pdf"
+        exists = pdf_p.exists()
+        d = monthly[(mn, yr)]
+        arn = d.get("arn", "")
+        arn_date = d.get("arn_date", "")
+        status = f"✓ Filed {arn_date}" if exists and arn else ("✓ PDF Found" if exists else "✗ Missing")
+        bg = "C6EFCE" if exists else MISSING_BG
+        fg = "276221" if exists else "9C0006"
+
+        ws.merge_cells(f"A{row}:C{row}")
+        ca = ws.cell(row=row, column=1, value=f"{mn} {yr}")
+        ca.font = _fnt(True, "000000", 9); ca.fill = _f(bg)
+        ca.alignment = _aln("left"); ca.border = _bdr()
+
+        ws.merge_cells(f"D{row}:J{row}")
+        cb = ws.cell(row=row, column=4, value=f"ARN: {arn}" if arn else "(ARN not extracted)")
+        cb.font = _fnt(False, fg, 9); cb.fill = _f(bg)
+        cb.alignment = _aln("left"); cb.border = _bdr()
+
+        ws.merge_cells(f"K{row}:P{row}")
+        cc = ws.cell(row=row, column=11, value=status)
+        cc.font = _fnt(True, fg, 9); cc.fill = _f(bg)
+        cc.alignment = _aln("center"); cc.border = _bdr()
+        ws.row_dimensions[row].height = 15; row += 1
+
+    ws.sheet_properties.tabColor = "1F3864"
+
+    wb.save(str(out_path))
+    print(f"  ✅ Summary Excel saved: {out_path}")
+    return str(out_path)
+
+
+def run_3b_summary_report():
+    """
+    Menu option 18: Ask user for folder + FY and generate the
+    GSTR-3B Summary Report Excel in the XLSM template format.
+    """
+    print("\n" + "="*65)
+    print("  GSTR-3B SUMMARY REPORT GENERATOR")
+    print("  Reads GSTR3B_*.pdf files → Outputs Summary Excel")
+    print("="*65)
+    print()
+
+    default_base = os.path.join(_find_output_base(), "GST_Automation")
+    print(f"  Default GST folder: {default_base}")
+    folder_in = input("  Enter folder path (ENTER = use default): ").strip()
+    if not folder_in:
+        folder_in = default_base
+
+    if not os.path.isdir(folder_in):
+        # Maybe user gave a client sub-folder directly
+        print(f"  ✗ Folder not found: {folder_in}"); return
+
+    # Look for GSTR3B PDFs directly or in sub-folders
+    from pathlib import Path as _P2
+    base = _P2(folder_in)
+    direct_pdfs = list(base.glob("GSTR3B_*.pdf"))
+    sub_folders = [d for d in base.iterdir() if d.is_dir() and list(d.glob("GSTR3B_*.pdf"))]
+
+    if direct_pdfs:
+        # PDFs are right here
+        chosen_dir = base
+        print(f"  Found {len(direct_pdfs)} GSTR-3B PDFs in: {folder_in}")
+    elif sub_folders:
+        print(f"\n  Found {len(sub_folders)} sub-folder(s) with GSTR-3B PDFs:")
+        for i, sf in enumerate(sub_folders[:15], 1):
+            cnt = len(list(sf.glob("GSTR3B_*.pdf")))
+            print(f"    [{i}] {sf.name}  ({cnt} PDFs)")
+        idx_in = input("  Select sub-folder number: ").strip()
+        try:
+            chosen_dir = sub_folders[int(idx_in) - 1]
+        except (ValueError, IndexError):
+            chosen_dir = sub_folders[0]
+        print(f"  Selected: {chosen_dir}")
+    else:
+        print("  ✗ No GSTR3B_*.pdf files found in folder or sub-folders."); return
+
+    # Financial Year
+    fy_in = input(f"  Enter Financial Year (ENTER = {FY_LABEL}): ").strip()
+    fy_use = fy_in if fy_in else FY_LABEL
+
+    # Output path
+    out_name = f"GSTR3B_Summary_{fy_use.replace('-','_')}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    out_path = chosen_dir / out_name
+
+    print(f"\n  Processing FY {fy_use} from: {chosen_dir}")
+    generate_3b_summary_excel(str(chosen_dir), fy_use, str(out_path))
+    print(f"\n  Output file: {out_path}")
+    input("\n  Press Enter to continue...")
+
+
+if __name__ == "__main__":
+    main()
