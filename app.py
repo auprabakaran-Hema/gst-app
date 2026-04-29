@@ -229,12 +229,23 @@ h1 span{background:linear-gradient(135deg,var(--accent),var(--accent2));
 .badge-orange{background:rgba(255,109,0,.15);color:var(--org);border:1px solid rgba(255,109,0,.4)}
 
 /* Tabs */
-.tabs{display:flex;gap:.25rem;border-bottom:2px solid var(--bdr);margin-bottom:1.1rem;overflow-x:auto;position:relative;z-index:10}
+.tabs-wrap{position:sticky;top:0;z-index:500;background:var(--bg);
+  padding-top:.4rem;margin-bottom:0;box-shadow:0 2px 12px rgba(0,0,0,.35)}
+.tabs{display:flex;gap:.25rem;border-bottom:2px solid var(--bdr);
+  overflow-x:auto;overflow-y:visible;
+  scroll-behavior:smooth;scrollbar-width:thin;
+  scrollbar-color:var(--accent) transparent;
+  -webkit-overflow-scrolling:touch;
+  position:relative;z-index:501;pointer-events:auto;
+  padding-bottom:1px}/* 1px so bottom border isn't clipped */
+.tabs::-webkit-scrollbar{height:3px}
+.tabs::-webkit-scrollbar-track{background:transparent}
+.tabs::-webkit-scrollbar-thumb{background:var(--accent);border-radius:2px}
 .tb{padding:.55rem 1.1rem;background:none;border:none;color:var(--muted);
   font-family:var(--sans);font-size:.78rem;font-weight:700;cursor:pointer;
   border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s;
   text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;
-  position:relative;z-index:11;pointer-events:auto}
+  position:relative;z-index:502;pointer-events:auto;flex-shrink:0}
 .tb:hover{color:var(--txt)}.tb.active{color:var(--accent);border-bottom-color:var(--accent)}
 .tp{display:none}.tp.active{display:block}
 
@@ -414,7 +425,7 @@ footer a{color:var(--accent);text-decoration:none}
 </header>
 
 <!-- ══ FREE GSTIN LOOKUP WIDGET ══ -->
-<div class="card" style="margin-bottom:1.1rem;border:1px solid rgba(0,229,255,.22);background:rgba(0,229,255,.04)">
+<div class="card" style="margin-bottom:1.1rem;border:1px solid rgba(0,229,255,.22);background:rgba(0,229,255,.04);position:relative;z-index:1">
   <div class="ct" style="color:var(--accent)">🔍 Free GSTIN Lookup — Get Company Name Instantly</div>
   <p style="font-size:.78rem;color:var(--muted);margin-bottom:.85rem">
     Type any GSTIN and get the legal name, trade name, status &amp; state — free, no login needed.
@@ -494,7 +505,6 @@ async function glLookup(){
     }
     _glShowResult([d]);
   }catch(e){_glShow('error','Network error: '+e.message);}
-}
 }
 
 async function glBulkLookup(){
@@ -586,15 +596,34 @@ function glCopyTable(e){
 </script>
 
 <!-- TABS -->
-<div class="tabs">
-  <button class="tb active" data-tab="recon"    onclick="switchTab('recon',event)">📊 Reconciliation</button>
-  <button class="tb"        data-tab="gstr1"    onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
-  <button class="tb"        data-tab="dlstatus" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
-  <button class="tb"        data-tab="autodl"   onclick="switchTab('autodl',event)">🌐 Auto Download</button>
-  <button class="tb"        data-tab="bulk"     onclick="switchTab('bulk',event)">📋 Bulk Download</button>
-  <button class="tb"        data-tab="itbulk"   onclick="switchTab('itbulk',event)">📋 IT Bulk Download</button>
-  <button class="tb"        data-tab="itrecon"  onclick="switchTab('itrecon',event)">🏦 Income Tax</button>
+<div class="tabs-wrap">
+<div style="display:flex;align-items:center;gap:0">
+  <button onclick="document.querySelector('.tabs').scrollBy({left:-150,behavior:'smooth'})"
+          title="Scroll tabs left"
+          style="flex-shrink:0;background:none;border:none;color:var(--muted);
+                 font-size:1rem;cursor:pointer;padding:.3rem .5rem;line-height:1;
+                 opacity:.7;transition:opacity .2s"
+          onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'"
+          id="tab-arrow-l">‹</button>
+  <div class="tabs" id="main-tabs">
+    <button class="tb active" data-tab="recon"    onclick="switchTab('recon',event)">📊 Reconciliation</button>
+    <button class="tb"        data-tab="gstr1"    onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
+    <button class="tb"        data-tab="dlstatus" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
+    <button class="tb"        data-tab="autodl"   onclick="switchTab('autodl',event)">🌐 Auto Download</button>
+    <button class="tb"        data-tab="bulk"     onclick="switchTab('bulk',event)">📋 Bulk Download</button>
+    <button class="tb"        data-tab="itbulk"   onclick="switchTab('itbulk',event)">📋 IT Bulk Download</button>
+    <button class="tb"        data-tab="itrecon"  onclick="switchTab('itrecon',event)">🏦 Income Tax</button>
+  </div>
+  <button onclick="document.querySelector('.tabs').scrollBy({left:150,behavior:'smooth'})"
+          title="Scroll tabs right"
+          style="flex-shrink:0;background:none;border:none;color:var(--muted);
+                 font-size:1rem;cursor:pointer;padding:.3rem .5rem;line-height:1;
+                 opacity:.7;transition:opacity .2s"
+          onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'"
+          id="tab-arrow-r">›</button>
 </div>
+</div>
+<div style="margin-bottom:1.1rem"></div>
 
 <!-- ══ TAB 1: RECONCILIATION ══ -->
 <div class="tp active" id="tab-recon">
@@ -1581,11 +1610,14 @@ function switchTab(name, e){
   if(e) e.preventDefault();
   document.querySelectorAll('.tb').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.tp').forEach(p=>p.classList.remove('active'));
-  // Find the matching tab button by data-tab attribute (reliable) or onclick fallback
   const btn = document.querySelector('.tb[data-tab="'+name+'"]') ||
     [...document.querySelectorAll('.tb')].find(b=>
       (b.getAttribute('onclick')||'').includes("'"+name+"'"));
-  if(btn) btn.classList.add('active');
+  if(btn){
+    btn.classList.add('active');
+    // Scroll the clicked tab into view inside the scrollable tab bar
+    btn.scrollIntoView({block:'nearest',inline:'nearest',behavior:'smooth'});
+  }
   const panel = document.getElementById('tab-'+name);
   if(panel) panel.classList.add('active');
   // Check connection status when switching to autodl tab
@@ -3139,6 +3171,7 @@ function _itBulkShowFiles(jid, files){
 }
 
 
+</script>
 </body>
 </html>"""
 
