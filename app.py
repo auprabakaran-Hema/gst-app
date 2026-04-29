@@ -229,11 +229,12 @@ h1 span{background:linear-gradient(135deg,var(--accent),var(--accent2));
 .badge-orange{background:rgba(255,109,0,.15);color:var(--org);border:1px solid rgba(255,109,0,.4)}
 
 /* Tabs */
-.tabs{display:flex;gap:.25rem;border-bottom:2px solid var(--bdr);margin-bottom:1.1rem;overflow-x:auto}
+.tabs{display:flex;gap:.25rem;border-bottom:2px solid var(--bdr);margin-bottom:1.1rem;overflow-x:auto;position:relative;z-index:10}
 .tb{padding:.55rem 1.1rem;background:none;border:none;color:var(--muted);
   font-family:var(--sans);font-size:.78rem;font-weight:700;cursor:pointer;
   border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s;
-  text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+  text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;
+  position:relative;z-index:11;pointer-events:auto}
 .tb:hover{color:var(--txt)}.tb.active{color:var(--accent);border-bottom-color:var(--accent)}
 .tp{display:none}.tp.active{display:block}
 
@@ -483,9 +484,17 @@ async function glLookup(){
   try{
     const r=await fetch('/api/gstin-lookup?gstin='+encodeURIComponent(gstin));
     const d=await r.json();
-    if(d.error&&!d.legal_name){_glShow('error','❌ '+d.error);return;}
+    if(d.error&&!d.legal_name){
+      let msg='❌ '+d.error;
+      if(d.manual_url){
+        msg+=`<br><a href="${d.manual_url}" target="_blank" style="color:var(--accent);font-size:.78rem">
+          🔗 Look up ${gstin} on GST Portal directly →</a>`;
+      }
+      _glShow('error',msg);return;
+    }
     _glShowResult([d]);
   }catch(e){_glShow('error','Network error: '+e.message);}
+}
 }
 
 async function glBulkLookup(){
@@ -578,13 +587,13 @@ function glCopyTable(e){
 
 <!-- TABS -->
 <div class="tabs">
-  <button class="tb active" onclick="switchTab('recon',event)">📊 Reconciliation</button>
-  <button class="tb" onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
-  <button class="tb" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
-  <button class="tb" onclick="switchTab('autodl',event)">🌐 Auto Download</button>
-  <button class="tb" onclick="switchTab('bulk',event)">📋 Bulk Download</button>
-  <button class="tb" onclick="switchTab('itbulk',event)">📋 IT Bulk Download</button>
-  <button class="tb" onclick="switchTab('itrecon',event)">🏦 Income Tax</button>
+  <button class="tb active" data-tab="recon"    onclick="switchTab('recon',event)">📊 Reconciliation</button>
+  <button class="tb"        data-tab="gstr1"    onclick="switchTab('gstr1',event)">📋 GSTR-1 Detail</button>
+  <button class="tb"        data-tab="dlstatus" onclick="switchTab('dlstatus',event)">🔄 Download Status</button>
+  <button class="tb"        data-tab="autodl"   onclick="switchTab('autodl',event)">🌐 Auto Download</button>
+  <button class="tb"        data-tab="bulk"     onclick="switchTab('bulk',event)">📋 Bulk Download</button>
+  <button class="tb"        data-tab="itbulk"   onclick="switchTab('itbulk',event)">📋 IT Bulk Download</button>
+  <button class="tb"        data-tab="itrecon"  onclick="switchTab('itrecon',event)">🏦 Income Tax</button>
 </div>
 
 <!-- ══ TAB 1: RECONCILIATION ══ -->
@@ -1572,13 +1581,13 @@ function switchTab(name, e){
   if(e) e.preventDefault();
   document.querySelectorAll('.tb').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.tp').forEach(p=>p.classList.remove('active'));
-  if(e&&e.currentTarget) e.currentTarget.classList.add('active');
-  else document.querySelectorAll('.tb').forEach(b=>{
-    if(b.getAttribute('onclick')&&b.getAttribute('onclick').includes("'"+name+"'"))
-      b.classList.add('active');
-  });
-  document.getElementById('tab-'+name).classList.add('active');
-  
+  // Find the matching tab button by data-tab attribute (reliable) or onclick fallback
+  const btn = document.querySelector('.tb[data-tab="'+name+'"]') ||
+    [...document.querySelectorAll('.tb')].find(b=>
+      (b.getAttribute('onclick')||'').includes("'"+name+"'"));
+  if(btn) btn.classList.add('active');
+  const panel = document.getElementById('tab-'+name);
+  if(panel) panel.classList.add('active');
   // Check connection status when switching to autodl tab
   if(name==='autodl') checkBrowserConnection();
 }
@@ -6340,53 +6349,93 @@ def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
 @rate_limit(limit=30, window=60)
 def api_gstin_lookup():
     """
-    Look up any GSTIN for free using the GST portal's own public API.
+    Look up any GSTIN using GST portal public APIs.
+    Tries multiple endpoints with fallback — handles Render.com IP blocks gracefully.
     GET /api/gstin-lookup?gstin=33AABCT1234C1ZX
-    Returns: legal_name, trade_name, state, status, business_type, registration_date
-    No login or API key required.
     """
     import urllib.request, urllib.error, ssl
 
     gstin = request.args.get("gstin", "").strip().upper()
 
-    # Basic GSTIN format validation (15 chars)
     if not gstin:
         return jsonify(error="gstin parameter is required"), 400
     if len(gstin) != 15:
         return jsonify(error="GSTIN must be exactly 15 characters"), 400
 
-    # GST portal public search endpoint (same one the portal uses internally)
-    url = f"https://services.gst.gov.in/services/api/search/gstin?gstin={gstin}"
+    # Multiple endpoint candidates — try each in order
+    endpoints = [
+        f"https://services.gst.gov.in/services/api/search/gstin?gstin={gstin}",
+        f"https://services.gst.gov.in/services/searchtp?gstin={gstin}",
+        f"https://gst.gov.in/services/api/search/gstin?gstin={gstin}",
+    ]
 
-    headers = {
-        "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept":       "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer":      "https://services.gst.gov.in/services/searchtp",
-        "Origin":       "https://services.gst.gov.in",
-    }
+    headers_list = [
+        {   # Standard browser headers
+            "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0",
+            "Accept":       "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer":      "https://services.gst.gov.in/services/searchtp",
+            "Origin":       "https://services.gst.gov.in",
+            "Connection":   "keep-alive",
+        },
+        {   # Mobile UA fallback
+            "User-Agent":   "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36",
+            "Accept":       "application/json, */*",
+            "Referer":      "https://services.gst.gov.in/",
+        },
+    ]
 
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
 
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
-            raw = resp.read().decode("utf-8")
-        data = json.loads(raw)
-    except urllib.error.HTTPError as e:
-        body = ""
-        try: body = e.read().decode()
-        except: pass
-        if e.code == 400:
-            return jsonify(error="Invalid GSTIN or not found on GST portal", gstin=gstin), 404
-        return jsonify(error=f"GST portal returned HTTP {e.code}", detail=body, gstin=gstin), 502
-    except Exception as e:
-        return jsonify(error=f"Could not reach GST portal: {e}", gstin=gstin), 502
+    last_error = "All lookup endpoints failed"
+    data = None
+
+    for url in endpoints:
+        for headers in headers_list:
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=12, context=ctx) as resp:
+                    raw = resp.read().decode("utf-8", errors="replace").strip()
+
+                # Must be JSON — reject HTML responses (portal block page)
+                if not raw or raw[0] not in ('{', '['):
+                    last_error = f"GST portal returned non-JSON (possibly blocked). Raw: {raw[:120]}"
+                    continue
+
+                data = json.loads(raw)
+                break  # success
+            except json.JSONDecodeError as je:
+                last_error = f"Invalid JSON from portal: {je} — raw: {raw[:120] if 'raw' in dir() else '(empty)'}"
+                continue
+            except urllib.error.HTTPError as e:
+                body = ""
+                try: body = e.read().decode(errors="replace")[:200]
+                except: pass
+                if e.code == 400:
+                    return jsonify(error="Invalid GSTIN or not registered on GST portal", gstin=gstin), 404
+                if e.code == 403:
+                    last_error = f"GST portal blocked this server (HTTP 403). Use the portal directly."
+                    continue
+                last_error = f"GST portal HTTP {e.code}: {body}"
+                continue
+            except Exception as ex:
+                last_error = f"Connection error: {ex}"
+                continue
+        if data:
+            break
+
+    if not data:
+        # Return helpful error with manual lookup link
+        return jsonify(
+            error=f"Could not reach GST portal: {last_error}",
+            gstin=gstin,
+            hint=f"Look up manually at https://services.gst.gov.in/services/searchtp?gstin={gstin}",
+            manual_url=f"https://services.gst.gov.in/services/searchtp?gstin={gstin}"
+        ), 502
 
     # Parse the response — GST portal returns different structures
-    # Try the standard taxpayerInfo structure first
     info = (
         data.get("taxpayerInfo") or
         data.get("data")         or
@@ -6394,7 +6443,6 @@ def api_gstin_lookup():
     )
 
     def _get(*keys):
-        """Try multiple possible key names, return first non-empty value."""
         for k in keys:
             v = info.get(k, "")
             if v: return str(v).strip()
@@ -6407,10 +6455,9 @@ def api_gstin_lookup():
     biz_type     = _get("ctb",   "constitutionOfBusiness", "bizType")
     reg_date     = _get("rgdt",  "registrationDate", "regDate")
     cancel_date  = _get("cxdt",  "cancellationDate")
-    pan          = gstin[2:12]   # PAN is always chars 3–12 of GSTIN
+    pan          = gstin[2:12]
 
     if not legal_name and not trade_name:
-        # Return raw response for debugging if nothing useful parsed
         return jsonify(
             error="GSTIN found but could not parse name. Raw response attached.",
             gstin=gstin, raw=data
