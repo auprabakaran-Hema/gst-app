@@ -4747,7 +4747,7 @@ def _auto_download(job_id, gstin, client_name,
             "//button[normalize-space()='LOGIN']",
             "//a[contains(@href,'login')]",
         ])
-        time.sleep(8)
+        time.sleep(3)   # was 8
         log(f"  Login page: {driver.current_url}")
 
         log(f"  Filling username: {username}")
@@ -4820,7 +4820,7 @@ def _auto_download(job_id, gstin, client_name,
             "//button[@type='submit']",
             "//input[@type='submit']",
         ])
-        time.sleep(10)
+        time.sleep(3)   # was 10
 
         # OTP check
         try:
@@ -4840,7 +4840,7 @@ def _auto_download(job_id, gstin, client_name,
                         if _human_type(by, val, otp): break
                     except: continue
                 _try_click(["//button[contains(text(),'VERIFY')]","//button[contains(text(),'Submit')]","//button[@type='submit']"])
-                time.sleep(8)
+                time.sleep(3)   # was 8
         except: pass
 
         cur = driver.current_url.lower()
@@ -4908,7 +4908,7 @@ def _auto_download(job_id, gstin, client_name,
                             clicked = True
                             break
                     except: continue
-            time.sleep(10)
+            time.sleep(3)   # was 10
 
             final = driver.current_url
             log(f"  URL after nav attempt {attempt+1}: {final}")
@@ -5004,7 +5004,7 @@ def _auto_download(job_id, gstin, client_name,
                     }
                 }
             """)
-        time.sleep(8)
+        time.sleep(3)   # was 8
         # ── Debug: screenshot + page dump after SEARCH ────────────────
         try:
             img_b64 = _screenshot_b64()
@@ -5191,7 +5191,7 @@ def _auto_download(job_id, gstin, client_name,
                                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
                                 time.sleep(0.5)
                                 driver.execute_script("arguments[0].click();", el)
-                                time.sleep(8)
+                                time.sleep(3)   # was 8
                                 if _rename_latest(save_name, dl_extensions):
                                     return True
                 except: continue
@@ -5222,7 +5222,7 @@ def _auto_download(job_id, gstin, client_name,
                         _go_to_dashboard()
                         _select_and_search(current_month[0])
                         _click_tile_download(current_tile[0])
-                        time.sleep(8)
+                        time.sleep(3)   # was 8
                 except: pass
 
         log(f"  ⚠ No download link found for {save_name} after {max_wait}s", "warn")
@@ -5293,6 +5293,23 @@ def _auto_download(job_id, gstin, client_name,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True,
         })
+        # ── Speed flags for Render server (headless Chrome) ──────────────
+        opts.add_argument("--disable-background-networking")
+        opts.add_argument("--disable-default-apps")
+        opts.add_argument("--disable-sync")
+        opts.add_argument("--no-first-run")
+        opts.add_argument("--disable-translate")
+        opts.add_argument("--disable-plugins")
+        opts.add_argument("--disable-logging")
+        opts.add_argument("--disable-hang-monitor")
+        opts.add_argument("--disable-background-timer-throttling")
+        opts.add_argument("--disable-renderer-backgrounding")
+        opts.add_argument("--disable-backgrounding-occluded-windows")
+        opts.add_argument("--memory-pressure-off")
+        opts.add_argument("--no-zygote")
+        opts.add_argument("--single-process")
+        # Eager: stop waiting for images/ads/analytics — just DOM ready (~40% faster)
+        opts.page_load_strategy = "eager"
         opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
 
@@ -5358,7 +5375,7 @@ def _auto_download(job_id, gstin, client_name,
                         _select_and_search(month_name)
                         current_tile[0] = "GSTR3B"
                         if _click_tile_download("GSTR3B"):
-                            time.sleep(11)
+                            time.sleep(3)   # was 11
                             if _rename_latest(save_name, [".pdf"]):
                                 triggered[f"{key}_GSTR3B"] = "OK"
                                 src_f = dl_dir / save_name
@@ -6207,7 +6224,37 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
     fy_start = int(fy.split("-")[0])
     AY_LABEL  = f"{fy_start+1}-{str(fy_start+2)[-2:]}"   # e.g. "2025-26"
     IT_PORTAL = "https://www.incometax.gov.in/iec/foportal"
-    PAGE_WAIT, SHORT_WAIT = 8, 3
+    PAGE_WAIT, SHORT_WAIT = 4, 1.5   # was 8, 3 — smart waits replace fixed sleeps
+
+    def _smart_wait(expected_url_fragment=None, element_xpath=None, timeout=8):
+        """
+        Smart wait: returns as soon as URL changes OR element appears.
+        Falls back to PAGE_WAIT only if nothing detected.
+        Cuts 2-4s off every page navigation on Render.
+        """
+        import time as _t
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as _EC
+        from selenium.webdriver.common.by import By as _By
+        deadline = _t.time() + timeout
+        try:
+            if expected_url_fragment:
+                WebDriverWait(driver, timeout).until(
+                    lambda d: expected_url_fragment in d.current_url
+                )
+                return
+            if element_xpath:
+                WebDriverWait(driver, timeout).until(
+                    _EC.presence_of_element_located((_By.XPATH, element_xpath))
+                )
+                return
+        except Exception:
+            pass
+        # Fallback: remaining time up to PAGE_WAIT
+        remaining = deadline - _t.time()
+        if remaining > 0:
+            _t.sleep(min(remaining, PAGE_WAIT))
+
 
     def log(msg, t="info"):
         print(f"[IT {job_id}] {msg}")
@@ -6345,6 +6392,23 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
             "credentials_enable_service":       False,
             "profile.password_manager_enabled": False,
         })
+        # ── Speed flags for Render server (headless Chrome) ──────────────
+        opts.add_argument("--disable-background-networking")
+        opts.add_argument("--disable-default-apps")
+        opts.add_argument("--disable-sync")
+        opts.add_argument("--no-first-run")
+        opts.add_argument("--disable-translate")
+        opts.add_argument("--disable-plugins")
+        opts.add_argument("--disable-logging")
+        opts.add_argument("--disable-hang-monitor")
+        opts.add_argument("--disable-background-timer-throttling")
+        opts.add_argument("--disable-renderer-backgrounding")
+        opts.add_argument("--disable-backgrounding-occluded-windows")
+        opts.add_argument("--memory-pressure-off")
+        opts.add_argument("--no-zygote")
+        opts.add_argument("--single-process")
+        # Eager: stop waiting for images/ads/analytics — just DOM ready (~40% faster)
+        opts.page_load_strategy = "eager"
         opts.add_experimental_option("excludeSwitches", ["enable-automation","enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
 
@@ -6365,7 +6429,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         # ════════════════════════════════════════════════════════════════
         log("🌐 Opening incometax.gov.in ...")
         driver.get(IT_PORTAL)
-        time.sleep(PAGE_WAIT)
+        _smart_wait(expected_url_fragment="incometax.gov.in", timeout=PAGE_WAIT)
 
         log("  Clicking Login button on portal home...")
         _click([
@@ -6374,7 +6438,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
             "//a[contains(@href,'login')]",
             "//span[normalize-space()='Login']",
         ])
-        time.sleep(PAGE_WAIT)
+        _smart_wait(expected_url_fragment="login", timeout=PAGE_WAIT)
         log(f"  Login page URL: {driver.current_url}")
 
         log(f"  Entering PAN/User ID: {username}")
@@ -6429,7 +6493,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
             "//button[contains(text(),'Login')]",
             "//button[contains(text(),'Sign in')]",
         ])
-        time.sleep(PAGE_WAIT + 2)
+        time.sleep(PAGE_WAIT)  # trimmed +2
 
         # ── OTP handling ──────────────────────────────────────────────────
         try:
@@ -6693,7 +6757,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
             "//button[contains(text(),'Confirm')]",
             "//button[contains(text(),'Continue')]",
         ])
-        time.sleep(PAGE_WAIT + 2)
+        time.sleep(PAGE_WAIT)  # trimmed +2
         log(f"  After nav URL: {driver.current_url}")
 
         # Handle TRACES window (may open in new tab)
@@ -6726,7 +6790,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
             "//input[contains(@value,'26AS')]",
             "//button[contains(text(),'26AS')]",
         ])
-        time.sleep(PAGE_WAIT + 2)
+        time.sleep(PAGE_WAIT)  # trimmed +2
 
         # ── Export as PDF ──────────────────────────────────────────────────
         before_26as = set(dl_dir.iterdir())
