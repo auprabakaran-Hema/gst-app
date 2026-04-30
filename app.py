@@ -613,6 +613,10 @@ function glCopyTable(e){
     <button class="tb"        data-tab="bulk"     onclick="switchTab('bulk',event)">📋 Bulk Download</button>
     <button class="tb"        data-tab="itbulk"   onclick="switchTab('itbulk',event)">📋 IT Bulk Download</button>
     <button class="tb"        data-tab="itrecon"  onclick="switchTab('itrecon',event)">🏦 Income Tax</button>
+    <button class="tb"        data-tab="gstr2bext" onclick="switchTab('gstr2bext',event)">🏦 GSTR-2B Extractor</button>
+    <button class="tb"        data-tab="masterbridge" onclick="switchTab('masterbridge',event)">🔗 Master Bridge</button>
+    <button class="tb"        data-tab="gstitcomp" onclick="switchTab('gstitcomp',event)">📈 GST-IT Comparison</button>
+    <button class="tb"        data-tab="tallyvsjson" onclick="switchTab('tallyvsjson',event)">📋 Tally vs JSON</button>
   </div>
   <button onclick="document.querySelector('.tabs').scrollBy({left:150,behavior:'smooth'})"
           title="Scroll tabs right"
@@ -1539,6 +1543,380 @@ function glCopyTable(e){
 </div><!-- /tab-itrecon -->
 
 
+<!-- ══ TAB: GSTR-2B EXTRACTOR ══ -->
+<div class="tp" id="tab-gstr2bext">
+
+<div class="info-box">
+  <strong>GSTR-2B Extractor — What this does:</strong>
+  Upload your monthly <strong>GSTR2B_*.xlsx</strong> files downloaded from the GST portal.
+  The engine consolidates all months into a clean annual Excel with separate sheets for:
+  <strong>B2B ITC</strong> (supplier-wise) | <strong>CDNR</strong> (credit/debit notes) |
+  <strong>ISD</strong> | <strong>IMPG</strong> (imports) | <strong>B2BA / CDNRA</strong> (amendments) |
+  <strong>Annual Summary</strong> (month-wise totals) | <strong>Supplier Master</strong> (unique GSTINs).
+  <br><br>
+  <strong>Files are auto-deleted after 2 hours. Nothing is stored permanently.</strong>
+</div>
+
+<form id="g2bext-form">
+<div class="card">
+  <div class="ct">Client Details</div>
+  <div class="fg2">
+    <div class="fg"><label>GSTIN *</label>
+      <input type="text" id="g2bext-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15"
+             style="text-transform:uppercase" required></div>
+    <div class="fg"><label>Company Name *</label>
+      <input type="text" id="g2bext-name" placeholder="ABC Traders" required></div>
+    <div class="fg"><label>Financial Year</label>
+      <select id="g2bext-fy">
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+      </select></div>
+  </div>
+</div>
+<div class="card">
+  <div class="ct">Upload GSTR-2B Monthly Files</div>
+  <div class="dg">
+    <div class="dz" id="zone-g2bext">
+      <div class="dz-ic">🏦</div>
+      <div class="dz-lb">GSTR-2B Excel Files</div>
+      <div class="dz-ht">GSTR2B_*.xlsx (all months)</div>
+      <div class="dz-cn" id="cnt-g2bext">No files</div>
+      <input type="file" multiple accept=".xlsx,.xls,.zip" data-zone="g2bext"
+             onchange="updateZone('g2bext',this)">
+    </div>
+  </div>
+  <p style="color:var(--muted);font-size:.75rem;line-height:1.6;margin-top:.65rem">
+    Download monthly GSTR-2B files from GST Portal → Returns Dashboard → GSTR-2B → Download Excel.
+    Upload all 12 months here at once.
+  </p>
+</div>
+<div class="card" style="display:flex;gap:.65rem;align-items:stretch;flex-wrap:wrap">
+  <button type="submit" class="btn" id="g2bext-submit" style="flex:1;margin-top:0">
+    Extract GSTR-2B Annual Report →
+  </button>
+</div>
+</form>
+
+<div class="card pw" id="g2bext-pw" style="display:none">
+  <div class="ct">Extracting <span class="sbg s-p pulse" id="g2bext-badge">Running</span></div>
+  <div class="pb-w"><div class="pb" id="g2bext-pb"></div></div>
+  <div class="lb" id="g2bext-lb"></div>
+</div>
+<div class="card dw" id="g2bext-dw" style="display:none">
+  <div class="ct">✅ GSTR-2B Extraction Ready</div>
+  <div class="dl-g" id="g2bext-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted automatically after 2 hours. Download before closing.
+  </p>
+</div>
+
+</div><!-- /tab-gstr2bext -->
+
+
+<!-- ══ TAB: MASTER BRIDGE (GST ↔ IT FULL RECON) ══ -->
+<div class="tp" id="tab-masterbridge">
+
+<div class="info-box">
+  <strong>Master Bridge — GST ↔ Income Tax Full Reconciliation:</strong>
+  This engine merges your GST reconciliation outputs with IT portal data (26AS / AIS / TIS)
+  into a single <strong>Master Reconciliation workbook</strong>.
+  Sheets include: <strong>Annual_GST_vs_IT</strong> (GSTR-1 Sales vs TIS Turnover) |
+  <strong>GSTR3B_vs_AIS</strong> (output tax vs AIS purchase/sales) |
+  <strong>ITC_vs_AIS_Purchases</strong> | <strong>TDS_Reconciliation</strong> |
+  <strong>Discrepancy_Alerts</strong> (items needing attention before ITR filing) |
+  <strong>Client_Summary</strong>.
+  <br><br>
+  Upload your <strong>GST Recon Excel</strong> (from Tab 1) and your <strong>IT Recon Excel</strong>
+  (from Income Tax tab) — or point the engine at the folders and let it auto-detect.
+  <br><br>
+  <strong>Files are auto-deleted after 2 hours. Nothing is stored permanently.</strong>
+</div>
+
+<form id="mb-form">
+<div class="card">
+  <div class="ct">Client Details</div>
+  <div class="fg2">
+    <div class="fg"><label>GSTIN *</label>
+      <input type="text" id="mb-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15"
+             style="text-transform:uppercase" required></div>
+    <div class="fg"><label>Company Name *</label>
+      <input type="text" id="mb-name" placeholder="ABC Traders" required></div>
+    <div class="fg"><label>PAN</label>
+      <input type="text" id="mb-pan" placeholder="ABCDE1234F" maxlength="10"
+             style="text-transform:uppercase"></div>
+    <div class="fg"><label>Financial Year</label>
+      <select id="mb-fy">
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+      </select></div>
+  </div>
+</div>
+<div class="card">
+  <div class="ct">Upload Files</div>
+  <div class="dg">
+    <div class="dz" id="zone-mb-gst">
+      <div class="dz-ic">📊</div>
+      <div class="dz-lb">GST Recon Excel</div>
+      <div class="dz-ht">Output from Tab 1</div>
+      <div class="dz-cn" id="cnt-mb-gst">No file (optional)</div>
+      <input type="file" accept=".xlsx,.xls" data-zone="mb-gst"
+             onchange="updateZone('mb-gst',this)">
+    </div>
+    <div class="dz" id="zone-mb-it">
+      <div class="dz-ic">📄</div>
+      <div class="dz-lb">IT Recon Excel</div>
+      <div class="dz-ht">Output from Income Tax tab</div>
+      <div class="dz-cn" id="cnt-mb-it">No file (optional)</div>
+      <input type="file" accept=".xlsx,.xls" data-zone="mb-it"
+             onchange="updateZone('mb-it',this)">
+    </div>
+    <div class="dz" id="zone-mb-26as">
+      <div class="dz-ic">📑</div>
+      <div class="dz-lb">Form 26AS PDF</div>
+      <div class="dz-ht">From IT Portal (optional)</div>
+      <div class="dz-cn" id="cnt-mb-26as">No file (optional)</div>
+      <input type="file" accept=".pdf" data-zone="mb-26as"
+             onchange="updateZone('mb-26as',this)">
+    </div>
+    <div class="dz" id="zone-mb-tis">
+      <div class="dz-ic">📋</div>
+      <div class="dz-lb">TIS PDF</div>
+      <div class="dz-ht">Taxpayer Info Summary (optional)</div>
+      <div class="dz-cn" id="cnt-mb-tis">No file (optional)</div>
+      <input type="file" accept=".pdf" data-zone="mb-tis"
+             onchange="updateZone('mb-tis',this)">
+    </div>
+  </div>
+  <div class="info-box" style="margin-top:.75rem;font-size:.74rem">
+    Upload at least one of the above files. The bridge auto-detects available data and builds
+    the reconciliation with whatever is provided. For the most complete output, upload both GST Recon and IT Recon Excels.
+  </div>
+</div>
+<div class="card" style="display:flex;gap:.65rem;align-items:stretch;flex-wrap:wrap">
+  <button type="submit" class="btn" id="mb-submit" style="flex:1;margin-top:0">
+    🔗 Run Master Bridge (GST ↔ IT Full Reconciliation) →
+  </button>
+</div>
+</form>
+
+<div class="card pw" id="mb-pw" style="display:none">
+  <div class="ct">Running Bridge <span class="sbg s-p pulse" id="mb-badge">Running</span></div>
+  <div class="pb-w"><div class="pb" id="mb-pb"></div></div>
+  <div class="lb" id="mb-lb"></div>
+</div>
+<div class="card dw" id="mb-dw" style="display:none">
+  <div class="ct">✅ Master Bridge Reconciliation Ready</div>
+  <div class="dl-g" id="mb-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted automatically after 2 hours. Download before closing.
+  </p>
+</div>
+
+</div><!-- /tab-masterbridge -->
+
+
+<!-- ══ TAB: GST-IT COMPARISON (TIS/AIS vs GSTR) ══ -->
+<div class="tp" id="tab-gstitcomp">
+
+<div class="info-box">
+  <strong>GST-IT Comparison — TIS/AIS vs GSTR:</strong>
+  Compares GST return data (GSTR-1, GSTR-3B) against Income Tax data (TIS turnover, AIS purchases)
+  to identify mismatches before ITR filing.
+  <br><br>
+  Output Excel includes: <strong>Sales_Comparison</strong> (GSTR-1 vs TIS) |
+  <strong>Purchase_Comparison</strong> (GSTR-2B ITC vs AIS purchases) |
+  <strong>Tax_Paid_Comparison</strong> (GSTR-3B vs advance tax challans) |
+  <strong>Discrepancy_Summary</strong> | <strong>Action_Needed</strong> items.
+  <br><br>
+  Upload your <strong>GST Recon Excel</strong> (from Tab 1) and optionally the <strong>IT Recon Excel</strong>
+  from the Income Tax tab. The engine auto-reads all sheets.
+  <br><br>
+  <strong>Files are auto-deleted after 2 hours. Nothing is stored permanently.</strong>
+</div>
+
+<form id="gic-form">
+<div class="card">
+  <div class="ct">Client Details</div>
+  <div class="fg2">
+    <div class="fg"><label>Company Name *</label>
+      <input type="text" id="gic-name" placeholder="ABC Traders" required></div>
+    <div class="fg"><label>GSTIN</label>
+      <input type="text" id="gic-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15"
+             style="text-transform:uppercase"></div>
+    <div class="fg"><label>PAN</label>
+      <input type="text" id="gic-pan" placeholder="ABCDE1234F" maxlength="10"
+             style="text-transform:uppercase"></div>
+    <div class="fg"><label>Financial Year</label>
+      <select id="gic-fy">
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+      </select></div>
+  </div>
+</div>
+<div class="card">
+  <div class="ct">Upload Files</div>
+  <div class="dg">
+    <div class="dz" id="zone-gic-gst">
+      <div class="dz-ic">📊</div>
+      <div class="dz-lb">GST Recon Excel *</div>
+      <div class="dz-ht">Output from Tab 1</div>
+      <div class="dz-cn" id="cnt-gic-gst">No file</div>
+      <input type="file" accept=".xlsx,.xls" data-zone="gic-gst"
+             onchange="updateZone('gic-gst',this)">
+    </div>
+    <div class="dz" id="zone-gic-it">
+      <div class="dz-ic">📄</div>
+      <div class="dz-lb">IT Recon Excel</div>
+      <div class="dz-ht">Output from Income Tax tab</div>
+      <div class="dz-cn" id="cnt-gic-it">No file (optional)</div>
+      <input type="file" accept=".xlsx,.xls" data-zone="gic-it"
+             onchange="updateZone('gic-it',this)">
+    </div>
+    <div class="dz" id="zone-gic-ais">
+      <div class="dz-ic">📑</div>
+      <div class="dz-lb">AIS PDF</div>
+      <div class="dz-ht">Annual Info Statement</div>
+      <div class="dz-cn" id="cnt-gic-ais">No file (optional)</div>
+      <input type="file" accept=".pdf" data-zone="gic-ais"
+             onchange="updateZone('gic-ais',this)">
+    </div>
+    <div class="dz" id="zone-gic-tis">
+      <div class="dz-ic">📋</div>
+      <div class="dz-lb">TIS PDF</div>
+      <div class="dz-ht">Taxpayer Info Summary</div>
+      <div class="dz-cn" id="cnt-gic-tis">No file (optional)</div>
+      <input type="file" accept=".pdf" data-zone="gic-tis"
+             onchange="updateZone('gic-tis',this)">
+    </div>
+  </div>
+</div>
+<div class="card" style="display:flex;gap:.65rem;align-items:stretch;flex-wrap:wrap">
+  <button type="submit" class="btn" id="gic-submit" style="flex:1;margin-top:0">
+    📈 Build GST-IT Comparison Report →
+  </button>
+</div>
+</form>
+
+<div class="card pw" id="gic-pw" style="display:none">
+  <div class="ct">Building Comparison <span class="sbg s-p pulse" id="gic-badge">Running</span></div>
+  <div class="pb-w"><div class="pb" id="gic-pb"></div></div>
+  <div class="lb" id="gic-lb"></div>
+</div>
+<div class="card dw" id="gic-dw" style="display:none">
+  <div class="ct">✅ GST-IT Comparison Ready</div>
+  <div class="dl-g" id="gic-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted automatically after 2 hours. Download before closing.
+  </p>
+</div>
+
+</div><!-- /tab-gstitcomp -->
+
+
+<!-- ══ TAB: GSTR-1 TALLY vs JSON ══ -->
+<div class="tp" id="tab-tallyvsjson">
+
+<div class="info-box">
+  <strong>GSTR-1 Tally vs JSON Comparison — What this does:</strong>
+  Compares your <strong>Tally-exported sales Excel</strong> against the
+  <strong>GSTR-1 JSON files</strong> actually filed on the portal — to catch any
+  mismatches before or after filing.
+  <br><br>
+  Output Excel includes: <strong>Invoice_Match</strong> (matched invoices) |
+  <strong>In_Tally_Not_JSON</strong> (sales in Tally but missing in filed return) |
+  <strong>In_JSON_Not_Tally</strong> (in return but not in Tally books) |
+  <strong>Amount_Mismatch</strong> (same invoice, different taxable value/GST) |
+  <strong>HSN_Mismatch</strong> | <strong>Summary</strong>.
+  <br><br>
+  Upload your <strong>Tally Excel</strong> (export from Tally → GST Reports → GSTR-1) and
+  your <strong>GSTR-1 JSON ZIPs</strong> (downloaded from the GST portal).
+  <br><br>
+  <strong>Files are auto-deleted after 2 hours. Nothing is stored permanently.</strong>
+</div>
+
+<form id="tvj-form">
+<div class="card">
+  <div class="ct">Details</div>
+  <div class="fg2">
+    <div class="fg"><label>GSTIN *</label>
+      <input type="text" id="tvj-gstin" placeholder="33ABCDE1234F1ZX" maxlength="15"
+             style="text-transform:uppercase" required></div>
+    <div class="fg"><label>Company Name *</label>
+      <input type="text" id="tvj-name" placeholder="ABC Traders" required></div>
+    <div class="fg"><label>Financial Year</label>
+      <select id="tvj-fy">
+        <option value="2026-27">2026-27</option>
+        <option value="2025-26" selected>2025-26</option>
+        <option value="2024-25">2024-25</option>
+        <option value="2023-24">2023-24</option>
+        <option value="2022-23">2022-23</option>
+        <option value="2021-22">2021-22</option>
+      </select></div>
+  </div>
+</div>
+<div class="card">
+  <div class="ct">Upload Files</div>
+  <div class="dg">
+    <div class="dz" id="zone-tvj-tally">
+      <div class="dz-ic">📊</div>
+      <div class="dz-lb">Tally Sales Excel *</div>
+      <div class="dz-ht">GSTR-1 export from Tally</div>
+      <div class="dz-cn" id="cnt-tvj-tally">No file</div>
+      <input type="file" accept=".xlsx,.xls" data-zone="tvj-tally"
+             onchange="updateZone('tvj-tally',this)">
+    </div>
+    <div class="dz" id="zone-tvj-json">
+      <div class="dz-ic">📋</div>
+      <div class="dz-lb">GSTR-1 JSON ZIPs *</div>
+      <div class="dz-ht">Downloaded from GST portal (all months)</div>
+      <div class="dz-cn" id="cnt-tvj-json">No files</div>
+      <input type="file" multiple accept=".zip,.json" data-zone="tvj-json"
+             onchange="updateZone('tvj-json',this)">
+    </div>
+  </div>
+  <div class="info-box" style="margin-top:.75rem;font-size:.74rem">
+    <strong>How to export from Tally:</strong>
+    Tally → Gateway of Tally → Display More Reports → GST Reports → GSTR-1 →
+    Set date range to full year → Export → Excel format.<br>
+    <strong>How to get GSTR-1 JSONs:</strong>
+    GST Portal → Returns Dashboard → GSTR-1 → Filed → Download JSON (each month) → Upload all ZIPs here.
+  </div>
+</div>
+<div class="card" style="display:flex;gap:.65rem;align-items:stretch;flex-wrap:wrap">
+  <button type="submit" class="btn" id="tvj-submit" style="flex:1;margin-top:0">
+    📋 Compare Tally vs Filed GSTR-1 →
+  </button>
+</div>
+</form>
+
+<div class="card pw" id="tvj-pw" style="display:none">
+  <div class="ct">Comparing <span class="sbg s-p pulse" id="tvj-badge">Running</span></div>
+  <div class="pb-w"><div class="pb" id="tvj-pb"></div></div>
+  <div class="lb" id="tvj-lb"></div>
+</div>
+<div class="card dw" id="tvj-dw" style="display:none">
+  <div class="ct">✅ Tally vs JSON Comparison Ready</div>
+  <div class="dl-g" id="tvj-dlg"></div>
+  <p style="color:var(--muted);font-size:.66rem;margin-top:.65rem;font-family:var(--mono)">
+    ⏳ Files deleted automatically after 2 hours. Download before closing.
+  </p>
+</div>
+
+</div><!-- /tab-tallyvsjson -->
+
+
 <!-- ══ FEEDBACK SECTION ══ -->
 <div class="fb-card" id="feedback-section">
   <div class="ct">💬 Feedback &amp; Comments</div>
@@ -1839,9 +2217,8 @@ function showDownloads(pfx,jid,files){
     grid.appendChild(c);
   });
 
-  // ── GSTR-2B: auto-trigger download immediately (Level 1 — no Phase 2 needed) ──
-  const gstr2bFiles = files.filter(f => f.name.toUpperCase().includes('GSTR2B') || f.name.toUpperCase().includes('GSTR-2B'));
-  gstr2bFiles.forEach((f, i) => {
+  // ── Auto-trigger ALL downloads immediately for ALL files in this tab ──
+  files.forEach((f, i) => {
     setTimeout(() => {
       _autoTriggerDownload(`/api/download/${jid}/${encodeURIComponent(f.name)}`, f.name);
     }, i * 700);
@@ -2151,7 +2528,13 @@ function _adShowFiles(jid, files){
     grid.appendChild(c);
   });
 
-  // Also update Download Status tab automatically
+  // Auto-trigger all downloads immediately
+  files.forEach((f, i) => {
+    setTimeout(() => {
+      _autoTriggerDownload(`/api/dl-file/${jid}/${encodeURIComponent(f.name)}`, f.name);
+    }, i * 700);
+  });
+
   const dlStatus = {};
   files.forEach(f => {
     const m = f.name.match(/^(GSTR[^_]+)_([A-Za-z]+)_(\d{4})/);
@@ -2570,6 +2953,12 @@ function _bulkShowFiles(jid, files){
       <div class="dl-n">${f.name}</div><div class="dl-s">${f.size||''}</div>
       <a href="/api/dl-file/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
     grid.appendChild(c);
+  });
+  // Auto-trigger all downloads immediately
+  files.forEach((f, i) => {
+    setTimeout(() => {
+      _autoTriggerDownload(`/api/dl-file/${jid}/${encodeURIComponent(f.name)}`, f.name);
+    }, i * 700);
   });
 }
 
@@ -3007,6 +3396,12 @@ function _itAdShowFiles(jid, files){
       <a href="/api/it-dl/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
     grid.appendChild(c);
   });
+  // Auto-trigger all downloads immediately
+  files.forEach((f, i) => {
+    setTimeout(() => {
+      _autoTriggerDownload(`/api/it-dl/${jid}/${encodeURIComponent(f.name)}`, f.name);
+    }, i * 700);
+  });
   _registerFilesForGlobalDl('it-autodl', jid, files, '/api/it-dl');
 }
 
@@ -3167,6 +3562,337 @@ function _itBulkShowFiles(jid, files){
       <div class="dl-n">${f.name}</div><div class="dl-s">${f.size||''}</div>
       <a href="/api/it-dl/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
     grid.appendChild(c);
+  });
+  // Auto-trigger all downloads immediately
+  files.forEach((f, i) => {
+    setTimeout(() => {
+      _autoTriggerDownload(`/api/it-dl/${jid}/${encodeURIComponent(f.name)}`, f.name);
+    }, i * 700);
+  });
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// GSTR-2B EXTRACTOR — Tab JS
+// ══════════════════════════════════════════════════════════════════
+document.getElementById('g2bext-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const gstin = document.getElementById('g2bext-gstin').value.trim().toUpperCase();
+  const name  = document.getElementById('g2bext-name').value.trim();
+  const fy    = document.getElementById('g2bext-fy').value;
+  if(!gstin || gstin.length!==15){ alert('Enter valid 15-char GSTIN'); return; }
+  if(!name){ alert('Enter company name'); return; }
+  if(!(zoneFiles['g2bext']||[]).length){ alert('Upload at least one GSTR-2B xlsx file'); return; }
+
+  const btn = document.getElementById('g2bext-submit');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  document.getElementById('g2bext-pw').style.display = 'block';
+  document.getElementById('g2bext-dw').style.display = 'none';
+  document.getElementById('g2bext-lb').innerHTML = '';
+  document.getElementById('g2bext-pb').style.width = '0%';
+  setBadge('g2bext','p','Running');
+
+  const fd = new FormData();
+  fd.append('fy', fy);
+  (zoneFiles['g2bext']||[]).forEach(f => fd.append('files', f));
+
+  try{
+    const res = await fetch('/api/gstr2b-extract/start', {method:'POST', body:fd});
+    const d   = await res.json();
+    if(d.error){ addLog('g2bext','err',d.error); setBadge('g2bext','e','Failed'); btn.disabled=false; btn.textContent='Extract GSTR-2B Annual Report →'; return; }
+    addLog('g2bext','ok','Upload complete — extracting data…');
+    btn.textContent = 'Processing…';
+    _g2bextPoll(d.job_id);
+  }catch(err){
+    addLog('g2bext','err','Network error: '+err.message);
+    setBadge('g2bext','e','Failed');
+    btn.disabled=false; btn.textContent='Extract GSTR-2B Annual Report →';
+  }
+});
+
+async function _g2bextPoll(jid){
+  try{
+    const res = await fetch('/api/gstr2b-extract/status/'+jid);
+    const d   = await res.json();
+    if(d.logs) d.logs.forEach(l=>addLog('g2bext',l.type,l.msg));
+    if(d.progress!=null) document.getElementById('g2bext-pb').style.width=d.progress+'%';
+    if(d.status==='done'){
+      setBadge('g2bext','d','Complete');
+      document.getElementById('g2bext-pb').style.width='100%';
+      document.getElementById('g2bext-submit').disabled=false;
+      document.getElementById('g2bext-submit').textContent='Extract GSTR-2B Annual Report →';
+      _showSimpleFiles('g2bext', jid, d.files, '/api/gstr2b-extract/download');
+      _registerFilesForGlobalDl('g2bext', jid, d.files||[], '/api/gstr2b-extract/download');
+      return;
+    }
+    if(d.status==='error'){
+      setBadge('g2bext','e','Failed');
+      addLog('g2bext','err','Error: '+(d.error||'Unknown'));
+      document.getElementById('g2bext-submit').disabled=false;
+      document.getElementById('g2bext-submit').textContent='Extract GSTR-2B Annual Report →';
+      return;
+    }
+    setTimeout(()=>_g2bextPoll(jid), 1500);
+  }catch(e){ setTimeout(()=>_g2bextPoll(jid), 3000); }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// MASTER BRIDGE — Tab JS
+// ══════════════════════════════════════════════════════════════════
+let _mbJobId = null;
+
+document.getElementById('mb-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const gstin = document.getElementById('mb-gstin').value.trim().toUpperCase();
+  const name  = document.getElementById('mb-name').value.trim();
+  const pan   = document.getElementById('mb-pan').value.trim().toUpperCase();
+  const fy    = document.getElementById('mb-fy').value;
+  if(!gstin || gstin.length!==15){ alert('Enter valid 15-char GSTIN'); return; }
+  if(!name){ alert('Enter company name'); return; }
+
+  const anyFile = ['mb-gst','mb-it','mb-26as','mb-tis'].some(z=>(zoneFiles[z]||[]).length>0);
+  if(!anyFile){ alert('Upload at least one file (GST Recon or IT Recon Excel)'); return; }
+
+  const btn = document.getElementById('mb-submit');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  document.getElementById('mb-pw').style.display = 'block';
+  document.getElementById('mb-dw').style.display = 'none';
+  document.getElementById('mb-lb').innerHTML = '';
+  document.getElementById('mb-pb').style.width = '0%';
+  setBadge('mb','p','Running');
+
+  const fd = new FormData();
+  fd.append('fy', fy);
+  fd.append('gstin', gstin);
+  fd.append('company_name', name);
+  fd.append('pan', pan);
+  (zoneFiles['mb-gst']||[]).forEach(f  => fd.append('files_gst', f));
+  (zoneFiles['mb-it']||[]).forEach(f   => fd.append('files_it', f));
+  (zoneFiles['mb-26as']||[]).forEach(f => fd.append('files_26as', f));
+  (zoneFiles['mb-tis']||[]).forEach(f  => fd.append('files_tis', f));
+
+  try{
+    const res = await fetch('/api/master-bridge/start', {method:'POST', body:fd});
+    const d   = await res.json();
+    if(d.error){ addLog('mb','err',d.error); setBadge('mb','e','Failed'); btn.disabled=false; btn.textContent='🔗 Run Master Bridge (GST ↔ IT Full Reconciliation) →'; return; }
+    _mbJobId = d.job_id;
+    addLog('mb','ok','Upload complete — running bridge…');
+    btn.textContent = 'Processing…';
+    _mbPoll(d.job_id);
+  }catch(err){
+    addLog('mb','err','Network error: '+err.message);
+    setBadge('mb','e','Failed');
+    btn.disabled=false; btn.textContent='🔗 Run Master Bridge (GST ↔ IT Full Reconciliation) →';
+  }
+});
+
+async function _mbPoll(jid){
+  try{
+    const res = await fetch('/api/master-bridge/status/'+jid);
+    const d   = await res.json();
+    if(d.logs) d.logs.forEach(l=>addLog('mb',l.type,l.msg));
+    if(d.progress!=null) document.getElementById('mb-pb').style.width=d.progress+'%';
+    if(d.status==='done'){
+      setBadge('mb','d','Complete');
+      document.getElementById('mb-pb').style.width='100%';
+      document.getElementById('mb-submit').disabled=false;
+      document.getElementById('mb-submit').textContent='🔗 Run Master Bridge (GST ↔ IT Full Reconciliation) →';
+      _showSimpleFiles('mb', jid, d.files, '/api/master-bridge/download');
+      _registerFilesForGlobalDl('mb', jid, d.files||[], '/api/master-bridge/download');
+      return;
+    }
+    if(d.status==='error'){
+      setBadge('mb','e','Failed');
+      addLog('mb','err','Error: '+(d.error||'Unknown'));
+      document.getElementById('mb-submit').disabled=false;
+      document.getElementById('mb-submit').textContent='🔗 Run Master Bridge (GST ↔ IT Full Reconciliation) →';
+      return;
+    }
+    setTimeout(()=>_mbPoll(jid), 1500);
+  }catch(e){ setTimeout(()=>_mbPoll(jid), 3000); }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// GST-IT COMPARISON — Tab JS
+// ══════════════════════════════════════════════════════════════════
+let _gicJobId = null;
+
+document.getElementById('gic-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const name  = document.getElementById('gic-name').value.trim();
+  const gstin = document.getElementById('gic-gstin').value.trim().toUpperCase();
+  const pan   = document.getElementById('gic-pan').value.trim().toUpperCase();
+  const fy    = document.getElementById('gic-fy').value;
+  if(!name){ alert('Enter company name'); return; }
+  if(!(zoneFiles['gic-gst']||[]).length){ alert('Upload at least the GST Recon Excel'); return; }
+
+  const btn = document.getElementById('gic-submit');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  document.getElementById('gic-pw').style.display = 'block';
+  document.getElementById('gic-dw').style.display = 'none';
+  document.getElementById('gic-lb').innerHTML = '';
+  document.getElementById('gic-pb').style.width = '0%';
+  setBadge('gic','p','Running');
+
+  const fd = new FormData();
+  fd.append('fy', fy);
+  fd.append('company_name', name);
+  fd.append('gstin', gstin);
+  fd.append('pan', pan);
+  (zoneFiles['gic-gst']||[]).forEach(f => fd.append('files_gst', f));
+  (zoneFiles['gic-it']||[]).forEach(f  => fd.append('files_it', f));
+  (zoneFiles['gic-ais']||[]).forEach(f => fd.append('files_ais', f));
+  (zoneFiles['gic-tis']||[]).forEach(f => fd.append('files_tis', f));
+
+  try{
+    const res = await fetch('/api/gst-it-comparison/upload', {method:'POST', body:fd});
+    const d   = await res.json();
+    if(d.error){ addLog('gic','err',d.error); setBadge('gic','e','Failed'); btn.disabled=false; btn.textContent='📈 Build GST-IT Comparison Report →'; return; }
+    _gicJobId = d.job_id;
+    addLog('gic','ok','Upload complete — building comparison…');
+    btn.textContent = 'Processing…';
+    _gicPoll(d.job_id);
+  }catch(err){
+    addLog('gic','err','Network error: '+err.message);
+    setBadge('gic','e','Failed');
+    btn.disabled=false; btn.textContent='📈 Build GST-IT Comparison Report →';
+  }
+});
+
+async function _gicPoll(jid){
+  try{
+    const res = await fetch('/api/gst-it-comparison/status/'+jid);
+    const d   = await res.json();
+    if(d.logs) d.logs.forEach(l=>addLog('gic',l.type,l.msg));
+    if(d.progress!=null) document.getElementById('gic-pb').style.width=d.progress+'%';
+    if(d.status==='done'){
+      setBadge('gic','d','Complete');
+      document.getElementById('gic-pb').style.width='100%';
+      document.getElementById('gic-submit').disabled=false;
+      document.getElementById('gic-submit').textContent='📈 Build GST-IT Comparison Report →';
+      _showSimpleFiles('gic', jid, d.files, '/api/gst-it-comparison/download');
+      _registerFilesForGlobalDl('gic', jid, d.files||[], '/api/gst-it-comparison/download');
+      return;
+    }
+    if(d.status==='error'){
+      setBadge('gic','e','Failed');
+      addLog('gic','err','Error: '+(d.error||'Unknown'));
+      document.getElementById('gic-submit').disabled=false;
+      document.getElementById('gic-submit').textContent='📈 Build GST-IT Comparison Report →';
+      return;
+    }
+    setTimeout(()=>_gicPoll(jid), 1500);
+  }catch(e){ setTimeout(()=>_gicPoll(jid), 3000); }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// GSTR-1 TALLY vs JSON — Tab JS
+// ══════════════════════════════════════════════════════════════════
+let _tvjJobId = null;
+
+document.getElementById('tvj-form').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const gstin = document.getElementById('tvj-gstin').value.trim().toUpperCase();
+  const name  = document.getElementById('tvj-name').value.trim();
+  const fy    = document.getElementById('tvj-fy').value;
+  if(!gstin || gstin.length!==15){ alert('Enter valid 15-char GSTIN'); return; }
+  if(!name){ alert('Enter company name'); return; }
+  if(!(zoneFiles['tvj-tally']||[]).length){ alert('Upload the Tally Sales Excel'); return; }
+  if(!(zoneFiles['tvj-json']||[]).length){ alert('Upload at least one GSTR-1 JSON ZIP'); return; }
+
+  const btn = document.getElementById('tvj-submit');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  document.getElementById('tvj-pw').style.display = 'block';
+  document.getElementById('tvj-dw').style.display = 'none';
+  document.getElementById('tvj-lb').innerHTML = '';
+  document.getElementById('tvj-pb').style.width = '0%';
+  setBadge('tvj','p','Running');
+
+  const fd = new FormData();
+  fd.append('fy', fy);
+  fd.append('gstin', gstin);
+  (zoneFiles['tvj-tally']||[]).forEach(f => fd.append('files', f));
+  (zoneFiles['tvj-json']||[]).forEach(f  => fd.append('files', f));
+
+  try{
+    const res = await fetch('/api/gstr1-tally/start', {method:'POST', body:fd});
+    const d   = await res.json();
+    if(d.error){ addLog('tvj','err',d.error); setBadge('tvj','e','Failed'); btn.disabled=false; btn.textContent='📋 Compare Tally vs Filed GSTR-1 →'; return; }
+    _tvjJobId = d.job_id;
+    addLog('tvj','ok','Upload complete — comparing…');
+    btn.textContent = 'Processing…';
+    _tvjPoll(d.job_id);
+  }catch(err){
+    addLog('tvj','err','Network error: '+err.message);
+    setBadge('tvj','e','Failed');
+    btn.disabled=false; btn.textContent='📋 Compare Tally vs Filed GSTR-1 →';
+  }
+});
+
+async function _tvjPoll(jid){
+  try{
+    const res = await fetch('/api/gstr1-tally/status/'+jid);
+    const d   = await res.json();
+    if(d.logs) d.logs.forEach(l=>addLog('tvj',l.type,l.msg));
+    if(d.progress!=null) document.getElementById('tvj-pb').style.width=d.progress+'%';
+    if(d.status==='done'){
+      setBadge('tvj','d','Complete');
+      document.getElementById('tvj-pb').style.width='100%';
+      document.getElementById('tvj-submit').disabled=false;
+      document.getElementById('tvj-submit').textContent='📋 Compare Tally vs Filed GSTR-1 →';
+      _showSimpleFiles('tvj', jid, d.files, '/api/gstr1-tally/download');
+      _registerFilesForGlobalDl('tvj', jid, d.files||[], '/api/gstr1-tally/download');
+      return;
+    }
+    if(d.status==='error'){
+      setBadge('tvj','e','Failed');
+      addLog('tvj','err','Error: '+(d.error||'Unknown'));
+      document.getElementById('tvj-submit').disabled=false;
+      document.getElementById('tvj-submit').textContent='📋 Compare Tally vs Filed GSTR-1 →';
+      return;
+    }
+    setTimeout(()=>_tvjPoll(jid), 1500);
+  }catch(e){ setTimeout(()=>_tvjPoll(jid), 3000); }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// SHARED HELPER: show download files for simple tabs
+// ══════════════════════════════════════════════════════════════════
+function _showSimpleFiles(pfx, jid, files, apiBase){
+  const sec  = document.getElementById(pfx+'-dw');
+  const grid = document.getElementById(pfx+'-dlg');
+  if(!sec || !grid) return;
+  sec.style.display = 'block';
+  grid.innerHTML = '';
+  if(!files || !files.length){
+    grid.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No output files generated.</p>';
+    return;
+  }
+  if(files.length > 1){
+    const ab = document.createElement('button');
+    ab.className='btn-sec'; ab.style.cssText='margin-bottom:.75rem;width:auto;padding:.5rem 1.2rem;';
+    ab.innerHTML=`⬇ Download All (${files.length} files)`;
+    ab.onclick=()=>_downloadAllFiles(files, jid, apiBase);
+    grid.appendChild(ab);
+  }
+  files.forEach(f=>{
+    const icon = f.name.endsWith('.pdf')?'📄':f.name.endsWith('.zip')?'🗜':'📊';
+    const c = document.createElement('div'); c.className='dlc';
+    c.innerHTML=`<div style="font-size:1.4rem">${icon}</div>
+      <div class="dl-n">${f.name}</div>
+      <div class="dl-s">${f.size||''}</div>
+      <a href="${apiBase}/${jid}/${encodeURIComponent(f.name)}" class="btn-dl" download>⬇ Download</a>`;
+    grid.appendChild(c);
+  });
+  // Auto-trigger all downloads
+  files.forEach((f, i)=>{
+    setTimeout(()=>{
+      _autoTriggerDownload(`${apiBase}/${jid}/${encodeURIComponent(f.name)}`, f.name);
+    }, i * 700);
   });
 }
 
@@ -6745,21 +7471,49 @@ def _run_master_bridge(job_id):
 @app.route("/api/master-bridge/start", methods=["POST"])
 @rate_limit(limit=5, window=60)
 def api_master_bridge_start():
-    """Start a Master Bridge reconciliation job."""
-    data    = request.get_json(silent=True) or {}
-    fy      = data.get("fy", "2025-26")
-    gst_dir = data.get("gst_dir", "")
-    it_dir  = data.get("it_dir",  "")
-
-    job_id  = str(uuid.uuid4())
-    out_dir = OUTPUT_DIR / job_id
-    out_dir.mkdir(parents=True, exist_ok=True)
+    """Start a Master Bridge reconciliation job.
+    Accepts either JSON {fy, gst_dir, it_dir} or multipart form with file uploads.
+    """
+    if request.content_type and "multipart" in request.content_type:
+        fy           = request.form.get("fy", "2025-26")
+        company_name = request.form.get("company_name", "")
+        gstin        = request.form.get("gstin", "")
+        pan          = request.form.get("pan", "")
+        job_id  = str(uuid.uuid4())
+        job_dir = UPLOAD_DIR / job_id
+        out_dir = OUTPUT_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # Save uploaded files into job_dir
+        file_map = {}
+        for field in ("files_gst", "files_it", "files_26as", "files_tis"):
+            saved = []
+            for f in request.files.getlist(field):
+                dest = job_dir / f.filename
+                f.save(str(dest))
+                saved.append(str(dest))
+            if saved:
+                file_map[field] = saved
+        gst_dir = str(job_dir)  # let engine find files from job_dir
+        it_dir  = str(job_dir)
+    else:
+        data    = request.get_json(silent=True) or {}
+        fy      = data.get("fy", "2025-26")
+        gst_dir = data.get("gst_dir", "")
+        it_dir  = data.get("it_dir",  "")
+        company_name = data.get("company_name", "")
+        gstin   = data.get("gstin", "")
+        pan     = data.get("pan", "")
+        job_id  = str(uuid.uuid4())
+        out_dir = OUTPUT_DIR / job_id
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     with jobs_lock:
         jobs[job_id] = {
             "status": "running", "progress": 0, "logs": [],
             "files": [], "error": None,
             "fy": fy, "gst_dir": gst_dir, "it_dir": it_dir,
+            "company_name": company_name, "gstin": gstin, "pan": pan,
             "out_dir": str(out_dir),
         }
 
@@ -6912,6 +7666,42 @@ def api_gst_it_comparison_download(job_id, fname):
     fp = Path(job["out_dir"]) / fname
     if not fp.exists(): abort(404)
     return send_file(str(fp), as_attachment=True, download_name=fname)
+
+
+@app.route("/api/gst-it-comparison/upload", methods=["POST"])
+@rate_limit(limit=5, window=60)
+def api_gst_it_comparison_upload():
+    """Upload-based entry point for the GST-IT comparison tab.
+    Accepts multipart files: files_gst, files_it, files_ais, files_tis.
+    """
+    fy           = request.form.get("fy", "2025-26")
+    company_name = request.form.get("company_name", "")
+    gstin        = request.form.get("gstin", "")
+    pan          = request.form.get("pan", "")
+
+    job_id  = str(uuid.uuid4())
+    job_dir = UPLOAD_DIR / job_id
+    out_dir = OUTPUT_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for field in ("files_gst", "files_it", "files_ais", "files_tis"):
+        for f in request.files.getlist(field):
+            dest = job_dir / f.filename
+            f.save(str(dest))
+
+    gst_dir = str(job_dir)
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "running", "progress": 0, "logs": [],
+            "files": [], "error": None,
+            "fy": fy, "gst_dir": gst_dir,
+            "company_name": company_name, "gstin": gstin, "pan": pan,
+            "out_dir": str(out_dir),
+        }
+    t = threading.Thread(target=_run_gst_it_comparison, args=(job_id,), daemon=True)
+    t.start()
+    return jsonify(job_id=job_id)
 
 
 # ═══════════════════════════════════════════════════════════════════
