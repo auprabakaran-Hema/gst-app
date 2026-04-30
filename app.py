@@ -935,12 +935,23 @@ function glCopyTable(e){
       </select></div>
     <div class="fg"><label>Returns to Download</label>
       <select id="ad-returns">
-        <option value="all">All Returns (GSTR-1, 1A, 2B, 2A, 3B)</option>
-        <option value="gstr1">GSTR-1 Only</option>
-        <option value="gstr1a">GSTR-1A Only</option>
-        <option value="gstr2b">GSTR-2B Only</option>
-        <option value="gstr2a">GSTR-2A Only</option>
-        <option value="gstr3b">GSTR-3B Only</option>
+        <optgroup label="── FULL COMBINATIONS ──">
+          <option value="all">All Returns (GSTR-1, 1A, 2B, 2A, 3B)</option>
+          <option value="fast_2b_3b">⚡ FAST — GSTR-2B + 3B only (instant, ~10 min)</option>
+          <option value="combo_1_2b_3b">GSTR-1 + 2B + 3B (no 2A, no 1A)</option>
+          <option value="combo_1_2b_2a_3b">GSTR-1 + 2B + 2A + 3B (no 1A)</option>
+          <option value="combo_1_1a_2b_3b">⚡ GSTR-1 + 1A + 2B + 3B (no 2A)</option>
+        </optgroup>
+        <optgroup label="── SINGLE RETURN ──">
+          <option value="gstr1">GSTR-1 Only</option>
+          <option value="gstr1a">GSTR-1A Only</option>
+          <option value="gstr2b">⚡ GSTR-2B Only (instant download)</option>
+          <option value="gstr2a">GSTR-2A Only</option>
+          <option value="gstr3b">⚡ GSTR-3B Only (instant download)</option>
+        </optgroup>
+        <optgroup label="── PURCHASE RETURNS ──">
+          <option value="gstr2b_2a">GSTR-2B + 2A (both purchase returns)</option>
+        </optgroup>
       </select></div>
   </div>
 </div>
@@ -1132,11 +1143,23 @@ function glCopyTable(e){
     <div class="fg">
       <label>Returns to Download</label>
       <select id="bulk-returns">
-        <option value="all">All Returns (GSTR-1, 1A, 2B, 2A, 3B)</option>
-        <option value="gstr1">GSTR-1 Only</option>
-        <option value="gstr2b">GSTR-2B Only</option>
-        <option value="gstr2a">GSTR-2A Only</option>
-        <option value="gstr3b">GSTR-3B Only</option>
+        <optgroup label="── FULL COMBINATIONS ──">
+          <option value="all">All Returns (GSTR-1, 1A, 2B, 2A, 3B)</option>
+          <option value="fast_2b_3b">⚡ FAST — GSTR-2B + 3B only (instant, ~10 min)</option>
+          <option value="combo_1_2b_3b">GSTR-1 + 2B + 3B (no 2A, no 1A)</option>
+          <option value="combo_1_2b_2a_3b">GSTR-1 + 2B + 2A + 3B (no 1A)</option>
+          <option value="combo_1_1a_2b_3b">⚡ GSTR-1 + 1A + 2B + 3B (no 2A)</option>
+        </optgroup>
+        <optgroup label="── SINGLE RETURN ──">
+          <option value="gstr1">GSTR-1 Only</option>
+          <option value="gstr1a">GSTR-1A Only</option>
+          <option value="gstr2b">⚡ GSTR-2B Only (instant download)</option>
+          <option value="gstr2a">GSTR-2A Only</option>
+          <option value="gstr3b">⚡ GSTR-3B Only (instant download)</option>
+        </optgroup>
+        <optgroup label="── PURCHASE RETURNS ──">
+          <option value="gstr2b_2a">GSTR-2B + 2A (both purchase returns)</option>
+        </optgroup>
       </select>
     </div>
   </div>
@@ -5225,17 +5248,31 @@ def _auto_download(job_id, gstin, client_name,
         "//button[contains(text(),'Generate JSON')]",
     ]
 
-    returns_set = set()
-    if returns in ("all","gstr1"):  returns_set.add("GSTR1")
-    if returns in ("all","gstr1a"): returns_set.add("GSTR1A")
-    if returns in ("all","gstr2b"): returns_set.add("GSTR2B")
-    if returns in ("all","gstr2a"): returns_set.add("GSTR2A")
-    if returns in ("all","gstr3b"): returns_set.add("GSTR3B")
-    if returns == "gstr1":  returns_set = {"GSTR1"}
-    if returns == "gstr1a": returns_set = {"GSTR1A"}
-    if returns == "gstr2b": returns_set = {"GSTR2B"}
-    if returns == "gstr2a": returns_set = {"GSTR2A"}
-    if returns == "gstr3b": returns_set = {"GSTR3B"}
+    # Map return selection to the set of return types to download
+    _RETURN_SETS = {
+        "all":              {"GSTR1","GSTR1A","GSTR2B","GSTR2A","GSTR3B"},
+        # ── Instant / Fast combos ──────────────────────────────────────────
+        "fast_2b_3b":       {"GSTR2B","GSTR3B"},          # both instant — no generate
+        "combo_1_2b_3b":    {"GSTR1","GSTR2B","GSTR3B"},   # no 2A no 1A
+        "combo_1_2b_2a_3b": {"GSTR1","GSTR2B","GSTR2A","GSTR3B"},   # no 1A
+        "combo_1_1a_2b_3b": {"GSTR1","GSTR1A","GSTR2B","GSTR3B"},   # no 2A
+        "gstr2b_2a":        {"GSTR2B","GSTR2A"},           # both purchase returns
+        # ── Single returns ─────────────────────────────────────────────────
+        "gstr1":            {"GSTR1"},
+        "gstr1a":           {"GSTR1A"},
+        "gstr2b":           {"GSTR2B"},
+        "gstr2a":           {"GSTR2A"},
+        "gstr3b":           {"GSTR3B"},
+    }
+    returns_set = _RETURN_SETS.get(returns, {"GSTR1","GSTR1A","GSTR2B","GSTR2A","GSTR3B"})
+    log(f"Returns to download: {sorted(returns_set)}")
+
+    # Fast returns (no generate needed — direct download available immediately)
+    _INSTANT_RETURNS = {"GSTR2B", "GSTR3B"}
+    _GENERATE_RETURNS = {"GSTR1", "GSTR1A", "GSTR2A"}
+    instant_only = returns_set.issubset(_INSTANT_RETURNS)
+    if instant_only:
+        log("⚡ All selected returns support instant download — skipping generate phase")
 
     # ── Setup browser ────────────────────────────────────────────────
     try:
