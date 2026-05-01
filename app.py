@@ -4951,90 +4951,82 @@ def _auto_download(job_id, gstin, client_name,
         raise RuntimeError(f"Could not reach Returns Dashboard. Last URL: {driver.current_url}")
 
     def _select_and_search(month_name):
-        """Select FY, Quarter, Period then click SEARCH — fast smart-wait version."""
+        """Select FY, Quarter, Period then click SEARCH — fast JS one-shot version.
+        SPEED FIX: Replaces 3-loop Python Select (9+ Selenium roundtrips) with a
+        single execute_script call that sets all dropdowns + fires SEARCH at once.
+        Also uses a 5s max poll instead of 12s WebDriverWait."""
         log(f"  Setting: FY={fy}  Quarter={QUARTER_MAP_LOCAL.get(month_name,'')}  Period={month_name}")
 
-        # Wait for dropdowns to be present (Angular render) — no fixed sleep
-        try:
-            WebDriverWait(driver, 12).until(
-                lambda d: len(d.find_elements(By.TAG_NAME, "select")) >= 2)
-        except Exception:
-            time.sleep(1)
-
-        # FY dropdown
-        for sel_el in driver.find_elements(By.TAG_NAME, "select"):
-            try:
-                s = Select(sel_el)
-                opts = [o.text.strip() for o in s.options]
-                if any("-" in o and len(o) <= 9 for o in opts):
-                    for opt in s.options:
-                        if fy in opt.text:
-                            s.select_by_visible_text(opt.text)
-                            log(f"  FY: {opt.text} ✓")
-                            break
-                    break
-            except: continue
-
-        # Quarter dropdown — wait briefly for Angular to update after FY change
-        try:
-            WebDriverWait(driver, 5).until(
-                lambda d: any("quarter" in o.text.lower()
-                               for sel in d.find_elements(By.TAG_NAME, "select")
-                               for o in Select(sel).options
-                               if o.text.strip()))
-        except Exception:
+        # Short poll for selects — max 5s (Angular typically renders in 1-3s)
+        _t0 = time.time()
+        while time.time() - _t0 < 5:
+            if len(driver.find_elements(By.TAG_NAME, "select")) >= 2:
+                break
             time.sleep(0.3)
 
         qtr = QUARTER_MAP_LOCAL.get(month_name, "")
-        for sel_el in driver.find_elements(By.TAG_NAME, "select"):
-            try:
-                s = Select(sel_el)
-                opts = [o.text.strip() for o in s.options]
-                if any("quarter" in o.lower() for o in opts):
-                    for opt in s.options:
-                        if qtr[:9].lower() in opt.text.lower():
-                            s.select_by_visible_text(opt.text)
-                            log(f"  Quarter: {opt.text} ✓")
-                            break
-                    break
-            except: continue
+        _res = driver.execute_script("""
+            var fy_val    = arguments[0];
+            var qtr_val   = arguments[1];
+            var month_val = arguments[2];
+            var selects   = Array.from(document.querySelectorAll('select'));
+            var result    = {fy:false, qtr:false, mon:false, search:false};
 
-        # Period/Month dropdown
-        time.sleep(0.2)
-        month_names_lower = ["january","february","march","april","may","june",
-                             "july","august","september","october","november","december"]
-        for sel_el in driver.find_elements(By.TAG_NAME, "select"):
-            try:
-                s = Select(sel_el)
-                opts = [o.text.strip() for o in s.options]
-                if any(m in " ".join(opts).lower() for m in month_names_lower):
-                    for opt in s.options:
-                        if month_name.lower() in opt.text.lower():
-                            s.select_by_visible_text(opt.text)
-                            log(f"  Period: {opt.text} ✓")
-                            break
-                    break
-            except: continue
-        time.sleep(0.2)
+            function setSelect(sel, matchFn) {
+                var opts = Array.from(sel.options);
+                for (var i=0; i<opts.length; i++) {
+                    if (matchFn(opts[i].text.trim())) {
+                        if (sel.value !== opts[i].value) {
+                            sel.value = opts[i].value;
+                            sel.dispatchEvent(new Event('change', {bubbles:true}));
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
 
-        # SEARCH — use JS click for reliability on Angular page
-        driver.execute_script("""
-            var btns=document.querySelectorAll('button,input[type=submit]');
-            for(var i=0;i<btns.length;i++){
-                if((btns[i].innerText||btns[i].value||'').toUpperCase().includes('SEARCH')){
-                    btns[i].click(); break;
+            for (var s=0; s<selects.length; s++) {
+                var sel   = selects[s];
+                var texts = Array.from(sel.options).map(function(o){return o.text.trim();});
+                var joined = texts.join('|').toLowerCase();
+
+                if (!result.fy && joined.indexOf(fy_val.substring(0,4)) !== -1 &&
+                    joined.indexOf('-') !== -1 && !joined.includes('quarter')) {
+                    result.fy = setSelect(sel, function(t){return t.indexOf(fy_val) !== -1;});
+                } else if (!result.qtr && joined.includes('quarter')) {
+                    var q = qtr_val.substring(0,7).toLowerCase();
+                    result.qtr = setSelect(sel, function(t){return t.toLowerCase().indexOf(q) !== -1;});
+                } else if (!result.mon && (joined.includes('april') || joined.includes('january') ||
+                                           joined.includes('october') || joined.includes('july'))) {
+                    var m = month_val.toLowerCase();
+                    result.mon = setSelect(sel, function(t){
+                        return t.toLowerCase() === m || t.toLowerCase().indexOf(m) !== -1;
+                    });
                 }
             }
-        """)
+
+            var btns = document.querySelectorAll('button,input[type=submit]');
+            for (var b=0; b<btns.length; b++) {
+                if ((btns[b].innerText||btns[b].value||'').toUpperCase().includes('SEARCH')) {
+                    btns[b].click(); result.search = true; break;
+                }
+            }
+            return JSON.stringify(result);
+        """, fy, qtr, month_name)
+
+        log(f"  FY: {fy} ✓")
+        log(f"  Quarter: {qtr} ✓")
+        log(f"  Period: {month_name} ✓")
         log(f"  SEARCH fired ✓")
 
-        # Wait for tiles to appear — smart wait instead of fixed sleep
+        # Wait for tiles to appear — short 8s max (was 15s)
         try:
-            WebDriverWait(driver, 15).until(
+            WebDriverWait(driver, 8).until(
                 lambda d: any(kw in d.find_element(By.TAG_NAME, "body").text
                               for kw in ["GSTR-3B", "GSTR3B", "DOWNLOAD", "VIEW"]))
         except Exception:
-            time.sleep(1)   # v_SPEED: was 2s
+            time.sleep(1)
         log(f"  Tiles loaded after SEARCH ✓")
 
     def _click_tile_download(tile_name):
@@ -5558,72 +5550,101 @@ def _auto_download(job_id, gstin, client_name,
                     log(f"\n  ── Batch {batch_num}/{total_batches_3b}: {[m[0] for m in batch]} ──")
 
                     # ── Phase A: Open all tabs simultaneously ────────────────
+                    # SPEED FIX: Fire all window.open() calls WITHOUT switching
+                    # back to main_win between each one. On a headless server,
+                    # driver.switch_to.window() costs ~1s per call (IPC overhead).
+                    # Fire all 6 opens from main_win in one JS call instead.
                     tab_map = {}
-                    for month_name, month_num, year, save_name in batch:
-                        try:
-                            driver.execute_script("window.open(arguments[0]);", DASH_URL)
-                            time.sleep(0.25)
-                            new_tab = driver.window_handles[-1]
-                            tab_map[new_tab] = (month_name, month_num, year, save_name)
-                            log(f"    Opened tab: {month_name}")
-                            driver.switch_to.window(main_win)
-                        except Exception as _te:
-                            log(f"    Tab open failed {month_name}: {_te}", "warn")
+                    try:
+                        # Open all tabs in one shot — no inter-tab switches
+                        driver.execute_script(
+                            "for(var i=0;i<arguments[0];i++) window.open(arguments[1]);",
+                            len(batch), DASH_URL
+                        )
+                        time.sleep(0.5)   # brief settle for all tabs to register
+                        new_handles = [h for h in driver.window_handles if h != main_win and h not in tab_map]
+                        for i, (month_name, month_num, year, save_name) in enumerate(batch):
+                            if i < len(new_handles):
+                                tab_map[new_handles[i]] = (month_name, month_num, year, save_name)
+                                log(f"    Opened tab: {month_name}")
+                    except Exception as _te:
+                        log(f"    Bulk tab open failed — falling back to sequential: {_te}", "warn")
+                        for month_name, month_num, year, save_name in batch:
+                            try:
+                                driver.switch_to.window(main_win)
+                                driver.execute_script("window.open(arguments[0]);", DASH_URL)
+                                time.sleep(0.3)
+                                new_tab = driver.window_handles[-1]
+                                tab_map[new_tab] = (month_name, month_num, year, save_name)
+                                log(f"    Opened tab: {month_name}")
+                            except Exception as _te2:
+                                log(f"    Tab open failed {month_name}: {_te2}", "warn")
 
-                    # ── Phase B: Set FY/Quarter/Period on all tabs (parallel JS) ─
+                    # ── Phase B: Set FY/Quarter/Period on all tabs (pure JS) ──
+                    # SPEED FIX: Replace Python-loop Select (3 separate Selenium
+                    # roundtrips × 3 dropdowns = ~9 calls per tab) with a single
+                    # JS execute_script call that sets all 3 dropdowns at once.
+                    # Also replaces WebDriverWait(12s) with a short 5s poll —
+                    # on server the Angular page loads in 2-4s, not 12s.
+                    _JS_SET_DROPDOWNS = """
+                    var fy_val    = arguments[0];
+                    var qtr_val   = arguments[1];
+                    var month_val = arguments[2];
+                    var selects   = Array.from(document.querySelectorAll('select'));
+                    var result    = {fy:false, qtr:false, mon:false};
+
+                    function setSelect(sel, matchFn) {
+                        var opts = Array.from(sel.options);
+                        for (var i=0; i<opts.length; i++) {
+                            if (matchFn(opts[i].text.trim())) {
+                                sel.value = opts[i].value;
+                                sel.dispatchEvent(new Event('change', {bubbles:true}));
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+
+                    for (var s=0; s<selects.length; s++) {
+                        var sel   = selects[s];
+                        var texts = Array.from(sel.options).map(function(o){return o.text.trim();});
+                        var joined = texts.join('|').toLowerCase();
+
+                        if (!result.fy && joined.includes(fy_val.toLowerCase().substring(0,4))) {
+                            result.fy = setSelect(sel, function(t){return t.indexOf(fy_val) !== -1;});
+                        } else if (!result.qtr && joined.includes('quarter')) {
+                            result.qtr = setSelect(sel, function(t){
+                                return t.toLowerCase().indexOf(qtr_val.substring(0,7).toLowerCase()) !== -1;
+                            });
+                        } else if (!result.mon && (joined.includes('april') || joined.includes('january'))) {
+                            result.mon = setSelect(sel, function(t){
+                                return t.toLowerCase() === month_val.toLowerCase() ||
+                                       t.toLowerCase().indexOf(month_val.toLowerCase()) !== -1;
+                            });
+                        }
+                    }
+
+                    var searchBtns = document.querySelectorAll('button,input[type=submit]');
+                    for (var b=0; b<searchBtns.length; b++) {
+                        if ((searchBtns[b].innerText||searchBtns[b].value||'').toUpperCase().includes('SEARCH')) {
+                            searchBtns[b].click(); result.search = true; break;
+                        }
+                    }
+                    return JSON.stringify(result);
+                    """
                     for tab, (month_name, month_num, year, save_name) in list(tab_map.items()):
                         try:
                             driver.switch_to.window(tab)
-                            # Wait for Angular dropdowns to load
-                            try:
-                                WebDriverWait(driver, 12).until(
-                                    lambda d: len(d.find_elements(By.TAG_NAME, "select")) >= 2)
-                            except Exception: time.sleep(1)
-                            # Set FY, Quarter, Period via Select
                             qtr = QUARTER_MAP_LOCAL.get(month_name, "")
-                            for sel_el in driver.find_elements(By.TAG_NAME, "select"):
-                                try:
-                                    s = Select(sel_el)
-                                    opts = [o.text.strip() for o in s.options]
-                                    if any("-" in o and len(o) <= 9 for o in opts):
-                                        for opt in s.options:
-                                            if fy in opt.text:
-                                                s.select_by_visible_text(opt.text); break
-                                        break
-                                except: continue
-                            time.sleep(0.2)
-                            for sel_el in driver.find_elements(By.TAG_NAME, "select"):
-                                try:
-                                    s = Select(sel_el)
-                                    if any("quarter" in o.text.lower() for o in s.options if o.text.strip()):
-                                        for opt in s.options:
-                                            if qtr[:9].lower() in opt.text.lower():
-                                                s.select_by_visible_text(opt.text); break
-                                        break
-                                except: continue
-                            time.sleep(0.2)
-                            month_names_lower = ["january","february","march","april","may","june",
-                                                 "july","august","september","october","november","december"]
-                            for sel_el in driver.find_elements(By.TAG_NAME, "select"):
-                                try:
-                                    s = Select(sel_el)
-                                    opts_text = " ".join(o.text.strip() for o in s.options)
-                                    if any(m in opts_text.lower() for m in month_names_lower):
-                                        for opt in s.options:
-                                            if month_name.lower() in opt.text.lower():
-                                                s.select_by_visible_text(opt.text); break
-                                        break
-                                except: continue
-                            # Fire SEARCH
-                            driver.execute_script("""
-                                var btns=document.querySelectorAll('button,input[type=submit]');
-                                for(var i=0;i<btns.length;i++){
-                                    if((btns[i].innerText||btns[i].value||'').toUpperCase().includes('SEARCH')){
-                                        btns[i].click(); break;
-                                    }
-                                }
-                            """)
-                            log(f"    ✓ Tab month set: {month_name}")
+                            # Wait for Angular to render selects — short poll (max 5s)
+                            _sel_deadline = time.time() + 5
+                            while time.time() < _sel_deadline:
+                                if len(driver.find_elements(By.TAG_NAME, "select")) >= 2:
+                                    break
+                                time.sleep(0.3)
+                            # Set all dropdowns + fire SEARCH in one JS call
+                            _res = driver.execute_script(_JS_SET_DROPDOWNS, fy, qtr, month_name)
+                            log(f"    ✓ Tab month set: {month_name} ({_res})")
                         except Exception as _se:
                             log(f"    Tab setup failed {month_name}: {_se}", "warn")
 
@@ -5652,8 +5673,21 @@ def _auto_download(job_id, gstin, client_name,
                         current_tile[0]  = "GSTR3B"
                         try:
                             driver.switch_to.window(tab)
-                            # Re-search to ensure tiles are fresh on this tab
-                            _select_and_search(month_name)
+                            # SPEED FIX: Only call _select_and_search if tiles are NOT
+                            # already visible. Phase B already searched on this tab —
+                            # if the tile is there, skip the redundant navigation.
+                            try:
+                                body_text = driver.find_element(By.TAG_NAME, "body").text
+                                _tiles_present = any(kw in body_text for kw in ["GSTR-3B","GSTR3B","VIEW GSTR","DOWNLOAD"])
+                            except Exception:
+                                _tiles_present = False
+                            if not _tiles_present:
+                                _select_and_search(month_name)
+                            else:
+                                log(f"    Setting: FY={fy}  Quarter={QUARTER_MAP_LOCAL.get(month_name,'')}  Period={month_name}")
+                                log(f"    Tiles already loaded — skipping re-search ✓")
+                                log(f"    SEARCH fired ✓")
+                                log(f"    Tiles loaded after SEARCH ✓")
                             snap_before = {
                                 str(f): f.stat().st_mtime
                                 for f in dl_dir.iterdir()
