@@ -5020,57 +5020,110 @@ def _auto_download(job_id, gstin, client_name,
         """, fy, qtr, month_name)
 
         # FIX: if mon=false, quarter was set but period dropdown not re-rendered yet (Angular async)
-        # Wait 1.5s and set month in a dedicated second call before firing SEARCH
+        # Poll up to 8s in 1s increments for the period dropdown to contain the target month,
+        # then set it. This is the reliable fix for Q2/Q3/Q4 months on the server.
+        _JS_SET_MON_SEARCH = """
+            var month_val = arguments[0];
+            var mval = month_val.toLowerCase();
+            var selects = Array.from(document.querySelectorAll('select'));
+            var mon_set = false;
+            function setSelect(sel, matchFn) {
+                var opts = Array.from(sel.options);
+                for (var i=0;i<opts.length;i++) {
+                    if (matchFn(opts[i].text.trim())) {
+                        sel.value=opts[i].value;
+                        sel.dispatchEvent(new Event('change',{bubbles:true}));
+                        return true;
+                    }
+                }
+                return false;
+            }
+            for (var s=0;s<selects.length;s++) {
+                var texts=Array.from(selects[s].options).map(function(o){return o.text.trim();});
+                var joined=texts.join('|').toLowerCase();
+                if (joined.includes(mval)) {
+                    mon_set = setSelect(selects[s], function(t){
+                        return t.toLowerCase()===mval||t.toLowerCase().indexOf(mval)!==-1;
+                    });
+                    if (mon_set) break;
+                }
+            }
+            if (!mon_set) {
+                for (var s2=0;s2<selects.length;s2++) {
+                    mon_set=setSelect(selects[s2],function(t){return t.toLowerCase()===mval;});
+                    if (mon_set) break;
+                }
+            }
+            return mon_set;
+        """
+        _JS_CLICK_SEARCH = """
+            var btns=document.querySelectorAll('button,input[type=submit]');
+            for (var b=0;b<btns.length;b++) {
+                if ((btns[b].innerText||btns[b].value||'').toUpperCase().includes('SEARCH')) {
+                    btns[b].click(); return true;
+                }
+            }
+            return false;
+        """
+
         try:
             import json as _json_ss
             _r_ss = _json_ss.loads(_res)
         except Exception:
             _r_ss = {}
-        if not _r_ss.get("mon"):
-            time.sleep(1.5)   # wait for Angular to re-render period dropdown after quarter change
-            _res2 = driver.execute_script("""
-                var month_val = arguments[0];
-                var mval = month_val.toLowerCase();
-                var selects = Array.from(document.querySelectorAll('select'));
-                var mon_set = false;
-                function setSelect(sel, matchFn) {
-                    var opts = Array.from(sel.options);
-                    for (var i=0;i<opts.length;i++) {
-                        if (matchFn(opts[i].text.trim())) {
-                            sel.value=opts[i].value;
-                            sel.dispatchEvent(new Event('change',{bubbles:true}));
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-                for (var s=0;s<selects.length;s++) {
-                    var texts=Array.from(selects[s].options).map(function(o){return o.text.trim();});
-                    var joined=texts.join('|').toLowerCase();
-                    if (joined.includes(mval)) {
-                        mon_set = setSelect(selects[s], function(t){
-                            return t.toLowerCase()===mval||t.toLowerCase().indexOf(mval)!==-1;
-                        });
-                        if (mon_set) break;
-                    }
-                }
-                if (!mon_set) {
-                    for (var s2=0;s2<selects.length;s2++) {
-                        mon_set=setSelect(selects[s2],function(t){return t.toLowerCase()===mval;});
-                        if (mon_set) break;
-                    }
-                }
-                var btns=document.querySelectorAll('button,input[type=submit]');
-                for (var b=0;b<btns.length;b++) {
-                    if ((btns[b].innerText||btns[b].value||'').toUpperCase().includes('SEARCH')) {
-                        btns[b].click(); break;
-                    }
-                }
-                return mon_set;
-            """, month_name)
-            log(f"  Period retry: {month_name} mon_set={_res2}")
 
-        log(f"  FY: {fy} ✓  Quarter: {qtr} ✓  Period: {month_name} ✓  SEARCH fired ✓")
+        _mon_set_ok = _r_ss.get("mon", False)
+
+        if not _mon_set_ok:
+            # Angular hasn't re-rendered the period dropdown after quarter change yet.
+            # Poll every 1.5s for up to 12s waiting for the target month to appear.
+            _mon_poll_deadline = time.time() + 12
+            _attempt_n = 0
+            while time.time() < _mon_poll_deadline and not _mon_set_ok:
+                time.sleep(1.5)
+                _attempt_n += 1
+                _res2 = driver.execute_script(_JS_SET_MON_SEARCH, month_name)
+                _mon_set_ok = bool(_res2)
+                log(f"  Period retry #{_attempt_n}: {month_name} mon_set={_mon_set_ok}")
+                if _mon_set_ok:
+                    # Month set — now fire SEARCH
+                    driver.execute_script(_JS_CLICK_SEARCH)
+                    break
+
+            if not _mon_set_ok:
+                # Last resort: navigate to dashboard and use full _select_and_search
+                # recursion guard — only if we haven't already navigated
+                log(f"  ⚠ [{month_name}] Period dropdown still not ready after 12s — navigating to dashboard and retrying", "warn")
+                _go_to_dashboard()
+                # Recurse once with full navigation
+                time.sleep(2)
+                _r3 = driver.execute_script("""
+                    var fy_val=arguments[0]; var qtr_val=arguments[1]; var month_val=arguments[2];
+                    var selects=Array.from(document.querySelectorAll('select'));
+                    var result={fy:false,qtr:false,mon:false,search:false};
+                    function setSelect(sel,fn){var opts=Array.from(sel.options);for(var i=0;i<opts.length;i++){if(fn(opts[i].text.trim())){sel.value=opts[i].value;sel.dispatchEvent(new Event('change',{bubbles:true}));return true;}}return false;}
+                    for(var s=0;s<selects.length;s++){var sel=selects[s];var texts=Array.from(sel.options).map(function(o){return o.text.trim();});var joined=texts.join('|').toLowerCase();
+                        if(!result.fy&&joined.indexOf(fy_val.substring(0,4))!==-1&&joined.indexOf('-')!==-1&&!joined.includes('quarter')){result.fy=setSelect(sel,function(t){return t.indexOf(fy_val)!==-1;});}
+                        else if(!result.qtr&&joined.includes('quarter')){result.qtr=setSelect(sel,function(t){return t.toLowerCase().indexOf(qtr_val.substring(0,7).toLowerCase())!==-1;});}
+                        else if(!result.mon&&joined.includes(month_val.toLowerCase())){result.mon=setSelect(sel,function(t){return t.toLowerCase()===month_val.toLowerCase();});}
+                    }
+                    if(!result.mon){for(var s2=0;s2<selects.length;s2++){result.mon=setSelect(selects[s2],function(t){return t.toLowerCase()===month_val.toLowerCase();});if(result.mon)break;}}
+                    return JSON.stringify(result);
+                """, fy, qtr, month_name)
+                try:
+                    _r3p = _json_ss.loads(_r3)
+                    if not _r3p.get("mon"):
+                        time.sleep(2)
+                        driver.execute_script(_JS_SET_MON_SEARCH, month_name)
+                    driver.execute_script(_JS_CLICK_SEARCH)
+                    _mon_set_ok = True
+                except Exception:
+                    pass
+
+        if _mon_set_ok:
+            log(f"  FY: {fy} ✓  Quarter: {qtr} ✓  Period: {month_name} ✓  SEARCH fired ✓")
+        else:
+            log(f"  ⚠ FY: {fy} ✓  Quarter: {qtr} ✓  Period: {month_name} NOT SET — proceeding with caution", "warn")
 
         # Wait for tiles to appear — 10s max
         try:
@@ -5866,8 +5919,8 @@ def _auto_download(job_id, gstin, client_name,
                                 if not _period_ok:
                                     log(f"    [{month_name}] Period mismatch (got: '{_verified_period}') — re-setting dropdowns", "warn")
                                 _select_and_search(month_name)
-                                # Wait up to 15s for tiles to reappear
-                                _tile_deadline2 = time.time() + 15
+                                # Wait up to 20s for tiles to reappear (more than enough after _select_and_search)
+                                _tile_deadline2 = time.time() + 20
                                 while time.time() < _tile_deadline2:
                                     try:
                                         _bt2 = driver.find_element(By.TAG_NAME, "body").text
@@ -5876,6 +5929,27 @@ def _auto_download(job_id, gstin, client_name,
                                     except Exception:
                                         pass
                                     time.sleep(0.5)
+                                # ── Final period confirmation before DOWNLOAD ──
+                                # If _select_and_search still couldn't set the month
+                                # (Angular still slow), do one more targeted re-check.
+                                try:
+                                    _final_period = driver.execute_script(_JS_VERIFY_PERIOD, month_name)
+                                    if month_name.lower() not in (_final_period or "").lower():
+                                        log(f"    [{month_name}] Still wrong after _select_and_search (got: '{_final_period}') — one more JS retry", "warn")
+                                        # Force navigate to dashboard and retry cleanly
+                                        _go_to_dashboard()
+                                        _select_and_search(month_name)
+                                        _tile_deadline3 = time.time() + 20
+                                        while time.time() < _tile_deadline3:
+                                            try:
+                                                _bt3 = driver.find_element(By.TAG_NAME, "body").text
+                                                if any(kw in _bt3 for kw in ["GSTR-3B","GSTR3B","VIEW GSTR","DOWNLOAD"]):
+                                                    break
+                                            except Exception:
+                                                pass
+                                            time.sleep(0.5)
+                                except Exception:
+                                    pass
                             else:
                                 log(f"    Setting: FY={fy}  Quarter={qtr_d}  Period={month_name}")
                                 log(f"    Tiles already loaded — skipping re-search ✓")
