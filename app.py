@@ -4738,7 +4738,9 @@ def _auto_download(job_id, gstin, client_name,
         """Navigate to GST portal, fill creds, show CAPTCHA screenshot, wait for user input."""
         log("🌐 Opening www.gst.gov.in ...")
         driver.get("https://www.gst.gov.in")
-        time.sleep(4)
+        try:
+            WebDriverWait(driver, 12).until(lambda d: d.execute_script("return document.readyState") == "complete")
+        except Exception: time.sleep(2)
 
         log("  Clicking LOGIN button...")
         _try_click([
@@ -4747,7 +4749,10 @@ def _auto_download(job_id, gstin, client_name,
             "//button[normalize-space()='LOGIN']",
             "//a[contains(@href,'login')]",
         ])
-        time.sleep(3)   # was 8
+        # Smart wait for login page to load
+        try:
+            WebDriverWait(driver, 12).until(lambda d: "login" in d.current_url.lower())
+        except Exception: time.sleep(2)
         log(f"  Login page: {driver.current_url}")
 
         log(f"  Filling username: {username}")
@@ -4820,7 +4825,13 @@ def _auto_download(job_id, gstin, client_name,
             "//button[@type='submit']",
             "//input[@type='submit']",
         ])
-        time.sleep(3)   # was 10
+        # Smart wait for post-login redirect
+        try:
+            WebDriverWait(driver, 15).until(
+                lambda d: "fowelcome" in d.current_url or "dashboard" in d.current_url
+                          or "otp" in d.find_element(By.TAG_NAME, "body").text.lower()[:200])
+        except Exception:
+            time.sleep(3)
 
         # OTP check
         try:
@@ -4908,7 +4919,14 @@ def _auto_download(job_id, gstin, client_name,
                             clicked = True
                             break
                     except: continue
-            time.sleep(3)   # was 10
+            # Smart wait for dashboard URL — replaces fixed sleep
+            try:
+                WebDriverWait(driver, 12).until(
+                    lambda d: "dashboard" in d.current_url.lower()
+                              or "accessdenied" in d.current_url.lower()
+                              or "login" in d.current_url.lower())
+            except Exception:
+                time.sleep(2)
 
             final = driver.current_url
             log(f"  URL after nav attempt {attempt+1}: {final}")
@@ -4933,13 +4951,18 @@ def _auto_download(job_id, gstin, client_name,
         raise RuntimeError(f"Could not reach Returns Dashboard. Last URL: {driver.current_url}")
 
     def _select_and_search(month_name):
-        """Select FY, Quarter, Period then click SEARCH (mirrors select_and_search)"""
+        """Select FY, Quarter, Period then click SEARCH — fast smart-wait version."""
         log(f"  Setting: FY={fy}  Quarter={QUARTER_MAP_LOCAL.get(month_name,'')}  Period={month_name}")
-        time.sleep(3)
 
-        all_sels = driver.find_elements(By.TAG_NAME, "select")
-        # FY
-        for sel_el in all_sels:
+        # Wait for dropdowns to be present (Angular render) — no fixed sleep
+        try:
+            WebDriverWait(driver, 12).until(
+                lambda d: len(d.find_elements(By.TAG_NAME, "select")) >= 2)
+        except Exception:
+            time.sleep(1)
+
+        # FY dropdown
+        for sel_el in driver.find_elements(By.TAG_NAME, "select"):
             try:
                 s = Select(sel_el)
                 opts = [o.text.strip() for o in s.options]
@@ -4951,12 +4974,19 @@ def _auto_download(job_id, gstin, client_name,
                             break
                     break
             except: continue
-        time.sleep(1)
 
-        all_sels = driver.find_elements(By.TAG_NAME, "select")
-        # Quarter
+        # Quarter dropdown — wait briefly for Angular to update after FY change
+        try:
+            WebDriverWait(driver, 5).until(
+                lambda d: any("quarter" in o.text.lower()
+                               for sel in d.find_elements(By.TAG_NAME, "select")
+                               for o in Select(sel).options
+                               if o.text.strip()))
+        except Exception:
+            time.sleep(0.3)
+
         qtr = QUARTER_MAP_LOCAL.get(month_name, "")
-        for sel_el in all_sels:
+        for sel_el in driver.find_elements(By.TAG_NAME, "select"):
             try:
                 s = Select(sel_el)
                 opts = [o.text.strip() for o in s.options]
@@ -4968,13 +4998,12 @@ def _auto_download(job_id, gstin, client_name,
                             break
                     break
             except: continue
-        time.sleep(1)
 
-        all_sels = driver.find_elements(By.TAG_NAME, "select")
-        # Period/Month
+        # Period/Month dropdown
+        time.sleep(0.2)
         month_names_lower = ["january","february","march","april","may","june",
                              "july","august","september","october","november","december"]
-        for sel_el in all_sels:
+        for sel_el in driver.find_elements(By.TAG_NAME, "select"):
             try:
                 s = Select(sel_el)
                 opts = [o.text.strip() for o in s.options]
@@ -4986,80 +5015,137 @@ def _auto_download(job_id, gstin, client_name,
                             break
                     break
             except: continue
-        time.sleep(1)
+        time.sleep(0.2)
 
-        # SEARCH
-        clicked = _try_click([
-            "//button[normalize-space()='SEARCH']",
-            "//button[normalize-space()='Search']",
-            "//button[contains(text(),'SEARCH')]",
-            "//input[@value='SEARCH']",
-        ])
-        if not clicked:
-            driver.execute_script("""
-                var btns=document.querySelectorAll('button,input[type=submit]');
-                for(var i=0;i<btns.length;i++){
-                    if((btns[i].innerText||btns[i].value||'').toUpperCase().includes('SEARCH')){
-                        btns[i].click(); break;
-                    }
+        # SEARCH — use JS click for reliability on Angular page
+        driver.execute_script("""
+            var btns=document.querySelectorAll('button,input[type=submit]');
+            for(var i=0;i<btns.length;i++){
+                if((btns[i].innerText||btns[i].value||'').toUpperCase().includes('SEARCH')){
+                    btns[i].click(); break;
                 }
-            """)
-        time.sleep(3)   # was 8
-        # ── Debug: screenshot + page dump after SEARCH ────────────────
+            }
+        """)
+        log(f"  SEARCH fired ✓")
+
+        # Wait for tiles to appear — smart wait instead of fixed sleep
         try:
-            img_b64 = _screenshot_b64()
-            if img_b64:
-                show_captcha(img_b64)   # reuse captcha slot to show screenshot
-                time.sleep(0.5)
-                clear_captcha()
-        except: pass
-        try:
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-            # Log all visible text to find tile names
-            lines = [l.strip() for l in body_text.split("\n") if l.strip()]
-            log(f"  Page text after SEARCH ({len(lines)} lines): {' | '.join(lines[:30])}", "info")
-            # Log all buttons
-            btns_txt = [b.text.strip() for b in driver.find_elements(By.TAG_NAME, "button") if b.is_displayed() and b.text.strip()]
-            log(f"  Visible buttons: {btns_txt[:15]}", "info")
-            # Log all links
-            links_txt = [(a.text.strip(), (a.get_attribute("href") or "")[:60])
-                         for a in driver.find_elements(By.TAG_NAME, "a")
-                         if a.is_displayed() and a.text.strip()]
-            log(f"  Visible links: {links_txt[:15]}", "info")
-        except Exception as _de:
-            log(f"  Debug dump error: {_de}", "warn")
+            WebDriverWait(driver, 15).until(
+                lambda d: any(kw in d.find_element(By.TAG_NAME, "body").text
+                              for kw in ["GSTR-3B", "GSTR3B", "DOWNLOAD", "VIEW"]))
+        except Exception:
+            time.sleep(2)
         log(f"  Tiles loaded after SEARCH ✓")
 
     def _click_tile_download(tile_name):
-        """Find tile and click its DOWNLOAD button"""
+        """Find tile and click its DOWNLOAD button — fast version matching local script."""
         log(f"  Finding {tile_name} tile DOWNLOAD button...")
-        time.sleep(3)
+        time.sleep(0.5)   # brief settle only
 
-        # Log full page text to diagnose tile names on this portal version
-        try:
-            all_text = driver.find_element(By.TAG_NAME, "body").text
-            log(f"  Page has text: {bool('GSTR' in all_text or 'gstr' in all_text.lower())}")
-            # Find all elements containing GSTR to see what's on the page
-            gstr_els = driver.find_elements(By.XPATH, "//*[contains(text(),'GSTR') or contains(text(),'gstr')]")
-            gstr_texts = list(set(e.text.strip()[:40] for e in gstr_els if e.is_displayed() and e.text.strip()))
-            log(f"  GSTR elements on page: {gstr_texts[:20]}", "info")
-        except: pass
+        tile_key = tile_name.upper().replace("-","").replace(" ","")
 
+        # ── GSTR-3B: Strategy A (walk up from text) + B (JS scan) + C (VIEW anchor) ──
+        if tile_key == "GSTR3B":
+            log("  GSTR3B: looking for DOWNLOAD button in GSTR-3B tile...")
+            # Strategy A: find GSTR-3B text → walk up → find DOWNLOAD (not VIEW GSTR3B)
+            for variant in ["GSTR-3B", "GSTR3B", "GSTR 3B"]:
+                try:
+                    els = driver.find_elements(By.XPATH,
+                        f"//*[normalize-space(text())='{variant}' or contains(normalize-space(text()),'{variant}')]")
+                    for el in els:
+                        if not el.is_displayed(): continue
+                        parent = el
+                        for level in range(8):
+                            try:
+                                parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                                if parent is None: break
+                                btns = parent.find_elements(By.XPATH,
+                                    ".//*[contains(translate(normalize-space(.),'download','DOWNLOAD'),'DOWNLOAD') "
+                                    "and (self::button or self::a) "
+                                    "and not(contains(translate(normalize-space(.),'view gstr3b','VIEW GSTR3B'),'VIEW GSTR3B'))]")
+                                for btn in btns:
+                                    if btn.is_displayed():
+                                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                                        time.sleep(0.2)
+                                        driver.execute_script("arguments[0].click();", btn)
+                                        log(f"  ✅ GSTR3B DOWNLOAD clicked (Strategy A, level {level})", "ok")
+                                        return True
+                            except: break
+                except: continue
+
+            # Strategy B: JS scan
+            try:
+                clicked = driver.execute_script("""
+                    var tiles=document.querySelectorAll('*');
+                    for(var i=0;i<tiles.length;i++){
+                        var t=tiles[i];
+                        var txt=(t.innerText||t.textContent||'').trim().toUpperCase().replace(/[\\s-]/g,'');
+                        if(txt==='GSTR3B'){
+                            var p=t;
+                            for(var j=0;j<10;j++){
+                                if(!p||!p.parentElement) break;
+                                p=p.parentElement;
+                                var btns=p.querySelectorAll('button,a');
+                                for(var k=0;k<btns.length;k++){
+                                    var bt=(btns[k].innerText||btns[k].textContent||'').trim().toUpperCase();
+                                    if(bt.includes('DOWNLOAD') && !bt.includes('VIEW GSTR3B')){
+                                        btns[k].scrollIntoView({block:'center'});
+                                        btns[k].click();
+                                        return bt;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return null;
+                """)
+                if clicked:
+                    log(f"  ✅ GSTR3B DOWNLOAD clicked (Strategy B JS: '{clicked}')", "ok")
+                    return True
+            except Exception as e:
+                log(f"  Strategy B JS error: {e}", "warn")
+
+            # Strategy C: anchor on VIEW GSTR3B → find sibling DOWNLOAD
+            try:
+                view_btns = driver.find_elements(By.XPATH,
+                    "//*[contains(translate(normalize-space(text()),'view gstr3b','VIEW GSTR3B'),'VIEW GSTR3B')]")
+                for vb in view_btns:
+                    if not vb.is_displayed(): continue
+                    parent = vb
+                    for level in range(8):
+                        try:
+                            parent = driver.execute_script("return arguments[0].parentElement;", parent)
+                            if parent is None: break
+                            btns = parent.find_elements(By.XPATH,
+                                ".//*[normalize-space(translate(text(),'download','DOWNLOAD'))='DOWNLOAD' "
+                                "and (self::button or self::a)]")
+                            for btn in btns:
+                                if btn.is_displayed():
+                                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                                    time.sleep(0.2)
+                                    driver.execute_script("arguments[0].click();", btn)
+                                    log(f"  ✅ GSTR3B DOWNLOAD clicked (Strategy C VIEW-anchor)", "ok")
+                                    return True
+                        except: break
+            except Exception as e:
+                log(f"  Strategy C error: {e}", "warn")
+
+            log("  ⚠ GSTR3B DOWNLOAD button not found", "warn")
+            return False
+
+        # ── All other tiles: Strategy 1 (walk up from text) then Strategy 2 (scan) ──
         name_variants = {
-            "GSTR1":  ["GSTR1","GSTR-1","GSTR 1","gstr1","Gstr1"],
-            "GSTR1A": ["GSTR1A","GSTR-1A","GSTR 1A","gstr1a"],
-            "GSTR2B": ["GSTR2B","GSTR-2B","GSTR 2B","gstr2b"],
-            "GSTR2A": ["GSTR2A","GSTR-2A","GSTR 2A","gstr2a"],
-            "GSTR3B": ["GSTR3B","GSTR-3B","GSTR 3B","gstr3b"],
+            "GSTR1":  ["GSTR1","GSTR-1","GSTR 1"],
+            "GSTR1A": ["GSTR1A","GSTR-1A","GSTR 1A"],
+            "GSTR2B": ["GSTR2B","GSTR-2B","GSTR 2B"],
+            "GSTR2A": ["GSTR2A","GSTR-2A","GSTR 2A"],
         }
-        variants = name_variants.get(tile_name.upper().replace("-",""), [tile_name])
+        variants = name_variants.get(tile_key, [tile_name])
 
-        # Strategy 1: find subtitle text → walk up to container → find DOWNLOAD button inside
         for variant in variants:
             try:
                 subtitle_els = driver.find_elements(By.XPATH,
-                    f"//*[normalize-space(text())='{variant}' or "
-                    f"contains(normalize-space(text()),'{variant}')]")
+                    f"//*[normalize-space(text())='{variant}' or contains(normalize-space(text()),'{variant}')]")
                 for subtitle_el in subtitle_els:
                     if not subtitle_el.is_displayed(): continue
                     parent = subtitle_el
@@ -5073,32 +5159,29 @@ def _auto_download(job_id, gstin, client_name,
                             for btn in btns:
                                 if btn.is_displayed():
                                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-                                    time.sleep(0.4)
+                                    time.sleep(0.2)
                                     driver.execute_script("arguments[0].click();", btn)
                                     log(f"  ✅ {tile_name} DOWNLOAD clicked (strategy 1, level {level})", "ok")
                                     return True
                         except: break
             except: continue
 
-        # Strategy 2: scan all DOWNLOAD buttons, find the one near the tile title
+        # Strategy 2: scan all DOWNLOAD buttons
         try:
             all_dl_btns = driver.find_elements(By.XPATH,
                 "//*[contains(translate(normalize-space(text()),'download','DOWNLOAD'),'DOWNLOAD') "
                 "and (self::button or self::a) and not(contains(text(),'GENERATE'))]")
-            log(f"  All DOWNLOAD buttons on page: {[b.text.strip() for b in all_dl_btns if b.is_displayed()][:10]}", "info")
             for btn in all_dl_btns:
                 if not btn.is_displayed(): continue
-                # Check if any ancestor contains the tile name
                 try:
                     parent = btn
                     for _ in range(10):
                         parent = driver.execute_script("return arguments[0].parentElement;", parent)
                         if parent is None: break
                         ptext = (driver.execute_script("return arguments[0].innerText;", parent) or "").upper()
-                        tile_key = tile_name.upper().replace("-","")
                         if tile_key in ptext.replace("-","").replace(" ",""):
                             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-                            time.sleep(0.4)
+                            time.sleep(0.2)
                             driver.execute_script("arguments[0].click();", btn)
                             log(f"  ✅ {tile_name} DOWNLOAD clicked (strategy 2)", "ok")
                             return True
@@ -5106,7 +5189,7 @@ def _auto_download(job_id, gstin, client_name,
         except Exception as e:
             log(f"  Strategy 2 error: {e}", "warn")
 
-        log(f"  ⚠ {tile_name} DOWNLOAD tile not found — check page dump above", "warn")
+        log(f"  ⚠ {tile_name} DOWNLOAD tile not found", "warn")
         return False
 
     def _get_latest_file(extensions):
@@ -5135,7 +5218,7 @@ def _auto_download(job_id, gstin, client_name,
         GSTR-1 / GSTR-2A need portal to generate (may take 30s-2min)."""
         import time as _t
         start_time = _t.time()
-        time.sleep(3)
+        time.sleep(0.5)  # brief settle
         log(f"  Generate page: {driver.current_url}")
 
         # List files already in dl_dir before clicking
@@ -5375,8 +5458,20 @@ def _auto_download(job_id, gstin, client_name,
                         _select_and_search(month_name)
                         current_tile[0] = "GSTR3B"
                         if _click_tile_download("GSTR3B"):
-                            time.sleep(3)   # was 11
-                            if _rename_latest(save_name, [".pdf"]):
+                            # Smart wait: poll folder for new PDF (like local script _wait_files)
+                            snap_before = {str(f): f.stat().st_mtime for f in dl_dir.iterdir() if f.suffix.lower() == ".pdf"}
+                            got_pdf = None
+                            for _w in range(90):   # up to 45s (0.5s x 90)
+                                time.sleep(0.5)
+                                for f in dl_dir.iterdir():
+                                    if f.suffix.lower() != ".pdf": continue
+                                    if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                                    prev = snap_before.get(str(f))
+                                    if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 1000:
+                                        time.sleep(0.3)  # let Chrome flush
+                                        got_pdf = f; break
+                                if got_pdf: break
+                            if got_pdf and _rename_latest(save_name, [".pdf"]):
                                 triggered[f"{key}_GSTR3B"] = "OK"
                                 src_f = dl_dir / save_name
                                 sz = src_f.stat().st_size // 1024
@@ -5404,7 +5499,11 @@ def _auto_download(job_id, gstin, client_name,
                     _select_and_search(month_name)
                     current_tile[0] = "GSTR1"
                     if _click_tile_download("GSTR1"):
-                        time.sleep(4)
+                        # Smart wait for Generate page to render
+                        try:
+                            WebDriverWait(driver, 8).until(
+                                lambda d: any(d.find_elements(By.XPATH, xp) for xp in GENERATE_JSON_XP + GENERATE_EXCEL_XP))
+                        except Exception: time.sleep(1)
                         if _try_click(GENERATE_JSON_XP, timeout=8):
                             log(f"  GSTR-1 GENERATE JSON clicked ✓")
                             triggered[f"{key}_GSTR1"] = "TRIGGERED"
@@ -5428,7 +5527,11 @@ def _auto_download(job_id, gstin, client_name,
                     _select_and_search(month_name)
                     current_tile[0] = "GSTR1A"
                     if _click_tile_download("GSTR1A"):
-                        time.sleep(4)
+                        # Smart wait for Generate page to render
+                        try:
+                            WebDriverWait(driver, 8).until(
+                                lambda d: any(d.find_elements(By.XPATH, xp) for xp in GENERATE_JSON_XP + GENERATE_EXCEL_XP))
+                        except Exception: time.sleep(1)
                         if _try_click(GENERATE_JSON_XP, timeout=8):
                             log(f"  GSTR-1A GENERATE JSON clicked ✓")
                             triggered[f"{key}_GSTR1A"] = "TRIGGERED"
@@ -5453,7 +5556,7 @@ def _auto_download(job_id, gstin, client_name,
                     save_name = f"GSTR2B_{month_name}_{year}.xlsx"
                     current_tile[0] = "GSTR2B"
                     if _click_tile_download("GSTR2B"):
-                        time.sleep(4)
+                        time.sleep(1)  # brief settle for Generate page
                         if _generate_and_download(save_name, GENERATE_EXCEL_XP, [".xlsx",".zip"], max_wait=60):
                             triggered[f"{key}_GSTR2B"] = "OK"
                             src_f = dl_dir / save_name
@@ -5483,7 +5586,11 @@ def _auto_download(job_id, gstin, client_name,
                     _select_and_search(month_name)
                     current_tile[0] = "GSTR2A"
                     if _click_tile_download("GSTR2A"):
-                        time.sleep(4)
+                        # Smart wait for Generate page to render
+                        try:
+                            WebDriverWait(driver, 8).until(
+                                lambda d: any(d.find_elements(By.XPATH, xp) for xp in GENERATE_JSON_XP + GENERATE_EXCEL_XP))
+                        except Exception: time.sleep(1)
                         if _try_click(GENERATE_JSON_XP, timeout=8):
                             log(f"  GSTR-2A GENERATE JSON clicked ✓ (will save as ZIP)")
                             triggered[f"{key}_GSTR2A"] = "TRIGGERED"
