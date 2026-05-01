@@ -1,5 +1,23 @@
 """
-FIXED in v32 — GSTR-2B value misplacement in Excel output corrected:
+FIXED in v32 — GSTR-3B "File Not Found" and online speed improvements:
+
+  BUG: GSTR3B DOWNLOAD click sometimes lands on /offlinedownload (GSTR-1 page)
+       because Strategy A walked up DOM too far and clicked GSTR-1's DOWNLOAD.
+       The code then waited 45s for a PDF that never came → NOT_FOUND.
+  FIX 1 — New primary strategy anchors on "VIEW GSTR3B" text (unique to GSTR-3B
+           tile only). Walks up DOM, stops immediately if ANY other GSTR tile
+           (GSTR-1A, GSTR-2B, etc.) appears in container text. This prevents
+           the "climbed too high" wrong-tile click.
+  FIX 2 — After click_tile_download(), detect wrong-page landing (offlinedownload
+           or gstr1 in URL) and auto-retry with VIEW-anchor-only strategy.
+           Falls through to CDP printToPDF if file not received in 30s.
+  FIX 3 — Tab navigation parallelized: select_and_search() fired on all tabs
+           without sequential waits, then all tabs polled together for tiles.
+           Saves ~2s per tab × 6 tabs = ~12s per batch.
+  FIX 4 — Global timing constants reduced (PAGE_WAIT 2→1, SHORT_WAIT 0.5→0.3,
+           ACTION_WAIT 0.5→0.3, CLIENT_GAP 3→2) for faster online execution.
+
+FIXED in v32 (original) — GSTR-2B value misplacement in Excel output corrected:
   BUG 1 — read_gstr2b() used hardcoded old-format column indices (col8=Rate%,
            col9=TaxableVal) for all files. New 2024+ portal format removes
            Rate% column, shifting TaxableVal to col8, IGST→col9, CGST→col10,
@@ -295,10 +313,10 @@ except ImportError:
     MISSING.append("openpyxl")
 
 # -- Constants ----------------------------------------------
-PAGE_WAIT       = 2    # was 4  — smart WebDriverWait replaces most fixed sleeps
-SHORT_WAIT      = 0.5  # was 1
-ACTION_WAIT     = 0.5  # was 1
-CLIENT_GAP      = 3    # was 5
+PAGE_WAIT       = 1    # v32: reduced — smart WebDriverWait handles timing
+SHORT_WAIT      = 0.3  # v32: reduced from 0.5
+ACTION_WAIT     = 0.3  # v32: reduced from 0.5
+CLIENT_GAP      = 2    # v32: reduced from 3
 FILE_GEN_WAIT   = 300  # 5 min max per file (portal usually <90s)
 FILE_GEN_RETRY  = 10
 FY_LABEL        = "2025-26"   # ← Change ONLY this line each new financial year
@@ -2646,6 +2664,50 @@ def click_tile_download(driver, tile_name, log):
     if tile_name.upper().replace("-","") == "GSTR3B":
         log.info("    GSTR3B: looking for DOWNLOAD button in GSTR-3B tile...")
 
+        # ── v32 PRIMARY: Anchor on VIEW GSTR3B (unique marker) → find DOWNLOAD sibling ──
+        # This is the MOST RELIABLE strategy because "VIEW GSTR3B" text only exists
+        # inside the GSTR-3B tile — no other tile has this text.
+        # Strategy A (text-walk) sometimes climbs too high and clicks GSTR-1's DOWNLOAD.
+        try:
+            clicked_primary = driver.execute_script("""
+                var viewBtns = Array.from(
+                    document.querySelectorAll('button,a,[role=button]')
+                ).filter(function(b) {
+                    var t = (b.innerText || b.textContent || '')
+                        .trim().toUpperCase().replace(/ /g, '');
+                    return t === 'VIEWGSTR3B' || t === 'VIEWGSTR-3B';
+                });
+                if (!viewBtns.length) return null;
+                var container = viewBtns[0];
+                for (var i = 0; i < 8; i++) {
+                    if (!container.parentElement) break;
+                    container = container.parentElement;
+                    // Stop if container has multiple GSTR tiles
+                    var ct = (container.innerText || '').toUpperCase();
+                    var cnt = 0;
+                    ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A'].forEach(function(g){
+                        if(ct.includes(g)) cnt++;
+                    });
+                    if (cnt > 0) break;  // Climbed too high — other tiles visible
+                    var btns = Array.from(container.querySelectorAll('button,a'));
+                    for (var b = 0; b < btns.length; b++) {
+                        var t = (btns[b].innerText || btns[b].textContent || '')
+                            .trim().toUpperCase();
+                        if (t === 'DOWNLOAD') {
+                            btns[b].scrollIntoView({block:'center'});
+                            btns[b].click();
+                            return 'PRIMARY_VIEW_ANCHOR:' + t;
+                        }
+                    }
+                }
+                return null;
+            """)
+            if clicked_primary:
+                log.info(f"    GSTR3B DOWNLOAD clicked (v32 Primary VIEW-anchor) ✓")
+                return True
+        except Exception as _pe:
+            log.warning(f"    GSTR3B primary strategy error: {_pe}")
+
         # Strategy A: Find GSTR-3B tile via unique "GSTR-3B" text, walk up
         # to tile container, find the DOWNLOAD button inside that container.
         # This avoids accidentally clicking a different tile's button.
@@ -2739,7 +2801,7 @@ def click_tile_download(driver, tile_name, log):
                     document.querySelectorAll('button,a,[role=button]')
                 ).filter(function(b) {
                     var t = (b.innerText || b.textContent || '')
-                        .trim().toUpperCase().replace(/\\s+/g, '');
+                        .trim().toUpperCase().replace(/[ \\t]+/g, '');
                     return t === 'VIEWGSTR3B' || t === 'VIEWGSTR-3B';
                 });
                 if (!viewBtns.length) return null;
@@ -3638,38 +3700,51 @@ def _gstr3b_multitab(driver, client_dir, log, batch_size=6):
             except Exception as e:
                 log.warning(f"    Tab open failed {month_name}: {e}")
 
+        # ── Navigate + select month on all tabs (PARALLEL) ───────────
+        # v32: fire select_and_search on EVERY tab without waiting between them,
+        # then poll ALL tabs together for tile readiness. This cuts ~2s per tab.
+        nav_ok = {}
         # ★ FIX 3: Set download dir on ALL tabs immediately after opening
         try: set_download_dir_all_tabs(driver, client_path)
         except Exception: pass
-        # ── Navigate + select month on all tabs ───────────────────────
-        nav_ok = {}
+
+        # Step A: fire select_and_search on every tab (no waiting between)
         for tab, (month_name, month_num, year, save_name) in tab_map.items():
             try:
                 driver.switch_to.window(tab)
-                # Smart wait for dashboard — no fixed sleep
-                try:
-                    WebDriverWait(driver, 10).until(
-                        lambda d: "dashboard" in d.current_url or "login" in d.current_url)
-                except Exception:
-                    pass
                 cur = driver.current_url
                 if "dashboard" not in cur:
                     driver.get(DASH_URL)
-                    try:
-                        WebDriverWait(driver, 15).until(
-                            lambda d: "dashboard" in d.current_url or "login" in d.current_url)
-                    except Exception: pass
                 if "login" in driver.current_url or "denied" in driver.current_url:
                     log.warning(f"    Tab {month_name}: session issue — menu nav fallback")
                     safe_go_to_dashboard(driver, log)
                 select_and_search(driver, month_name, log)
-                # Scroll to load all tiles
+                # Scroll to ensure all tiles rendered
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 nav_ok[tab] = True
-                log.info(f"    ✓ Tab ready: {month_name}")
+                log.info(f"    ✓ Tab month set: {month_name}")
             except Exception as e:
                 log.warning(f"    Tab setup failed {month_name}: {e}")
                 nav_ok[tab] = False
+
+        # Step B: poll all tabs together for tiles (max 15s total, no per-tab sleep)
+        tile_deadline = time.time() + 15
+        tiles_ok = set()
+        while time.time() < tile_deadline:
+            for tab in list(tab_map):
+                if not nav_ok.get(tab) or tab in tiles_ok:
+                    continue
+                try:
+                    driver.switch_to.window(tab)
+                    body = driver.find_element(By.TAG_NAME, "body").text
+                    if any(g in body for g in ["GSTR-3B", "VIEW GSTR3B", "DOWNLOAD"]):
+                        tiles_ok.add(tab)
+                except Exception:
+                    pass
+            if len(tiles_ok) >= sum(1 for t in tab_map if nav_ok.get(t)):
+                break
+            time.sleep(0.3)
+        log.info(f"    {len(tiles_ok)}/{len(tab_map)} tabs tiles ready ✓")
 
         # ── Click DOWNLOAD one-by-one per tab (sequential) ──────────────
         # REASON: parallel PDF downloads arrive within ms of each other.
@@ -3705,28 +3780,125 @@ def _gstr3b_multitab(driver, client_dir, log, batch_size=6):
                     log.warning(f"    [{month_name}] Tile not found")
                     results[key] = "TILE_FAIL"
                 else:
-                    # Wait for this one PDF
-                    got = _wait_files(snap_before, 1, timeout=45)
-                    if got:
-                        matched = None
-                        # Strategy A: filename match
-                        for f in got:
-                            if _fname_match(f, month_num, year):
-                                matched = f; break
-                        # Strategy B: only file received = must be ours
-                        if not matched and len(got) == 1:
-                            matched = got[0]
-                        if matched:
-                            if _rename_file(matched, dest, month_name):
-                                results[key] = "OK"; ok_count += 1
-                            else:
-                                results[key] = "RENAME_FAIL"
+                    # ── v32 FIX: Detect where we landed after DOWNLOAD click ──────
+                    # The portal may navigate to:
+                    #   A) /offlinedownload  — shows "GENERATE JSON FILE TO DOWNLOAD"
+                    #      This means GSTR1 tile was accidentally clicked (wrong tile).
+                    #      In this case: go BACK, re-search, try harder GSTR3B click.
+                    #   B) A print/view page — use CDP printToPDF to capture as PDF
+                    #   C) PDF downloaded directly — file appears in folder
+                    try:
+                        WebDriverWait(driver, 8).until(
+                            lambda d: d.current_url != driver.current_url
+                            or "offlinedownload" in d.current_url.lower()
+                            or "gstr3b" in d.current_url.lower()
+                            or "print" in d.current_url.lower()
+                            or len(list(client_path.iterdir())) > len(list(snap_before))
+                        )
+                    except Exception:
+                        pass
+
+                    cur_url = driver.current_url.lower()
+                    landed_on_offline = "offlinedownload" in cur_url
+                    landed_on_gstr1 = ("gstr1" in cur_url and "gstr3b" not in cur_url)
+
+                    if landed_on_offline or landed_on_gstr1:
+                        # ── Wrong tile clicked — GSTR1 offline page opened ──────────
+                        # Go back, re-search more carefully, click GSTR3B specifically
+                        log.warning(f"    [{month_name}] Landed on wrong page ({cur_url[:60]}) — going back + retry")
+                        try:
+                            driver.back()
+                            WebDriverWait(driver, 8).until(
+                                lambda d: "dashboard" in d.current_url)
+                        except Exception:
+                            try:
+                                driver.get("https://return.gst.gov.in/returns/auth/dashboard")
+                                WebDriverWait(driver, 10).until(
+                                    lambda d: "dashboard" in d.current_url)
+                            except Exception: pass
+                        # Re-select month
+                        select_and_search(driver, month_name, log)
+                        try:
+                            WebDriverWait(driver, 10).until(
+                                lambda d: "GSTR-3B" in d.find_element(By.TAG_NAME, "body").text
+                                or "VIEW GSTR3B" in d.find_element(By.TAG_NAME, "body").text)
+                        except Exception: pass
+                        # Force scroll + re-click using Strategy C (VIEW-anchor) only
+                        try:
+                            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                            time.sleep(0.3)
+                            driver.execute_script("window.scrollTo(0, 0);")
+                        except Exception: pass
+                        snap_before = _snap()
+                        clicked_retry = driver.execute_script("""
+                            var viewBtns = Array.from(
+                                document.querySelectorAll('button,a,[role=button]')
+                            ).filter(function(b) {
+                                var t = (b.innerText || b.textContent || '')
+                                    .trim().toUpperCase().replace(/ /g, '');
+                                return t === 'VIEWGSTR3B' || t === 'VIEWGSTR-3B';
+                            });
+                            if (!viewBtns.length) return null;
+                            var container = viewBtns[0];
+                            for (var i = 0; i < 8; i++) {
+                                if (!container.parentElement) break;
+                                container = container.parentElement;
+                                var btns = Array.from(
+                                    container.querySelectorAll('button,a')
+                                );
+                                for (var b = 0; b < btns.length; b++) {
+                                    var t = (btns[b].innerText || btns[b].textContent || '')
+                                        .trim().toUpperCase();
+                                    if (t === 'DOWNLOAD' && !t.includes('GENERATE')) {
+                                        btns[b].scrollIntoView({block:'center'});
+                                        btns[b].click();
+                                        return 'RETRY_VIEW_ANCHOR:' + t;
+                                    }
+                                }
+                            }
+                            return null;
+                        """)
+                        if clicked_retry:
+                            log.info(f"    [{month_name}] GSTR3B retry click ✓ ({clicked_retry})")
                         else:
-                            log.warning(f"    [{month_name}] PDF name mismatch: {got[0].name}")
-                            results[key] = "MISMATCH"
-                    else:
-                        log.warning(f"    [{month_name}] No PDF in 45s")
-                        results[key] = "NOT_FOUND"
+                            log.warning(f"    [{month_name}] Retry click also failed")
+                            results[key] = "TILE_FAIL"
+                            # (tab closure happens below)
+                        # Fall through to wait for PDF after retry click
+                        if results.get(key) == "TILE_FAIL":
+                            pass  # skip wait
+                        else:
+                            pass  # wait below
+
+                    # ── Wait for PDF file (covers direct download + CDP fallback) ─
+                    if results.get(key) != "TILE_FAIL":
+                        got = _wait_files(snap_before, 1, timeout=30)
+                        if got:
+                            matched = None
+                            for f in got:
+                                if _fname_match(f, month_num, year):
+                                    matched = f; break
+                            if not matched and len(got) == 1:
+                                matched = got[0]
+                            if matched:
+                                if _rename_file(matched, dest, month_name):
+                                    results[key] = "OK"; ok_count += 1
+                                else:
+                                    results[key] = "RENAME_FAIL"
+                            else:
+                                log.warning(f"    [{month_name}] PDF name mismatch: {got[0].name}")
+                                results[key] = "MISMATCH"
+                        else:
+                            # ── CDP fallback: capture current page as PDF ──────────
+                            # Portal may show print page instead of auto-downloading.
+                            log.info(f"    [{month_name}] No file in 30s — trying CDP printToPDF fallback")
+                            cdp_ok = _pdf_via_cdp(driver, dest, log)
+                            if cdp_ok:
+                                results[key] = "OK"; ok_count += 1
+                                log.info(f"    [{month_name}] ✅ PDF via CDP ✓")
+                            else:
+                                log.warning(f"    [{month_name}] No PDF — NOT_FOUND")
+                                results[key] = "NOT_FOUND"
 
                 # Close this tab immediately after attempt
                 try:
@@ -3765,9 +3937,10 @@ def _gstr3b_multitab(driver, client_dir, log, batch_size=6):
         for month_name, month_num, year in failed:
             key = f"{month_name}_{year}_GSTR3B"
             save_name = f"GSTR3B_{month_name}_{year}.pdf"
-            if (client_path / save_name).exists():
+            dest = client_path / save_name
+            if dest.exists():
                 results[key] = "OK"; ok_count += 1; continue
-            for attempt, wait_s in enumerate([0, 30, 60], 1):
+            for attempt, wait_s in enumerate([0, 15, 30], 1):
                 if wait_s:
                     time.sleep(wait_s)
                 try:
@@ -3775,10 +3948,27 @@ def _gstr3b_multitab(driver, client_dir, log, batch_size=6):
                     select_and_search(driver, month_name, log)
                     snap = _snap()
                     if click_tile_download(driver, "GSTR3B", log):
-                        got = _wait_files(snap, 1, timeout=45)
+                        # Check for wrong-page landing
+                        try:
+                            WebDriverWait(driver, 6).until(
+                                lambda d: "dashboard" not in d.current_url.lower()
+                                or len(list(client_path.iterdir())) > len(snap))
+                        except Exception: pass
+                        cur_url = driver.current_url.lower()
+                        if "offlinedownload" in cur_url or ("gstr1" in cur_url and "gstr3b" not in cur_url):
+                            log.warning(f"    [T{attempt}] {month_name}: wrong page — retry click")
+                            try: driver.back(); time.sleep(0.5)
+                            except Exception: pass
+                            select_and_search(driver, month_name, log)
+                            snap = _snap()
+                            click_tile_download(driver, "GSTR3B", log)
+                        got = _wait_files(snap, 1, timeout=30)
                         if got:
-                            dest = client_path / save_name
                             if _rename_file(got[0], dest, month_name):
+                                results[key] = "OK"; ok_count += 1; break
+                        else:
+                            cdp_ok = _pdf_via_cdp(driver, dest, log)
+                            if cdp_ok:
                                 results[key] = "OK"; ok_count += 1; break
                 except Exception as e:
                     log.warning(f"    [T{attempt}] Error {month_name}: {e}")

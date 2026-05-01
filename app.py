@@ -114,7 +114,7 @@ def _find_engine(name):
     """Locate a script by name. Supports version-aliased filenames."""
     # Alias map: canonical name → list of versioned filenames to try
     _ALIASES = {
-        "gst_suite_final.py":         ["gst_suite_v31.py", "gst_suite_final.py"],
+        "gst_suite_final.py":         ["gst_suite_v32.py", "gst_suite_v31.py", "gst_suite_final.py"],
         "gstr1_extract.py":            ["gstr1_fy_v5.py", "gstr1_extract.py"],
         "it_suite.py":                 ["it_suite_v6.py", "it_suite.py"],
         "gstr2b_extractor.py":         ["gstr2b_extractor_v2.py", "gstr2b_extractor.py"],
@@ -4025,7 +4025,7 @@ def run_reconciliation(job_id):
         suite_path = _find_engine("gst_suite_final.py")   # resolves to gst_suite_v31.py
         if not suite_path:
             raise FileNotFoundError(
-                "GST suite engine not found. Place gst_suite_v31.py (or gst_suite_final.py) "
+                "GST suite engine not found. Place gst_suite_v32.py (or gst_suite_final.py) "
                 "in the same folder as app.py."
             )
 
@@ -5040,13 +5040,56 @@ def _auto_download(job_id, gstin, client_name,
     def _click_tile_download(tile_name):
         """Find tile and click its DOWNLOAD button — fast version matching local script."""
         log(f"  Finding {tile_name} tile DOWNLOAD button...")
-        time.sleep(0.5)   # brief settle only
+        time.sleep(0.3)   # brief settle only
 
         tile_key = tile_name.upper().replace("-","").replace(" ","")
 
         # ── GSTR-3B: Strategy A (walk up from text) + B (JS scan) + C (VIEW anchor) ──
         if tile_key == "GSTR3B":
             log("  GSTR3B: looking for DOWNLOAD button in GSTR-3B tile...")
+
+            # ── v32 PRIMARY: Anchor on VIEW GSTR3B (unique to GSTR-3B tile) ──────────
+            # Walk up DOM but stop immediately if another GSTR tile appears in container.
+            # This prevents the "climbed too high → GSTR-1 DOWNLOAD clicked" bug.
+            try:
+                clicked_primary = driver.execute_script("""
+                    var viewBtns = Array.from(
+                        document.querySelectorAll('button,a,[role=button]')
+                    ).filter(function(b) {
+                        var t = (b.innerText || b.textContent || '')
+                            .trim().toUpperCase().replace(/ /g, '');
+                        return t === 'VIEWGSTR3B' || t === 'VIEWGSTR-3B';
+                    });
+                    if (!viewBtns.length) return null;
+                    var container = viewBtns[0];
+                    for (var i = 0; i < 8; i++) {
+                        if (!container.parentElement) break;
+                        container = container.parentElement;
+                        var ct = (container.innerText || '').toUpperCase();
+                        var cnt = 0;
+                        ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A'].forEach(function(g){
+                            if(ct.includes(g)) cnt++;
+                        });
+                        if (cnt > 0) break;
+                        var btns = Array.from(container.querySelectorAll('button,a'));
+                        for (var b = 0; b < btns.length; b++) {
+                            var t = (btns[b].innerText || btns[b].textContent || '')
+                                .trim().toUpperCase();
+                            if (t === 'DOWNLOAD') {
+                                btns[b].scrollIntoView({block:'center'});
+                                btns[b].click();
+                                return 'PRIMARY_VIEW_ANCHOR:' + t;
+                            }
+                        }
+                    }
+                    return null;
+                """)
+                if clicked_primary:
+                    log(f"  ✅ GSTR3B DOWNLOAD clicked (v32 Primary VIEW-anchor)", "ok")
+                    return True
+            except Exception as _pe:
+                log(f"  Primary strategy error: {_pe}", "warn")
+
             # Strategy A: find GSTR-3B text → walk up → find DOWNLOAD (not VIEW GSTR3B)
             for variant in ["GSTR-3B", "GSTR3B", "GSTR 3B"]:
                 try:
@@ -5059,6 +5102,10 @@ def _auto_download(job_id, gstin, client_name,
                             try:
                                 parent = driver.execute_script("return arguments[0].parentElement;", parent)
                                 if parent is None: break
+                                # Stop if container spans multiple tiles
+                                ptext = (driver.execute_script("return arguments[0].innerText;", parent) or "").upper()
+                                gcnt = sum(1 for g in ["GSTR-1 ","GSTR-1A","GSTR-2B","GSTR-2A"] if g in ptext)
+                                if gcnt > 0: break
                                 btns = parent.find_elements(By.XPATH,
                                     ".//*[contains(translate(normalize-space(.),'download','DOWNLOAD'),'DOWNLOAD') "
                                     "and (self::button or self::a) "
@@ -5085,6 +5132,10 @@ def _auto_download(job_id, gstin, client_name,
                             for(var j=0;j<10;j++){
                                 if(!p||!p.parentElement) break;
                                 p=p.parentElement;
+                                var ct=(p.innerText||'').toUpperCase();
+                                var cnt=0;
+                                ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A'].forEach(function(g){if(ct.includes(g))cnt++;});
+                                if(cnt>0) break;
                                 var btns=p.querySelectorAll('button,a');
                                 for(var k=0;k<btns.length;k++){
                                     var bt=(btns[k].innerText||btns[k].textContent||'').trim().toUpperCase();
@@ -5458,10 +5509,70 @@ def _auto_download(job_id, gstin, client_name,
                         _select_and_search(month_name)
                         current_tile[0] = "GSTR3B"
                         if _click_tile_download("GSTR3B"):
+                            # ── v32 FIX: detect wrong-page landing ────────────────────
+                            # After click, if we land on /offlinedownload or gstr1 URL,
+                            # it means GSTR-1's DOWNLOAD was clicked accidentally.
+                            # Go back, re-search, retry with VIEW-anchor only.
+                            try:
+                                WebDriverWait(driver, 6).until(
+                                    lambda d: "dashboard" not in d.current_url.lower()
+                                    or any(f.suffix.lower() == ".pdf"
+                                           for f in dl_dir.iterdir()
+                                           if not f.name.endswith((".crdownload",".tmp",".part"))))
+                            except Exception: pass
+
+                            cur_url = driver.current_url.lower()
+                            if "offlinedownload" in cur_url or ("gstr1" in cur_url and "gstr3b" not in cur_url):
+                                log(f"  [{month_name}] Landed on wrong page — going back + retry", "warn")
+                                try:
+                                    driver.back()
+                                    WebDriverWait(driver, 8).until(lambda d: "dashboard" in d.current_url)
+                                except Exception:
+                                    _go_to_dashboard()
+                                _select_and_search(month_name)
+                                try:
+                                    WebDriverWait(driver, 10).until(
+                                        lambda d: "VIEW GSTR3B" in d.find_element(By.TAG_NAME, "body").text
+                                        or "GSTR-3B" in d.find_element(By.TAG_NAME, "body").text)
+                                except Exception: pass
+                                # Retry with VIEW-anchor only (most reliable)
+                                driver.execute_script("""
+                                    var viewBtns = Array.from(
+                                        document.querySelectorAll('button,a,[role=button]')
+                                    ).filter(function(b) {
+                                        var t = (b.innerText || b.textContent || '')
+                                            .trim().toUpperCase().replace(/ /g, '');
+                                        return t === 'VIEWGSTR3B' || t === 'VIEWGSTR-3B';
+                                    });
+                                    if (!viewBtns.length) return null;
+                                    var container = viewBtns[0];
+                                    for (var i = 0; i < 8; i++) {
+                                        if (!container.parentElement) break;
+                                        container = container.parentElement;
+                                        var ct = (container.innerText || '').toUpperCase();
+                                        var cnt = 0;
+                                        ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A'].forEach(function(g){
+                                            if(ct.includes(g)) cnt++;
+                                        });
+                                        if (cnt > 0) break;
+                                        var btns = Array.from(container.querySelectorAll('button,a'));
+                                        for (var b = 0; b < btns.length; b++) {
+                                            var t = (btns[b].innerText || btns[b].textContent || '')
+                                                .trim().toUpperCase();
+                                            if (t === 'DOWNLOAD') {
+                                                btns[b].scrollIntoView({block:'center'});
+                                                btns[b].click();
+                                                return 'RETRY:' + t;
+                                            }
+                                        }
+                                    }
+                                    return null;
+                                """)
+
                             # Smart wait: poll folder for new PDF (like local script _wait_files)
                             snap_before = {str(f): f.stat().st_mtime for f in dl_dir.iterdir() if f.suffix.lower() == ".pdf"}
                             got_pdf = None
-                            for _w in range(90):   # up to 45s (0.5s x 90)
+                            for _w in range(60):   # up to 30s (0.5s x 60) — reduced from 90
                                 time.sleep(0.5)
                                 for f in dl_dir.iterdir():
                                     if f.suffix.lower() != ".pdf": continue
@@ -5481,8 +5592,36 @@ def _auto_download(job_id, gstin, client_name,
                                 with jobs_lock:
                                     if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
                             else:
-                                triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
-                                save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
+                                # ── CDP printToPDF fallback ────────────────────────────
+                                log(f"  [{month_name}] No PDF in 30s — trying CDP printToPDF", "warn")
+                                try:
+                                    pdf_data = driver.execute_cdp_cmd("Page.printToPDF", {
+                                        "printBackground": True, "landscape": False,
+                                        "scale": 0.92, "paperWidth": 8.27, "paperHeight": 11.69,
+                                        "marginTop": 0.40, "marginBottom": 0.40,
+                                        "marginLeft": 0.40, "marginRight": 0.40,
+                                        "displayHeaderFooter": False,
+                                    })
+                                    import base64 as _b64
+                                    pdf_bytes = _b64.b64decode(pdf_data.get("data", ""))
+                                    cdp_dest = dl_dir / save_name
+                                    if pdf_bytes and len(pdf_bytes) > 5000:
+                                        cdp_dest.write_bytes(pdf_bytes)
+                                        try: _shutil.copy2(str(cdp_dest), str(out_dir / save_name))
+                                        except: pass
+                                        sz = len(pdf_bytes) // 1024
+                                        downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                                        with jobs_lock:
+                                            if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+                                        triggered[f"{key}_GSTR3B"] = "OK"
+                                        log(f"  ✅ [{month_name}] PDF via CDP ✓ ({sz} KB)", "ok")
+                                    else:
+                                        triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                                        save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
+                                except Exception as _cdpe:
+                                    log(f"  CDP error: {_cdpe}", "warn")
+                                    triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                                    save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
                         else:
                             triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
                             save_failure_screenshot(f"GSTR3B {month_name} {year} — Tile Not Found on Dashboard")
@@ -8203,7 +8342,7 @@ def api_gstr1_tally_download(job_id, fname):
 def api_engines():
     """Return availability of all required engine scripts."""
     engines = {
-        "gst_suite":        ("gst_suite_final.py",           "gst_suite_v31.py"),
+        "gst_suite":        ("gst_suite_final.py",           "gst_suite_v32.py"),
         "gstr1_extract":    ("gstr1_extract.py",              "gstr1_fy_v5.py"),
         "it_recon_engine":  ("it_recon_engine.py",            "it_recon_engine.py"),
         "it_suite":         ("it_suite.py",                   "it_suite_v6.py"),
@@ -8239,7 +8378,7 @@ if __name__ == "__main__":
     print(f"   Feedback file : {FEEDBACK_FILE}")
     print()
     _engines = [
-        ("GST Suite (v31)     ", "gst_suite_final.py"),
+        ("GST Suite (v32)     ", "gst_suite_final.py"),
         ("GSTR-1 Extract (v5) ", "gstr1_extract.py"),
         ("IT Recon Engine     ", "it_recon_engine.py"),
         ("IT Suite (v6)       ", "it_suite.py"),
