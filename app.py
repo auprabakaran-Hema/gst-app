@@ -5713,9 +5713,9 @@ def _auto_download(job_id, gstin, client_name,
                         try:
                             driver.switch_to.window(tab)
                             qtr = QUARTER_MAP_LOCAL.get(month_name, "")
-                            # ONLINE FIX: Angular takes 15-25s on server (5s was too short)
-                            # Poll up to 30s for selects, then retry JS up to 3x if mon=false
-                            _sel_deadline = time.time() + 30
+                            # ONLINE FIX: Angular takes 10-20s on server
+                            # Poll up to 20s for selects, then retry JS up to 3x if mon=false
+                            _sel_deadline = time.time() + 20
                             while time.time() < _sel_deadline:
                                 if len(driver.find_elements(By.TAG_NAME, "select")) >= 2:
                                     break
@@ -5792,8 +5792,8 @@ def _auto_download(job_id, gstin, client_name,
                     # ── Phase C: Poll all tabs for tile load ──────────────────
                     log(f"    Waiting for all {len(tab_map)} tabs to load tiles...")
                     tab_ready = set()
-                    # ONLINE FIX: Angular renders tiles in 5-15s on server (was 20s — not enough)
-                    deadline_tiles = time.time() + 45
+                    # ONLINE FIX: Angular renders tiles in 5-15s on server
+                    deadline_tiles = time.time() + 25
                     while time.time() < deadline_tiles and len(tab_ready) < len(tab_map):
                         for tab in list(tab_map.keys()):
                             if tab in tab_ready: continue
@@ -5808,6 +5808,15 @@ def _auto_download(job_id, gstin, client_name,
                     log(f"    {len(tab_ready)}/{len(tab_map)} tabs tiles ready ✓")
 
                     # ── Phase D: Download one tab at a time (sequential, reliable) ─
+                    # BUG FIX (online): On the server, Angular's portal can lose the
+                    # period dropdown selection between Phase B and Phase D — especially
+                    # for Q2/Q3/Q4 months — because the page re-renders asynchronously.
+                    # If we trust Phase B and just click DOWNLOAD, the portal serves
+                    # whichever period happens to be active (often the last-set one,
+                    # e.g. June), so ALL months download the same wrong PDF.
+                    # FIX: In Phase D, always re-verify the active period on each tab.
+                    # If the displayed period does not match the target month, re-run
+                    # the JS setter + SEARCH before clicking DOWNLOAD.
                     log(f"    Phase D: downloading one tab at a time (sequential)...")
                     for tab, (month_name, month_num, year, save_name) in list(tab_map.items()):
                         key = f"{month_name}_{year}"
@@ -5815,18 +5824,60 @@ def _auto_download(job_id, gstin, client_name,
                         current_tile[0]  = "GSTR3B"
                         try:
                             driver.switch_to.window(tab)
-                            # SPEED FIX: Only call _select_and_search if tiles are NOT
-                            # already visible. Phase B already searched on this tab —
-                            # if the tile is there, skip the redundant navigation.
+                            qtr_d = QUARTER_MAP_LOCAL.get(month_name, "")
+
+                            # ── Verify active period matches target month ──────
+                            # Read the currently selected value in the period dropdown.
+                            # If it doesn't match, re-set all dropdowns + SEARCH.
+                            import json as _json
+                            _JS_VERIFY_PERIOD = """
+                            var month_val = arguments[0];
+                            var selects = Array.from(document.querySelectorAll('select'));
+                            // Find the period dropdown: the one whose options include target month
+                            var mval = month_val.toLowerCase();
+                            for (var s=0; s<selects.length; s++) {
+                                var texts = Array.from(selects[s].options).map(function(o){return o.text.trim().toLowerCase();});
+                                if (texts.indexOf(mval) !== -1 || texts.some(function(t){return t===mval;})) {
+                                    var cur = (selects[s].options[selects[s].selectedIndex]||{}).text || '';
+                                    return cur.trim().toLowerCase();
+                                }
+                            }
+                            // Fallback: return ALL selected values joined
+                            return selects.map(function(s){
+                                return (s.options[s.selectedIndex]||{}).text||'';
+                            }).join('|').toLowerCase();
+                            """
+                            try:
+                                _verified_period = driver.execute_script(_JS_VERIFY_PERIOD, month_name)
+                            except Exception:
+                                _verified_period = ""
+
+                            _period_ok = month_name.lower() in (_verified_period or "").lower()
+
                             try:
                                 body_text = driver.find_element(By.TAG_NAME, "body").text
                                 _tiles_present = any(kw in body_text for kw in ["GSTR-3B","GSTR3B","VIEW GSTR","DOWNLOAD"])
                             except Exception:
+                                body_text = ""
                                 _tiles_present = False
-                            if not _tiles_present:
+
+                            if not _tiles_present or not _period_ok:
+                                # Period lost or tiles gone — re-set and re-search
+                                if not _period_ok:
+                                    log(f"    [{month_name}] Period mismatch (got: '{_verified_period}') — re-setting dropdowns", "warn")
                                 _select_and_search(month_name)
+                                # Wait up to 15s for tiles to reappear
+                                _tile_deadline2 = time.time() + 15
+                                while time.time() < _tile_deadline2:
+                                    try:
+                                        _bt2 = driver.find_element(By.TAG_NAME, "body").text
+                                        if any(kw in _bt2 for kw in ["GSTR-3B","GSTR3B","VIEW GSTR","DOWNLOAD"]):
+                                            break
+                                    except Exception:
+                                        pass
+                                    time.sleep(0.5)
                             else:
-                                log(f"    Setting: FY={fy}  Quarter={QUARTER_MAP_LOCAL.get(month_name,'')}  Period={month_name}")
+                                log(f"    Setting: FY={fy}  Quarter={qtr_d}  Period={month_name}")
                                 log(f"    Tiles already loaded — skipping re-search ✓")
                                 log(f"    SEARCH fired ✓")
                                 log(f"    Tiles loaded after SEARCH ✓")
