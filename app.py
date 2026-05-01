@@ -4997,12 +4997,16 @@ def _auto_download(job_id, gstin, client_name,
                 } else if (!result.qtr && joined.includes('quarter')) {
                     var q = qtr_val.substring(0,7).toLowerCase();
                     result.qtr = setSelect(sel, function(t){return t.toLowerCase().indexOf(q) !== -1;});
-                } else if (!result.mon && (joined.includes('april') || joined.includes('january') ||
-                                           joined.includes('october') || joined.includes('july'))) {
+                } else if (!result.mon && joined.includes(month_val.toLowerCase())) {
+                    // FIX: detect period dropdown by checking it contains the TARGET month
                     var m = month_val.toLowerCase();
                     result.mon = setSelect(sel, function(t){
                         return t.toLowerCase() === m || t.toLowerCase().indexOf(m) !== -1;
                     });
+                } else if (!result.mon) {
+                    // Fallback: try any remaining select for exact month match
+                    var mfb = month_val.toLowerCase();
+                    result.mon = setSelect(sel, function(t){ return t.toLowerCase() === mfb; });
                 }
             }
 
@@ -5015,14 +5019,62 @@ def _auto_download(job_id, gstin, client_name,
             return JSON.stringify(result);
         """, fy, qtr, month_name)
 
-        log(f"  FY: {fy} ✓")
-        log(f"  Quarter: {qtr} ✓")
-        log(f"  Period: {month_name} ✓")
-        log(f"  SEARCH fired ✓")
-
-        # Wait for tiles to appear — short 8s max (was 15s)
+        # FIX: if mon=false, quarter was set but period dropdown not re-rendered yet (Angular async)
+        # Wait 1.5s and set month in a dedicated second call before firing SEARCH
         try:
-            WebDriverWait(driver, 8).until(
+            import json as _json_ss
+            _r_ss = _json_ss.loads(_res)
+        except Exception:
+            _r_ss = {}
+        if not _r_ss.get("mon"):
+            time.sleep(1.5)   # wait for Angular to re-render period dropdown after quarter change
+            _res2 = driver.execute_script("""
+                var month_val = arguments[0];
+                var mval = month_val.toLowerCase();
+                var selects = Array.from(document.querySelectorAll('select'));
+                var mon_set = false;
+                function setSelect(sel, matchFn) {
+                    var opts = Array.from(sel.options);
+                    for (var i=0;i<opts.length;i++) {
+                        if (matchFn(opts[i].text.trim())) {
+                            sel.value=opts[i].value;
+                            sel.dispatchEvent(new Event('change',{bubbles:true}));
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                for (var s=0;s<selects.length;s++) {
+                    var texts=Array.from(selects[s].options).map(function(o){return o.text.trim();});
+                    var joined=texts.join('|').toLowerCase();
+                    if (joined.includes(mval)) {
+                        mon_set = setSelect(selects[s], function(t){
+                            return t.toLowerCase()===mval||t.toLowerCase().indexOf(mval)!==-1;
+                        });
+                        if (mon_set) break;
+                    }
+                }
+                if (!mon_set) {
+                    for (var s2=0;s2<selects.length;s2++) {
+                        mon_set=setSelect(selects[s2],function(t){return t.toLowerCase()===mval;});
+                        if (mon_set) break;
+                    }
+                }
+                var btns=document.querySelectorAll('button,input[type=submit]');
+                for (var b=0;b<btns.length;b++) {
+                    if ((btns[b].innerText||btns[b].value||'').toUpperCase().includes('SEARCH')) {
+                        btns[b].click(); break;
+                    }
+                }
+                return mon_set;
+            """, month_name)
+            log(f"  Period retry: {month_name} mon_set={_res2}")
+
+        log(f"  FY: {fy} ✓  Quarter: {qtr} ✓  Period: {month_name} ✓  SEARCH fired ✓")
+
+        # Wait for tiles to appear — 10s max
+        try:
+            WebDriverWait(driver, 10).until(
                 lambda d: any(kw in d.find_element(By.TAG_NAME, "body").text
                               for kw in ["GSTR-3B", "GSTR3B", "DOWNLOAD", "VIEW"]))
         except Exception:
@@ -5632,11 +5684,19 @@ def _auto_download(job_id, gstin, client_name,
                             result.qtr = setSelect(sel, function(t){
                                 return t.toLowerCase().indexOf(qtr_val.substring(0,7).toLowerCase()) !== -1;
                             });
-                        } else if (!result.mon && (joined.includes('april') || joined.includes('january') ||
-                                                   joined.includes('october') || joined.includes('july'))) {
+                        } else if (!result.mon && joined.includes(month_val.toLowerCase())) {
+                            // FIX: detect period dropdown by checking it contains the TARGET month
+                            // Old code checked for 'april'/'january' only — failed for Q2/Q3/Q4
+                            // because those tabs only show their own quarter's months.
                             result.mon = setSelect(sel, function(t){
                                 return t.toLowerCase() === month_val.toLowerCase() ||
                                        t.toLowerCase().indexOf(month_val.toLowerCase()) !== -1;
+                            });
+                        } else if (!result.mon) {
+                            // Fallback: try any select that isn't FY or Quarter
+                            var mval = month_val.toLowerCase();
+                            result.mon = setSelect(sel, function(t){
+                                return t.toLowerCase() === mval;
                             });
                         }
                     }
@@ -5661,17 +5721,68 @@ def _auto_download(job_id, gstin, client_name,
                                     break
                                 time.sleep(0.5)
                             # Set all dropdowns + fire SEARCH — retry if month not set
+                            # FIX: Portal re-renders period dropdown after quarter change (Angular async).
+                            # Strategy: first set FY+Quarter, wait for Angular re-render,
+                            # then set month + SEARCH in a second targeted call.
+                            import json as _json
+                            _JS_SET_MONTH_SEARCH = """
+                            var month_val = arguments[0];
+                            var selects = Array.from(document.querySelectorAll('select'));
+                            var result = {mon:false, search:false};
+                            function setSelect(sel, matchFn) {
+                                var opts = Array.from(sel.options);
+                                for (var i=0;i<opts.length;i++) {
+                                    if (matchFn(opts[i].text.trim())) {
+                                        sel.value = opts[i].value;
+                                        sel.dispatchEvent(new Event('change',{bubbles:true}));
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            }
+                            var mval = month_val.toLowerCase();
+                            for (var s=0;s<selects.length;s++) {
+                                var texts = Array.from(selects[s].options).map(function(o){return o.text.trim();});
+                                var joined = texts.join('|').toLowerCase();
+                                if (!result.mon && joined.includes(mval)) {
+                                    result.mon = setSelect(selects[s], function(t){
+                                        return t.toLowerCase() === mval || t.toLowerCase().indexOf(mval) !== -1;
+                                    });
+                                }
+                            }
+                            if (!result.mon) {
+                                for (var s2=0;s2<selects.length;s2++) {
+                                    result.mon = setSelect(selects[s2], function(t){return t.toLowerCase()===mval;});
+                                    if (result.mon) break;
+                                }
+                            }
+                            var btns=document.querySelectorAll('button,input[type=submit]');
+                            for (var b=0;b<btns.length;b++) {
+                                if ((btns[b].innerText||btns[b].value||'').toUpperCase().includes('SEARCH')) {
+                                    btns[b].click(); result.search=true; break;
+                                }
+                            }
+                            return JSON.stringify(result);
+                            """
                             _res = None
                             for _attempt in range(3):
                                 _res = driver.execute_script(_JS_SET_DROPDOWNS, fy, qtr, month_name)
-                                import json as _json
                                 try:
                                     _r = _json.loads(_res)
-                                    if _r.get("mon") or _r.get("fy"):
+                                    if _r.get('mon'):
                                         break
-                                    # Month dropdown not found — wait 2s for Angular re-render
+                                    # mon=false: quarter was set but period dropdown not yet re-rendered
+                                    # Wait for Angular to update the period dropdown, then set month separately
+                                    time.sleep(1.5)
+                                    _res2 = driver.execute_script(_JS_SET_MONTH_SEARCH, month_name)
+                                    try:
+                                        _r2 = _json.loads(_res2)
+                                        if _r2.get('mon'):
+                                            _r['mon'] = True; _res = _json.dumps(_r)
+                                            break
+                                    except Exception: pass
                                     if _attempt < 2:
-                                        time.sleep(2)
+                                        time.sleep(1)
                                 except Exception:
                                     break
                             log(f"    ✓ Tab month set: {month_name} ({_res})")
