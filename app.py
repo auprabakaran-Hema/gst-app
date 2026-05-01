@@ -4957,12 +4957,12 @@ def _auto_download(job_id, gstin, client_name,
         Also uses a 5s max poll instead of 12s WebDriverWait."""
         log(f"  Setting: FY={fy}  Quarter={QUARTER_MAP_LOCAL.get(month_name,'')}  Period={month_name}")
 
-        # Short poll for selects — max 5s (Angular typically renders in 1-3s)
+        # ONLINE FIX: Angular takes 15-25s on server — poll up to 30s for selects
         _t0 = time.time()
-        while time.time() - _t0 < 5:
+        while time.time() - _t0 < 30:
             if len(driver.find_elements(By.TAG_NAME, "select")) >= 2:
                 break
-            time.sleep(0.3)
+            time.sleep(0.5)
 
         qtr = QUARTER_MAP_LOCAL.get(month_name, "")
         _res = driver.execute_script("""
@@ -5104,9 +5104,10 @@ def _auto_download(job_id, gstin, client_name,
                                     "and not(contains(translate(normalize-space(.),'view gstr3b','VIEW GSTR3B'),'VIEW GSTR3B'))]")
                                 for btn in btns:
                                     if btn.is_displayed():
-                                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-                                        time.sleep(0.2)
-                                        driver.execute_script("arguments[0].click();", btn)
+                                        # FIX: JS scroll+click in one shot — no sleep needed
+                                        driver.execute_script(
+                                            "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
+                                            btn)
                                         log(f"  ✅ GSTR3B DOWNLOAD clicked (Strategy A, level {level})", "ok")
                                         return True
                             except: break
@@ -5164,9 +5165,9 @@ def _auto_download(job_id, gstin, client_name,
                                 "and (self::button or self::a)]")
                             for btn in btns:
                                 if btn.is_displayed():
-                                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-                                    time.sleep(0.2)
-                                    driver.execute_script("arguments[0].click();", btn)
+                                    driver.execute_script(
+                                        "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
+                                        btn)
                                     log(f"  ✅ GSTR3B DOWNLOAD clicked (Strategy C VIEW-anchor)", "ok")
                                     return True
                         except: break
@@ -5242,13 +5243,25 @@ def _auto_download(job_id, gstin, client_name,
         if not files: return None
         return max(files, key=lambda f: f.stat().st_mtime)
 
-    def _rename_latest(save_name, extensions):
+    def _rename_latest(save_name, extensions, specific_file=None):
+        """Rename a downloaded file to save_name.
+        BUG FIX: pass specific_file (the exact file detected in poll loop) to avoid
+        renaming the wrong file when multiple PDFs exist in dl_dir.
+        Falls back to latest-by-mtime only when specific_file is not given.
+        Also fixes silent-succeed bug: if dest already exists with same content, overwrite it.
+        """
         try:
-            f = _get_latest_file(extensions)
+            f = specific_file if specific_file and specific_file.exists() else _get_latest_file(extensions)
             if f:
                 dest = dl_dir / save_name
+                # BUG FIX: old code skipped rename if dest existed → left wrong file in place.
+                # Now: if dest already exists AND is a different file, overwrite it.
+                if dest.exists() and dest.resolve() != f.resolve():
+                    dest.unlink()
                 if not dest.exists():
                     f.rename(dest)
+                elif dest.resolve() == f.resolve():
+                    pass  # already correctly named
                 log(f"  ✅ Saved: {save_name}", "ok")
                 return True
         except Exception as e:
@@ -5610,13 +5623,17 @@ def _auto_download(job_id, gstin, client_name,
                         var texts = Array.from(sel.options).map(function(o){return o.text.trim();});
                         var joined = texts.join('|').toLowerCase();
 
-                        if (!result.fy && joined.includes(fy_val.toLowerCase().substring(0,4))) {
+                        // FIX: detect FY dropdown by presence of hyphenated year (e.g. "2025-26")
+                        // not just first 4 chars — avoids false match with quarter dropdown
+                        var fyPattern = fy_val.substring(0,4) + "-";
+                        if (!result.fy && joined.includes(fyPattern) && !joined.includes('quarter')) {
                             result.fy = setSelect(sel, function(t){return t.indexOf(fy_val) !== -1;});
                         } else if (!result.qtr && joined.includes('quarter')) {
                             result.qtr = setSelect(sel, function(t){
                                 return t.toLowerCase().indexOf(qtr_val.substring(0,7).toLowerCase()) !== -1;
                             });
-                        } else if (!result.mon && (joined.includes('april') || joined.includes('january'))) {
+                        } else if (!result.mon && (joined.includes('april') || joined.includes('january') ||
+                                                   joined.includes('october') || joined.includes('july'))) {
                             result.mon = setSelect(sel, function(t){
                                 return t.toLowerCase() === month_val.toLowerCase() ||
                                        t.toLowerCase().indexOf(month_val.toLowerCase()) !== -1;
@@ -5636,14 +5653,27 @@ def _auto_download(job_id, gstin, client_name,
                         try:
                             driver.switch_to.window(tab)
                             qtr = QUARTER_MAP_LOCAL.get(month_name, "")
-                            # Wait for Angular to render selects — short poll (max 5s)
-                            _sel_deadline = time.time() + 5
+                            # ONLINE FIX: Angular takes 15-25s on server (5s was too short)
+                            # Poll up to 30s for selects, then retry JS up to 3x if mon=false
+                            _sel_deadline = time.time() + 30
                             while time.time() < _sel_deadline:
                                 if len(driver.find_elements(By.TAG_NAME, "select")) >= 2:
                                     break
-                                time.sleep(0.3)
-                            # Set all dropdowns + fire SEARCH in one JS call
-                            _res = driver.execute_script(_JS_SET_DROPDOWNS, fy, qtr, month_name)
+                                time.sleep(0.5)
+                            # Set all dropdowns + fire SEARCH — retry if month not set
+                            _res = None
+                            for _attempt in range(3):
+                                _res = driver.execute_script(_JS_SET_DROPDOWNS, fy, qtr, month_name)
+                                import json as _json
+                                try:
+                                    _r = _json.loads(_res)
+                                    if _r.get("mon") or _r.get("fy"):
+                                        break
+                                    # Month dropdown not found — wait 2s for Angular re-render
+                                    if _attempt < 2:
+                                        time.sleep(2)
+                                except Exception:
+                                    break
                             log(f"    ✓ Tab month set: {month_name} ({_res})")
                         except Exception as _se:
                             log(f"    Tab setup failed {month_name}: {_se}", "warn")
@@ -5651,7 +5681,8 @@ def _auto_download(job_id, gstin, client_name,
                     # ── Phase C: Poll all tabs for tile load ──────────────────
                     log(f"    Waiting for all {len(tab_map)} tabs to load tiles...")
                     tab_ready = set()
-                    deadline_tiles = time.time() + 20
+                    # ONLINE FIX: Angular renders tiles in 5-15s on server (was 20s — not enough)
+                    deadline_tiles = time.time() + 45
                     while time.time() < deadline_tiles and len(tab_ready) < len(tab_map):
                         for tab in list(tab_map.keys()):
                             if tab in tab_ready: continue
@@ -5688,12 +5719,20 @@ def _auto_download(job_id, gstin, client_name,
                                 log(f"    Tiles already loaded — skipping re-search ✓")
                                 log(f"    SEARCH fired ✓")
                                 log(f"    Tiles loaded after SEARCH ✓")
+                            # BUG FIX: snapshot tracks ALL existing PDFs in dl_dir
+                            # INCLUDING any leftover files from previous months.
+                            # Poll loop then only accepts files NOT in this snapshot.
                             snap_before = {
                                 str(f): f.stat().st_mtime
                                 for f in dl_dir.iterdir()
                                 if f.suffix.lower() == ".pdf"
                                 and not f.name.endswith((".crdownload",".tmp",".part"))
                             }
+                            # Also mark the target save_name as "already exists" even if
+                            # it was written by a previous month (e.g. CDP wrote wrong file)
+                            _snap_target = dl_dir / save_name
+                            if _snap_target.exists():
+                                snap_before[str(_snap_target)] = _snap_target.stat().st_mtime
                             if not _click_tile_download("GSTR3B"):
                                 triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
                                 save_failure_screenshot(f"GSTR3B {month_name} — Tile not found")
@@ -5756,7 +5795,7 @@ def _auto_download(job_id, gstin, client_name,
                                         got_pdf = f; break
                                 if got_pdf: break
 
-                            if got_pdf and _rename_latest(save_name, [".pdf"]):
+                            if got_pdf and _rename_latest(save_name, [".pdf"], specific_file=got_pdf):
                                 triggered[f"{key}_GSTR3B"] = "OK"
                                 src_f = dl_dir / save_name
                                 sz = src_f.stat().st_size // 1024
@@ -5766,36 +5805,116 @@ def _auto_download(job_id, gstin, client_name,
                                 with jobs_lock:
                                     if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
                             else:
-                                # CDP printToPDF fallback
-                                log(f"  [{month_name}] No PDF in 30s — trying CDP printToPDF", "warn")
+                                # CDP printToPDF fallback — ONLY if current page is the actual
+                                # GSTR-3B return form, NOT the portal dashboard/UI.
+                                # BUG FIX: old code captured portal dashboard screenshot as PDF.
+                                log(f"  [{month_name}] No PDF in 30s — checking page before CDP", "warn")
                                 try:
-                                    pdf_data = driver.execute_cdp_cmd("Page.printToPDF", {
-                                        "printBackground": True, "landscape": False,
-                                        "scale": 0.92, "paperWidth": 8.27, "paperHeight": 11.69,
-                                        "marginTop": 0.40, "marginBottom": 0.40,
-                                        "marginLeft": 0.40, "marginRight": 0.40,
-                                        "displayHeaderFooter": False,
-                                    })
-                                    import base64 as _b64
-                                    pdf_bytes = _b64.b64decode(pdf_data.get("data", ""))
-                                    cdp_dest = dl_dir / save_name
-                                    if pdf_bytes and len(pdf_bytes) > 5000:
-                                        cdp_dest.write_bytes(pdf_bytes)
-                                        try: _shutil.copy2(str(cdp_dest), str(out_dir / save_name))
-                                        except: pass
-                                        sz = len(pdf_bytes) // 1024
-                                        downloaded.append({"name": save_name, "size": f"{sz} KB"})
-                                        with jobs_lock:
-                                            if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
-                                        triggered[f"{key}_GSTR3B"] = "OK"
-                                        log(f"  ✅ [{month_name}] PDF via CDP ✓ ({sz} KB)", "ok")
-                                    else:
+                                    _cur_body = driver.find_element(By.TAG_NAME, "body").text
+                                    _is_3b_form = (
+                                        "Form GSTR-3B" in _cur_body or
+                                        "3.1 Details of Outward" in _cur_body or
+                                        "Eligible ITC" in _cur_body or
+                                        "Payment of tax" in _cur_body
+                                    )
+                                    _is_portal_ui = (
+                                        "Returns Dashboard" in _cur_body or
+                                        "File Returns" in _cur_body or
+                                        "GSTR-1" in _cur_body and "GSTR-3B" in _cur_body and "DOWNLOAD" in _cur_body
+                                    )
+                                except Exception:
+                                    _is_3b_form = False
+                                    _is_portal_ui = True
+
+                                if _is_portal_ui and not _is_3b_form:
+                                    # We are still on dashboard — DOWNLOAD click failed silently.
+                                    # Re-search and retry DOWNLOAD once more before giving up.
+                                    log(f"  [{month_name}] Still on dashboard — retrying DOWNLOAD click", "warn")
+                                    try:
+                                        _select_and_search(month_name)
+                                        time.sleep(1)
+                                        _retry_clicked = _click_tile_download("GSTR3B")
+                                        if _retry_clicked:
+                                            # Poll 30 more seconds for PDF
+                                            got_pdf_retry = None
+                                            snap_retry = {
+                                                str(f): f.stat().st_mtime
+                                                for f in dl_dir.iterdir()
+                                                if f.suffix.lower() == ".pdf"
+                                                and not f.name.endswith((".crdownload",".tmp",".part"))
+                                            }
+                                            for _rw in range(60):
+                                                time.sleep(0.5)
+                                                for f in dl_dir.iterdir():
+                                                    if f.suffix.lower() != ".pdf": continue
+                                                    if f.name.endswith((".crdownload",".tmp",".part")): continue
+                                                    prev = snap_retry.get(str(f))
+                                                    if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 1000:
+                                                        time.sleep(0.3)
+                                                        got_pdf_retry = f; break
+                                                if got_pdf_retry: break
+                                            if got_pdf_retry and _rename_latest(save_name, [".pdf"], specific_file=got_pdf_retry):
+                                                triggered[f"{key}_GSTR3B"] = "OK"
+                                                src_f = dl_dir / save_name
+                                                sz = src_f.stat().st_size // 1024
+                                                try: _shutil.copy2(str(src_f), str(out_dir / save_name))
+                                                except: pass
+                                                downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                                                with jobs_lock:
+                                                    if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+                                                log(f"  ✅ [{month_name}] PDF saved on retry ✓ ({sz} KB)", "ok")
+                                            else:
+                                                triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                                                save_failure_screenshot(f"GSTR3B {month_name} — Retry also failed")
+                                                log(f"  ⚠ [{month_name}] Retry failed — marking NOT_FOUND", "warn")
+                                        else:
+                                            triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                                            save_failure_screenshot(f"GSTR3B {month_name} — DOWNLOAD not found on retry")
+                                    except Exception as _re:
+                                        log(f"  Retry error [{month_name}]: {_re}", "warn")
                                         triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
-                                        save_failure_screenshot(f"GSTR3B {month_name} — File Not Found")
-                                except Exception as _cdpe:
-                                    log(f"  CDP error: {_cdpe}", "warn")
+
+                                elif _is_3b_form:
+                                    # Page IS the actual GSTR-3B form — safe to CDP print
+                                    log(f"  [{month_name}] GSTR-3B form detected — CDP printToPDF", "warn")
+                                    try:
+                                        pdf_data = driver.execute_cdp_cmd("Page.printToPDF", {
+                                            "printBackground": True, "landscape": False,
+                                            "scale": 0.92, "paperWidth": 8.27, "paperHeight": 11.69,
+                                            "marginTop": 0.40, "marginBottom": 0.40,
+                                            "marginLeft": 0.40, "marginRight": 0.40,
+                                            "displayHeaderFooter": False,
+                                        })
+                                        import base64 as _b64
+                                        pdf_bytes = _b64.b64decode(pdf_data.get("data", ""))
+                                        cdp_dest = dl_dir / save_name
+                                        if pdf_bytes and len(pdf_bytes) > 5000:
+                                            cdp_dest.write_bytes(pdf_bytes)
+                                            try: _shutil.copy2(str(cdp_dest), str(out_dir / save_name))
+                                            except: pass
+                                            # BUG FIX: delete CDP file from dl_dir right after
+                                            # copying — prevents next month poll picking it up
+                                            # as "latest PDF" and renaming it wrongly.
+                                            try:
+                                                if cdp_dest.exists(): cdp_dest.unlink()
+                                            except: pass
+                                            sz = len(pdf_bytes) // 1024
+                                            downloaded.append({"name": save_name, "size": f"{sz} KB"})
+                                            with jobs_lock:
+                                                if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
+                                            triggered[f"{key}_GSTR3B"] = "OK"
+                                            log(f"  ✅ [{month_name}] PDF via CDP ✓ ({sz} KB)", "ok")
+                                        else:
+                                            triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                                            save_failure_screenshot(f"GSTR3B {month_name} — CDP empty")
+                                    except Exception as _cdpe:
+                                        log(f"  CDP error: {_cdpe}", "warn")
+                                        triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
+                                        save_failure_screenshot(f"GSTR3B {month_name} — CDP failed")
+                                else:
                                     triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
-                                    save_failure_screenshot(f"GSTR3B {month_name} — CDP failed")
+                                    save_failure_screenshot(f"GSTR3B {month_name} — Unknown page state")
+                                    log(f"  ⚠ [{month_name}] Unknown page — cannot PDF", "warn")
 
                         except Exception as e:
                             log(f"  GSTR3B error [{month_name}]: {e}", "warn")
