@@ -4769,7 +4769,7 @@ def _auto_download(job_id, gstin, client_name,
         if not filled:
             raise RuntimeError("Cannot find username field on GST portal login page")
 
-        time.sleep(2)
+        time.sleep(0.5)   # v_SPEED: was 2s — brief settle before password
         log("  Filling password...")
         filled = False
         for by, val in [
@@ -4782,7 +4782,7 @@ def _auto_download(job_id, gstin, client_name,
         if not filled:
             raise RuntimeError("Cannot find password field on GST portal login page")
 
-        time.sleep(2)
+        time.sleep(0.5)   # v_SPEED: was 2s
 
         # Show CAPTCHA screenshot to user
         log("📸 Taking CAPTCHA screenshot — please type the CAPTCHA in the box below...")
@@ -4814,7 +4814,7 @@ def _auto_download(job_id, gstin, client_name,
             # Give user 30 seconds to fill it manually
             time.sleep(30)
 
-        time.sleep(2)
+        time.sleep(0.3)   # v_SPEED: was 2s — brief settle before LOGIN click
 
         # Click LOGIN button
         log("  Clicking LOGIN button...")
@@ -4889,7 +4889,7 @@ def _auto_download(job_id, gstin, client_name,
                     "//a[normalize-space(text())='Services']",
                     "//nav//a[normalize-space()='Services']",
                 ])
-            time.sleep(2)
+            time.sleep(0.5)   # v_SPEED: was 2s
 
             # Step 2: Click Returns in dropdown (hover first to keep dropdown open)
             try:
@@ -4903,7 +4903,7 @@ def _auto_download(job_id, gstin, client_name,
                     "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
                     "//*[contains(@class,'open')]//a[normalize-space()='Returns']",
                 ])
-            time.sleep(2)
+            time.sleep(0.5)   # v_SPEED: was 2s
 
             # Step 3: Click Returns Dashboard — XPath first, then full page scan
             clicked = _try_click([
@@ -4926,7 +4926,7 @@ def _auto_download(job_id, gstin, client_name,
                               or "accessdenied" in d.current_url.lower()
                               or "login" in d.current_url.lower())
             except Exception:
-                time.sleep(2)
+                time.sleep(1)   # v_SPEED: was 2s
 
             final = driver.current_url
             log(f"  URL after nav attempt {attempt+1}: {final}")
@@ -5034,7 +5034,7 @@ def _auto_download(job_id, gstin, client_name,
                 lambda d: any(kw in d.find_element(By.TAG_NAME, "body").text
                               for kw in ["GSTR-3B", "GSTR3B", "DOWNLOAD", "VIEW"]))
         except Exception:
-            time.sleep(2)
+            time.sleep(1)   # v_SPEED: was 2s
         log(f"  Tiles loaded after SEARCH ✓")
 
     def _click_tile_download(tile_name):
@@ -5323,9 +5323,9 @@ def _auto_download(job_id, gstin, client_name,
                                 log(f"  Download link found: '{txt}'")
                                 log(f"  Downloading: {save_name}")
                                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-                                time.sleep(0.5)
+                                time.sleep(0.3)   # v_SPEED: was 0.5
                                 driver.execute_script("arguments[0].click();", el)
-                                time.sleep(3)   # was 8
+                                time.sleep(1)   # v_SPEED: was 3s — brief flush then poll
                                 if _rename_latest(save_name, dl_extensions):
                                     return True
                 except: continue
@@ -5349,14 +5349,14 @@ def _auto_download(job_id, gstin, client_name,
                 log(f"  Still waiting... ({elapsed}s) — refreshing page")
                 try:
                     driver.refresh()
-                    time.sleep(4)
+                    time.sleep(2)   # v_SPEED: was 4s
                     if _is_session_lost():
                         log("  Session lost during wait — re-logging in...", "warn")
                         _do_login()
                         _go_to_dashboard()
                         _select_and_search(current_month[0])
                         _click_tile_download(current_tile[0])
-                        time.sleep(3)   # was 8
+                        time.sleep(1)   # v_SPEED: was 3s
                 except: pass
 
         log(f"  ⚠ No download link found for {save_name} after {max_wait}s", "warn")
@@ -5426,6 +5426,13 @@ def _auto_download(job_id, gstin, client_name,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
             "safebrowsing.enabled": True,
+            # ── SPEED FIX: Force PDF to save as file (not open in viewer) ──
+            # Without this GSTR-3B PDFs open in Chrome tab, never land on disk
+            "plugins.always_open_pdf_externally": True,
+            "download.open_pdf_in_system_reader": False,
+            # ── SPEED FIX: Pre-authorise "Download multiple files" popup ──
+            # Chrome shows Allow/Block popup for multi-tab downloads — this silences it
+            "profile.default_content_setting_values.automatic_downloads": 1,
         })
         # ── Speed flags for Render server (headless Chrome) ──────────────
         opts.add_argument("--disable-background-networking")
@@ -5456,6 +5463,14 @@ def _auto_download(job_id, gstin, client_name,
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
         })
+        # ── SPEED FIX: CDP download behaviour — PDF saves to dl_dir, no tab-open ──
+        try:
+            driver.execute_cdp_cmd("Page.setDownloadBehavior", {
+                "behavior": "allow",
+                "downloadPath": str(dl_dir)
+            })
+        except Exception:
+            pass
         log("✅ Headless Chrome started", "ok")
         prog(5)
 
@@ -5474,114 +5489,239 @@ def _auto_download(job_id, gstin, client_name,
 
         prog(15)
 
-        # ── Step 2: Phase 1 — GSTR-3B (immediate PDF) + trigger generators ─
+        # ── Step 2: Phase 1 — GSTR-3B (multi-tab batch) + trigger generators ─
+        # ══════════════════════════════════════════════════════════════════════
+        # SPEED FIX: Replace sequential GSTR-3B loop (one month at a time, full
+        # nav per month) with multi-tab batched download matching local gst_suite.
+        #
+        # LOCAL SCRIPT: Opens 6 tabs simultaneously → sets FY/Quarter/Period in
+        #   parallel (pure JS ~0.2s each) → polls all 6 tabs for tiles ready →
+        #   downloads one-by-one (sequential, reliable).  12 months = 2 batches.
+        #   Result: ~5 min for GSTR-3B only.
+        #
+        # OLD ONLINE:  navigate dashboard → select FY/Qtr/Period → wait for tiles
+        #   → click DOWNLOAD → wait for PDF.  Full nav per month = 12 navigations.
+        #   Each navigation: 2+2+2 s of fixed sleeps + tile wait = ~8s overhead.
+        #   Result: 12 × 8s = ~96s extra fixed sleep wasted just on navigation.
+        #
+        # NEW ONLINE:  Opens N tabs simultaneously from dashboard → sets month on
+        #   all tabs via fast JS → polls all tabs for tile load → downloads
+        #   one-at-a-time sequentially.  Same logic as local script, adapted for
+        #   headless Chrome / server environment.
+        # ══════════════════════════════════════════════════════════════════════
         triggered = {}
         total_months = len(MONTHS_LIST)
 
         log(f"\n📋 Phase 1 — Triggering file generation for {total_months} months...")
         log(f"   Returns: {', '.join(sorted(returns_set))}")
 
-        for idx, (month_name, month_num, year) in enumerate(MONTHS_LIST):
-            key = f"{month_name}_{year}"
-            current_month[0] = month_name
-            prog(15 + int(idx / total_months * 40))
+        # ── GSTR-3B: Multi-tab batched PDF download (matches local script) ──
+        if "GSTR3B" in returns_set:
+            BATCH_SIZE = 6
+            gstr3b_months = MONTHS_LIST  # all 12 months
 
-            # GSTR-3B: PDF direct download — single click, check if already exists
-            if "GSTR3B" in returns_set:
-                try:
-                    save_name = f"GSTR3B_{month_name}_{year}.pdf"
-                    # ── SINGLE-TRIGGER GUARD: skip if already downloaded ──
-                    if (dl_dir / save_name).exists() or (out_dir / save_name).exists():
-                        log(f"── {month_name} {year}: GSTR-3B already downloaded — skipping ✓", "ok")
-                        triggered[f"{key}_GSTR3B"] = "OK"
-                        existing = out_dir / save_name
-                        if not existing.exists():
-                            import shutil as _shutil2
-                            _shutil2.copy2(str(dl_dir / save_name), str(existing))
-                        if not any(f["name"] == save_name for f in downloaded):
-                            sz = existing.stat().st_size // 1024
+            # Skip already-downloaded months
+            pending_3b = []
+            for month_name, month_num, year in gstr3b_months:
+                save_name = f"GSTR3B_{month_name}_{year}.pdf"
+                key = f"{month_name}_{year}"
+                if (dl_dir / save_name).exists() or (out_dir / save_name).exists():
+                    log(f"  ✓ {month_name} {year}: GSTR-3B already downloaded — skip", "ok")
+                    triggered[f"{key}_GSTR3B"] = "OK"
+                    existing = out_dir / save_name
+                    if not existing.exists():
+                        try: _shutil.copy2(str(dl_dir / save_name), str(existing))
+                        except: pass
+                    if not any(f["name"] == save_name for f in downloaded):
+                        try:
+                            sz = (out_dir / save_name).stat().st_size // 1024
                             downloaded.append({"name": save_name, "size": f"{sz} KB"})
                             with jobs_lock:
                                 if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
-                    else:
-                        log(f"\n── {month_name} {year}: GSTR-3B ──")
-                        _go_to_dashboard()
-                        _select_and_search(month_name)
-                        current_tile[0] = "GSTR3B"
-                        if _click_tile_download("GSTR3B"):
-                            # ── v32 FIX: detect wrong-page landing ────────────────────
-                            # After click, if we land on /offlinedownload or gstr1 URL,
-                            # it means GSTR-1's DOWNLOAD was clicked accidentally.
-                            # Go back, re-search, retry with VIEW-anchor only.
-                            try:
-                                WebDriverWait(driver, 6).until(
-                                    lambda d: "dashboard" not in d.current_url.lower()
-                                    or any(f.suffix.lower() == ".pdf"
-                                           for f in dl_dir.iterdir()
-                                           if not f.name.endswith((".crdownload",".tmp",".part"))))
-                            except Exception: pass
+                        except: pass
+                else:
+                    pending_3b.append((month_name, month_num, year, save_name))
 
+            if pending_3b:
+                DASH_URL = "https://return.gst.gov.in/returns/auth/dashboard"
+                total_batches_3b = -(-len(pending_3b) // BATCH_SIZE)
+                log(f"\n  ══ GSTR-3B Multi-Tab Batch Download ══")
+                log(f"  Batches: {total_batches_3b} × {BATCH_SIZE} months")
+                log(f"  PDF downloads directly → no generate wait")
+
+                _go_to_dashboard()
+                main_win = driver.current_window_handle
+
+                for b_start in range(0, len(pending_3b), BATCH_SIZE):
+                    batch = pending_3b[b_start : b_start + BATCH_SIZE]
+                    batch_num = b_start // BATCH_SIZE + 1
+                    log(f"\n  ── Batch {batch_num}/{total_batches_3b}: {[m[0] for m in batch]} ──")
+
+                    # ── Phase A: Open all tabs simultaneously ────────────────
+                    tab_map = {}
+                    for month_name, month_num, year, save_name in batch:
+                        try:
+                            driver.execute_script("window.open(arguments[0]);", DASH_URL)
+                            time.sleep(0.25)
+                            new_tab = driver.window_handles[-1]
+                            tab_map[new_tab] = (month_name, month_num, year, save_name)
+                            log(f"    Opened tab: {month_name}")
+                            driver.switch_to.window(main_win)
+                        except Exception as _te:
+                            log(f"    Tab open failed {month_name}: {_te}", "warn")
+
+                    # ── Phase B: Set FY/Quarter/Period on all tabs (parallel JS) ─
+                    for tab, (month_name, month_num, year, save_name) in list(tab_map.items()):
+                        try:
+                            driver.switch_to.window(tab)
+                            # Wait for Angular dropdowns to load
+                            try:
+                                WebDriverWait(driver, 12).until(
+                                    lambda d: len(d.find_elements(By.TAG_NAME, "select")) >= 2)
+                            except Exception: time.sleep(1)
+                            # Set FY, Quarter, Period via Select
+                            qtr = QUARTER_MAP_LOCAL.get(month_name, "")
+                            for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+                                try:
+                                    s = Select(sel_el)
+                                    opts = [o.text.strip() for o in s.options]
+                                    if any("-" in o and len(o) <= 9 for o in opts):
+                                        for opt in s.options:
+                                            if fy in opt.text:
+                                                s.select_by_visible_text(opt.text); break
+                                        break
+                                except: continue
+                            time.sleep(0.2)
+                            for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+                                try:
+                                    s = Select(sel_el)
+                                    if any("quarter" in o.text.lower() for o in s.options if o.text.strip()):
+                                        for opt in s.options:
+                                            if qtr[:9].lower() in opt.text.lower():
+                                                s.select_by_visible_text(opt.text); break
+                                        break
+                                except: continue
+                            time.sleep(0.2)
+                            month_names_lower = ["january","february","march","april","may","june",
+                                                 "july","august","september","october","november","december"]
+                            for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+                                try:
+                                    s = Select(sel_el)
+                                    opts_text = " ".join(o.text.strip() for o in s.options)
+                                    if any(m in opts_text.lower() for m in month_names_lower):
+                                        for opt in s.options:
+                                            if month_name.lower() in opt.text.lower():
+                                                s.select_by_visible_text(opt.text); break
+                                        break
+                                except: continue
+                            # Fire SEARCH
+                            driver.execute_script("""
+                                var btns=document.querySelectorAll('button,input[type=submit]');
+                                for(var i=0;i<btns.length;i++){
+                                    if((btns[i].innerText||btns[i].value||'').toUpperCase().includes('SEARCH')){
+                                        btns[i].click(); break;
+                                    }
+                                }
+                            """)
+                            log(f"    ✓ Tab month set: {month_name}")
+                        except Exception as _se:
+                            log(f"    Tab setup failed {month_name}: {_se}", "warn")
+
+                    # ── Phase C: Poll all tabs for tile load ──────────────────
+                    log(f"    Waiting for all {len(tab_map)} tabs to load tiles...")
+                    tab_ready = set()
+                    deadline_tiles = time.time() + 20
+                    while time.time() < deadline_tiles and len(tab_ready) < len(tab_map):
+                        for tab in list(tab_map.keys()):
+                            if tab in tab_ready: continue
+                            try:
+                                driver.switch_to.window(tab)
+                                body_text = driver.find_element(By.TAG_NAME, "body").text
+                                if any(kw in body_text for kw in ["GSTR-3B","GSTR3B","DOWNLOAD","VIEW"]):
+                                    tab_ready.add(tab)
+                            except: pass
+                        if len(tab_ready) < len(tab_map):
+                            time.sleep(0.5)
+                    log(f"    {len(tab_ready)}/{len(tab_map)} tabs tiles ready ✓")
+
+                    # ── Phase D: Download one tab at a time (sequential, reliable) ─
+                    log(f"    Phase D: downloading one tab at a time (sequential)...")
+                    for tab, (month_name, month_num, year, save_name) in list(tab_map.items()):
+                        key = f"{month_name}_{year}"
+                        current_month[0] = month_name
+                        current_tile[0]  = "GSTR3B"
+                        try:
+                            driver.switch_to.window(tab)
+                            # Re-search to ensure tiles are fresh on this tab
+                            _select_and_search(month_name)
+                            snap_before = {
+                                str(f): f.stat().st_mtime
+                                for f in dl_dir.iterdir()
+                                if f.suffix.lower() == ".pdf"
+                                and not f.name.endswith((".crdownload",".tmp",".part"))
+                            }
+                            if not _click_tile_download("GSTR3B"):
+                                triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
+                                save_failure_screenshot(f"GSTR3B {month_name} — Tile not found")
+                                continue
+
+                            # Detect wrong-page landing (landed on GSTR-1 offlinedownload)
+                            try:
+                                WebDriverWait(driver, 5).until(
+                                    lambda d: "dashboard" not in d.current_url.lower()
+                                    or any(
+                                        f.suffix.lower() == ".pdf"
+                                        for f in dl_dir.iterdir()
+                                        if not f.name.endswith((".crdownload",".tmp",".part"))
+                                        and str(f) not in snap_before
+                                    ))
+                            except Exception: pass
                             cur_url = driver.current_url.lower()
                             if "offlinedownload" in cur_url or ("gstr1" in cur_url and "gstr3b" not in cur_url):
-                                log(f"  [{month_name}] Landed on wrong page — going back + retry", "warn")
+                                log(f"  [{month_name}] Wrong page — back + retry", "warn")
                                 try:
                                     driver.back()
                                     WebDriverWait(driver, 8).until(lambda d: "dashboard" in d.current_url)
                                 except Exception:
                                     _go_to_dashboard()
                                 _select_and_search(month_name)
-                                try:
-                                    WebDriverWait(driver, 10).until(
-                                        lambda d: "VIEW GSTR3B" in d.find_element(By.TAG_NAME, "body").text
-                                        or "GSTR-3B" in d.find_element(By.TAG_NAME, "body").text)
-                                except Exception: pass
-                                # Retry with VIEW-anchor only (most reliable)
                                 driver.execute_script("""
-                                    var viewBtns = Array.from(
-                                        document.querySelectorAll('button,a,[role=button]')
-                                    ).filter(function(b) {
-                                        var t = (b.innerText || b.textContent || '')
-                                            .trim().toUpperCase().replace(/ /g, '');
-                                        return t === 'VIEWGSTR3B' || t === 'VIEWGSTR-3B';
-                                    });
-                                    if (!viewBtns.length) return null;
-                                    var container = viewBtns[0];
-                                    for (var i = 0; i < 8; i++) {
-                                        if (!container.parentElement) break;
-                                        container = container.parentElement;
-                                        var ct = (container.innerText || '').toUpperCase();
-                                        var cnt = 0;
-                                        ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A'].forEach(function(g){
-                                            if(ct.includes(g)) cnt++;
+                                    var viewBtns=Array.from(document.querySelectorAll('button,a,[role=button]'))
+                                        .filter(function(b){
+                                            var t=(b.innerText||b.textContent||'').trim().toUpperCase().replace(/ /g,'');
+                                            return t==='VIEWGSTR3B'||t==='VIEWGSTR-3B';
                                         });
-                                        if (cnt > 0) break;
-                                        var btns = Array.from(container.querySelectorAll('button,a'));
-                                        for (var b = 0; b < btns.length; b++) {
-                                            var t = (btns[b].innerText || btns[b].textContent || '')
-                                                .trim().toUpperCase();
-                                            if (t === 'DOWNLOAD') {
-                                                btns[b].scrollIntoView({block:'center'});
-                                                btns[b].click();
-                                                return 'RETRY:' + t;
-                                            }
+                                    if(!viewBtns.length) return null;
+                                    var c=viewBtns[0];
+                                    for(var i=0;i<8;i++){
+                                        if(!c.parentElement) break;
+                                        c=c.parentElement;
+                                        var ct=(c.innerText||'').toUpperCase();
+                                        var cnt=0;
+                                        ['GSTR-1 ','GSTR-1A','GSTR-2B','GSTR-2A'].forEach(function(g){if(ct.includes(g))cnt++;});
+                                        if(cnt>0) break;
+                                        var btns=Array.from(c.querySelectorAll('button,a'));
+                                        for(var b=0;b<btns.length;b++){
+                                            var t=(btns[b].innerText||btns[b].textContent||'').trim().toUpperCase();
+                                            if(t==='DOWNLOAD'){btns[b].scrollIntoView({block:'center'});btns[b].click();return 'RETRY';}
                                         }
                                     }
                                     return null;
                                 """)
 
-                            # Smart wait: poll folder for new PDF (like local script _wait_files)
-                            snap_before = {str(f): f.stat().st_mtime for f in dl_dir.iterdir() if f.suffix.lower() == ".pdf"}
+                            # Poll for new PDF — up to 30s
                             got_pdf = None
-                            for _w in range(60):   # up to 30s (0.5s x 60) — reduced from 90
+                            for _w in range(60):
                                 time.sleep(0.5)
                                 for f in dl_dir.iterdir():
                                     if f.suffix.lower() != ".pdf": continue
-                                    if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                                    if f.name.endswith((".crdownload",".tmp",".part")): continue
                                     prev = snap_before.get(str(f))
                                     if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 1000:
-                                        time.sleep(0.3)  # let Chrome flush
+                                        time.sleep(0.3)
                                         got_pdf = f; break
                                 if got_pdf: break
+
                             if got_pdf and _rename_latest(save_name, [".pdf"]):
                                 triggered[f"{key}_GSTR3B"] = "OK"
                                 src_f = dl_dir / save_name
@@ -5592,7 +5732,7 @@ def _auto_download(job_id, gstin, client_name,
                                 with jobs_lock:
                                     if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
                             else:
-                                # ── CDP printToPDF fallback ────────────────────────────
+                                # CDP printToPDF fallback
                                 log(f"  [{month_name}] No PDF in 30s — trying CDP printToPDF", "warn")
                                 try:
                                     pdf_data = driver.execute_cdp_cmd("Page.printToPDF", {
@@ -5617,18 +5757,43 @@ def _auto_download(job_id, gstin, client_name,
                                         log(f"  ✅ [{month_name}] PDF via CDP ✓ ({sz} KB)", "ok")
                                     else:
                                         triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
-                                        save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
+                                        save_failure_screenshot(f"GSTR3B {month_name} — File Not Found")
                                 except Exception as _cdpe:
                                     log(f"  CDP error: {_cdpe}", "warn")
                                     triggered[f"{key}_GSTR3B"] = "NOT_FOUND"
-                                    save_failure_screenshot(f"GSTR3B {month_name} {year} — File Not Found after click")
-                        else:
-                            triggered[f"{key}_GSTR3B"] = "TILE_FAIL"
-                            save_failure_screenshot(f"GSTR3B {month_name} {year} — Tile Not Found on Dashboard")
-                except Exception as e:
-                    log(f"  GSTR3B error [{month_name}]: {e}", "warn")
-                    triggered[f"{key}_GSTR3B"] = f"ERR:{e}"
-                    save_failure_screenshot(f"GSTR3B {month_name} {year} — Exception: {str(e)[:60]}")
+                                    save_failure_screenshot(f"GSTR3B {month_name} — CDP failed")
+
+                        except Exception as e:
+                            log(f"  GSTR3B error [{month_name}]: {e}", "warn")
+                            triggered[f"{key}_GSTR3B"] = f"ERR:{e}"
+                            save_failure_screenshot(f"GSTR3B {month_name} — Exception: {str(e)[:60]}")
+
+                    # Close all batch tabs, return to main
+                    for tab in list(tab_map.keys()):
+                        try:
+                            driver.switch_to.window(tab)
+                            driver.close()
+                        except: pass
+                    try:
+                        driver.switch_to.window(main_win)
+                    except Exception:
+                        # main_win was closed — open a fresh dashboard tab
+                        driver.execute_script("window.open('about:blank');")
+                        main_win = driver.window_handles[-1]
+                        driver.switch_to.window(main_win)
+                    log(f"  Batch {batch_num} complete ✓")
+                    time.sleep(0.5)
+
+                ok_3b  = sum(1 for k,v in triggered.items() if "_GSTR3B" in k and v == "OK")
+                fail_3b = sum(1 for k,v in triggered.items() if "_GSTR3B" in k and v != "OK")
+                log(f"\n  GSTR3B complete: {ok_3b}/{total_months} downloaded | {fail_3b} failed", "ok")
+
+        # ── Build triggered keys for remaining months (non-3B) ──────────────
+        # Ensure all MONTHS_LIST keys exist for the generate loop below
+        for month_name, month_num, year in MONTHS_LIST:
+            key = f"{month_name}_{year}"
+            current_month[0] = month_name
+            prog(15 + int(MONTHS_LIST.index((month_name, month_num, year)) / total_months * 40))
 
             # GSTR-1: trigger GENERATE JSON
             if "GSTR1" in returns_set:
@@ -5646,7 +5811,7 @@ def _auto_download(job_id, gstin, client_name,
                         if _try_click(GENERATE_JSON_XP, timeout=8):
                             log(f"  GSTR-1 GENERATE JSON clicked ✓")
                             triggered[f"{key}_GSTR1"] = "TRIGGERED"
-                            time.sleep(2)
+                            time.sleep(0.5)   # v_SPEED: was 2s — brief settle then move to next month
                         else:
                             triggered[f"{key}_GSTR1"] = "GEN_FAIL"
                             save_failure_screenshot(f"GSTR1 {month_name} {year} — Generate Button Not Found")
@@ -5674,7 +5839,7 @@ def _auto_download(job_id, gstin, client_name,
                         if _try_click(GENERATE_JSON_XP, timeout=8):
                             log(f"  GSTR-1A GENERATE JSON clicked ✓")
                             triggered[f"{key}_GSTR1A"] = "TRIGGERED"
-                            time.sleep(2)
+                            time.sleep(0.5)   # v_SPEED: was 2s
                         else:
                             triggered[f"{key}_GSTR1A"] = "GEN_FAIL"
                             save_failure_screenshot(f"GSTR1A {month_name} {year} — Generate Button Not Found")
@@ -5733,7 +5898,7 @@ def _auto_download(job_id, gstin, client_name,
                         if _try_click(GENERATE_JSON_XP, timeout=8):
                             log(f"  GSTR-2A GENERATE JSON clicked ✓ (will save as ZIP)")
                             triggered[f"{key}_GSTR2A"] = "TRIGGERED"
-                            time.sleep(2)
+                            time.sleep(0.5)   # v_SPEED: was 2s
                         else:
                             triggered[f"{key}_GSTR2A"] = "GEN_FAIL"
                             save_failure_screenshot(f"GSTR2A {month_name} {year} — Generate Button Not Found")
@@ -5756,8 +5921,7 @@ def _auto_download(job_id, gstin, client_name,
 
         if need_phase2:
             log(f"\n📥 Phase 2 — Downloading generated files (portal generates in ~30s-2min)...")
-            log("  Waiting 30 seconds for portal to finish generating files...")
-            time.sleep(30)
+            log("  ⚡ Polling immediately (no blocking wait) — will retry if not ready yet...")
 
             ret_config = {
                 "GSTR1":  (GENERATE_JSON_XP,  [".zip",".json"]),
@@ -5788,7 +5952,7 @@ def _auto_download(job_id, gstin, client_name,
                         _go_to_dashboard()
                         _select_and_search(month_name)
                         if _click_tile_download(ret_type):
-                            time.sleep(4)
+                            time.sleep(0.5)   # v_SPEED: was 4s
                             if _generate_and_download(save_name, gen_xp, dl_exts, max_wait=120):
                                 triggered[tkey] = "OK"
                                 src_f = dl_dir / save_name
