@@ -1,0 +1,2464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RPR Tax Tools — Smart GST & Income Tax Automation</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════
+   BASE RESET & VARIABLES
+═══════════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  /* Sidebar */
+  --sidebar:#0f1729;
+  --sidebar-hover:#1c2d4a;
+  --sidebar-active:#1e3a60;
+  --sidebar-border:rgba(255,255,255,.08);
+  --sidebar-text:rgba(255,255,255,.65);
+  --sidebar-text-active:#fff;
+  /* Content area */
+  --bg:#f4f7fc;
+  --bg2:#edf1f9;
+  --surf:#ffffff;
+  --surf2:#f8faff;
+  --bdr:#e0e8f5;
+  --bdr2:#c8d5ea;
+  /* Amber — primary accent */
+  --amber:#f59e0b;
+  --amber-d:#d97706;
+  --amber-xl:#fef3c7;
+  --amber-xxl:#fffbeb;
+  /* Blue — action */
+  --blue:#2563eb;
+  --blue-l:#3b82f6;
+  --blue-xl:#dbeafe;
+  --blue-xxl:#eff6ff;
+  /* Greens */
+  --green:#16a34a;
+  --green-l:#22c55e;
+  --green-xl:#dcfce7;
+  /* Teal */
+  --teal:#0d9488;
+  --teal-xl:#ccfbf1;
+  /* Violet */
+  --violet:#7c3aed;
+  --violet-xl:#ede9fe;
+  /* Indigo */
+  --indigo:#4338ca;
+  --indigo-xl:#e0e7ff;
+  /* Cyan */
+  --cyan:#0891b2;
+  --cyan-xl:#cffafe;
+  /* Orange */
+  --orange:#ea580c;
+  --orange-xl:#ffedd5;
+  /* Red */
+  --red:#dc2626;
+  --red-xl:#fee2e2;
+  /* Text */
+  --text:#0f172a;
+  --text2:#475569;
+  --text3:#94a3b8;
+  /* Shadows */
+  --shadow:0 1px 3px rgba(15,23,42,.05),0 4px 16px rgba(15,23,42,.06);
+  --shadow-md:0 4px 20px rgba(15,23,42,.10);
+  --shadow-lg:0 8px 40px rgba(15,23,42,.14);
+  /* Radii */
+  --r:14px;
+  --r-sm:9px;
+  --r-xs:6px;
+}
+
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Figtree',sans-serif;
+  font-size:15px;
+  line-height:1.65;
+  min-height:100vh;
+  display:flex;
+}
+
+/* ═══════════════════════════════════════════
+   SIDEBAR
+═══════════════════════════════════════════ */
+.sidebar{
+  width:248px;
+  min-height:100vh;
+  background:var(--sidebar);
+  display:flex;
+  flex-direction:column;
+  position:fixed;
+  top:0;left:0;bottom:0;
+  z-index:300;
+  overflow-y:auto;
+  scrollbar-width:none;
+  flex-shrink:0;
+}
+.sidebar::-webkit-scrollbar{display:none}
+
+.sidebar-logo{
+  padding:22px 20px 18px;
+  border-bottom:1px solid var(--sidebar-border);
+  display:flex;align-items:center;gap:11px;
+  flex-shrink:0;
+}
+.sidebar-logo-badge{
+  background:var(--amber);
+  color:#000;
+  font-family:'Outfit',sans-serif;
+  font-weight:900;
+  font-size:13px;
+  padding:5px 10px;
+  border-radius:7px;
+  letter-spacing:.04em;
+  flex-shrink:0;
+}
+.sidebar-logo-text{
+  font-family:'Outfit',sans-serif;
+  font-weight:700;
+  font-size:15px;
+  color:#fff;
+  line-height:1.2;
+}
+.sidebar-logo-sub{
+  font-size:11px;
+  color:var(--sidebar-text);
+  font-weight:400;
+}
+
+.sidebar-status{
+  padding:10px 20px;
+  border-bottom:1px solid var(--sidebar-border);
+}
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  background:rgba(34,197,94,.15);
+  border:1px solid rgba(74,222,132,.2);
+  border-radius:100px;
+  padding:4px 10px;
+  font-size:12px;
+  font-weight:600;
+  color:#4ade80;
+}
+.status-dot{
+  width:6px;height:6px;
+  border-radius:50%;
+  background:#4ade80;
+  animation:blink 2s infinite;
+}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+.sidebar-section{
+  padding:16px 12px 4px;
+}
+.sidebar-section-label{
+  font-size:10.5px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.09em;
+  color:rgba(255,255,255,.3);
+  padding:0 8px;
+  margin-bottom:4px;
+}
+
+.nav-item{
+  display:flex;
+  align-items:center;
+  gap:11px;
+  padding:10px 11px;
+  border-radius:9px;
+  cursor:pointer;
+  transition:all .18s;
+  color:var(--sidebar-text);
+  font-size:13.5px;
+  font-weight:600;
+  margin-bottom:2px;
+  border:none;
+  background:none;
+  width:100%;
+  text-align:left;
+  font-family:'Figtree',sans-serif;
+  letter-spacing:.01em;
+}
+.nav-item:hover{
+  background:var(--sidebar-hover);
+  color:var(--sidebar-text-active);
+}
+.nav-item.active{
+  background:var(--sidebar-active);
+  color:#fff;
+  box-shadow:inset 3px 0 0 var(--amber);
+}
+.nav-item .nav-emoji{font-size:15px;flex-shrink:0;line-height:1}
+.nav-item .nav-badge{
+  margin-left:auto;
+  background:rgba(245,158,11,.2);
+  color:var(--amber);
+  font-size:10px;
+  font-weight:700;
+  padding:2px 7px;
+  border-radius:100px;
+  flex-shrink:0;
+}
+
+.sidebar-footer{
+  margin-top:auto;
+  padding:16px 20px;
+  border-top:1px solid var(--sidebar-border);
+}
+.sidebar-footer-title{
+  font-size:11.5px;font-weight:700;color:rgba(255,255,255,.45);
+  margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em;
+}
+.sidebar-contact-btn{
+  display:flex;align-items:center;gap:8px;
+  padding:9px 12px;border-radius:8px;
+  background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.1);
+  color:rgba(255,255,255,.75);
+  font-size:13px;font-weight:600;
+  text-decoration:none;
+  transition:all .18s;
+  margin-bottom:6px;
+}
+.sidebar-contact-btn:hover{background:rgba(255,255,255,.12);color:#fff}
+
+/* ═══════════════════════════════════════════
+   MAIN CONTENT
+═══════════════════════════════════════════ */
+.main{
+  margin-left:248px;
+  min-height:100vh;
+  flex:1;
+  display:flex;
+  flex-direction:column;
+}
+
+/* subtle dot-grid texture on bg */
+.main::before{
+  content:'';
+  position:fixed;
+  inset:0;
+  left:248px;
+  background-image:radial-gradient(circle,#c8d5ea 1px,transparent 1px);
+  background-size:24px 24px;
+  opacity:.35;
+  pointer-events:none;
+  z-index:0;
+}
+
+/* Topbar on mobile (hidden on desktop) */
+.mobile-topbar{display:none}
+
+.page{
+  max-width:900px;
+  width:100%;
+  margin:0 auto;
+  padding:32px 28px 80px;
+  position:relative;
+  z-index:1;
+}
+
+.tab-pane{display:none;animation:fadeUp .22s ease}
+.tab-pane.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* ═══════════════════════════════════════════
+   HERO BANNER
+═══════════════════════════════════════════ */
+.hero{
+  border-radius:var(--r);
+  padding:28px 32px;
+  margin-bottom:24px;
+  color:#fff;
+  position:relative;
+  overflow:hidden;
+}
+.hero::before{
+  content:'';position:absolute;
+  top:-60px;right:-50px;
+  width:240px;height:240px;
+  background:rgba(255,255,255,.06);
+  border-radius:50%;pointer-events:none;
+}
+.hero::after{
+  content:'';position:absolute;
+  bottom:-50px;left:30%;
+  width:180px;height:180px;
+  background:rgba(255,255,255,.04);
+  border-radius:50%;pointer-events:none;
+}
+.hero-tag{
+  display:inline-flex;align-items:center;gap:6px;
+  background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.2);
+  border-radius:100px;
+  padding:4px 13px;
+  font-size:12px;font-weight:700;
+  letter-spacing:.04em;
+  margin-bottom:12px;
+}
+.hero-title{
+  font-family:'Outfit',sans-serif;
+  font-size:22px;font-weight:800;
+  margin-bottom:8px;line-height:1.25;
+}
+.hero-desc{
+  font-size:14px;opacity:.9;
+  max-width:560px;line-height:1.65;font-weight:500;
+}
+.hero-steps{
+  display:flex;gap:10px;margin-top:18px;flex-wrap:wrap;
+}
+.hero-step{
+  display:inline-flex;align-items:center;gap:8px;
+  background:rgba(255,255,255,.14);
+  border:1px solid rgba(255,255,255,.2);
+  border-radius:100px;
+  padding:6px 14px;
+  font-size:13px;font-weight:700;
+}
+.hero-step-n{
+  width:22px;height:22px;
+  background:rgba(255,255,255,.25);
+  border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:900;flex-shrink:0;
+}
+
+/* hero colour variants */
+.hero-blue  {background:linear-gradient(130deg,#1e40af 0%,#2563eb 100%)}
+.hero-navy  {background:linear-gradient(130deg,#1e3a8a 0%,#1d4ed8 100%)}
+.hero-teal  {background:linear-gradient(130deg,#0f766e 0%,#0d9488 100%)}
+.hero-violet{background:linear-gradient(130deg,#5b21b6 0%,#7c3aed 100%)}
+.hero-amber {background:linear-gradient(130deg,#92400e 0%,#d97706 100%)}
+.hero-cyan  {background:linear-gradient(130deg,#0e7490 0%,#06b6d4 100%)}
+.hero-indigo{background:linear-gradient(130deg,#3730a3 0%,#4f46e5 100%)}
+.hero-green {background:linear-gradient(130deg,#14532d 0%,#16a34a 100%)}
+.hero-orange{background:linear-gradient(130deg,#9a3412 0%,#ea580c 100%)}
+
+/* ═══════════════════════════════════════════
+   CARDS
+═══════════════════════════════════════════ */
+.card{
+  background:var(--surf);
+  border:1.5px solid var(--bdr);
+  border-radius:var(--r);
+  padding:22px 24px;
+  box-shadow:var(--shadow);
+  margin-bottom:16px;
+  transition:box-shadow .2s,border-color .2s;
+}
+.card:hover{box-shadow:var(--shadow-md);border-color:var(--bdr2)}
+
+.card-head{display:flex;align-items:flex-start;gap:13px;margin-bottom:18px}
+.card-icon{
+  width:42px;height:42px;
+  border-radius:11px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:19px;flex-shrink:0;
+}
+.ci-blue  {background:var(--blue-xl)}
+.ci-teal  {background:var(--teal-xl)}
+.ci-violet{background:var(--violet-xl)}
+.ci-amber {background:var(--amber-xxl)}
+.ci-green {background:var(--green-xl)}
+.ci-indigo{background:var(--indigo-xl)}
+.ci-cyan  {background:var(--cyan-xl)}
+.ci-orange{background:var(--orange-xl)}
+.card-title{font-family:'Outfit',sans-serif;font-size:15px;font-weight:700;color:var(--text);margin-bottom:3px}
+.card-sub{font-size:13px;color:var(--text2);line-height:1.5}
+
+/* ═══════════════════════════════════════════
+   WHAT-YOU-GET BOX
+═══════════════════════════════════════════ */
+.wyg{
+  border-radius:var(--r-sm);
+  padding:16px 20px;
+  margin-bottom:20px;
+  font-size:13.5px;line-height:1.6;
+}
+.wyg-title{
+  font-family:'Outfit',sans-serif;
+  font-weight:700;font-size:12px;
+  text-transform:uppercase;letter-spacing:.07em;
+  margin-bottom:6px;display:flex;align-items:center;gap:6px;
+}
+.wyg-desc{margin-bottom:10px}
+.sheet-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.sc{padding:4px 12px;border-radius:100px;font-size:12px;font-weight:700}
+
+/* ═══════════════════════════════════════════
+   SECTION LABEL
+═══════════════════════════════════════════ */
+.sec-label{
+  font-size:11px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.08em;
+  color:var(--text3);
+  margin-bottom:8px;
+  display:flex;align-items:center;gap:5px;
+}
+.sec-label::before{
+  content:'';width:3px;height:11px;
+  background:var(--amber);border-radius:2px;
+}
+
+/* ═══════════════════════════════════════════
+   ALERTS / INFO BOXES
+═══════════════════════════════════════════ */
+.alert{
+  display:flex;gap:12px;
+  border-radius:var(--r-sm);
+  padding:13px 16px;
+  margin-bottom:16px;
+  font-size:13.5px;line-height:1.6;
+}
+.alert-icon{font-size:18px;flex-shrink:0;margin-top:1px}
+.alert-body strong{font-weight:700}
+.alert-info{background:var(--blue-xxl);border:1px solid #bfdbfe;color:#1e40af}
+.alert-tip {background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d}
+.alert-warn{background:#fefce8;border:1px solid #fde68a;color:#92400e}
+.alert-safe{background:#f5f3ff;border:1px solid #c4b5fd;color:#5b21b6}
+
+/* ═══════════════════════════════════════════
+   FORM ELEMENTS
+═══════════════════════════════════════════ */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:600px){.form-grid{grid-template-columns:1fr}}
+.form-row{display:flex;flex-direction:column;gap:5px}
+.form-label{
+  font-size:12px;font-weight:700;
+  color:var(--text2);letter-spacing:.02em;
+  display:flex;align-items:center;gap:5px;
+}
+.req{color:var(--red);font-size:13px}
+.form-hint{font-size:12px;color:var(--text3);line-height:1.4;margin-top:3px}
+
+input[type=text],input[type=password],select,textarea{
+  background:var(--surf2);
+  border:1.5px solid var(--bdr);
+  border-radius:8px;
+  padding:10px 13px;
+  color:var(--text);
+  font-family:'Figtree',sans-serif;
+  font-size:14px;
+  transition:border-color .2s,box-shadow .2s;
+  width:100%;
+  -webkit-appearance:none;
+}
+input:focus,select:focus,textarea:focus{
+  outline:none;
+  border-color:var(--amber);
+  box-shadow:0 0 0 3px rgba(245,158,11,.12);
+}
+select{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right 12px center;
+  padding-right:36px;
+}
+::placeholder{color:var(--text3)}
+
+/* ═══════════════════════════════════════════
+   UPLOAD ZONES
+═══════════════════════════════════════════ */
+.upload-zone{
+  border:2px dashed var(--bdr2);
+  border-radius:var(--r-sm);
+  padding:26px 20px;
+  text-align:center;
+  cursor:pointer;
+  transition:all .2s;
+  background:var(--surf2);
+  position:relative;
+}
+.upload-zone:hover,.upload-zone.drag-over{
+  border-color:var(--amber);
+  background:var(--amber-xxl);
+}
+.upload-zone input[type=file]{
+  position:absolute;inset:0;
+  opacity:0;cursor:pointer;
+  width:100%;height:100%;
+}
+.uz-icon{font-size:34px;margin-bottom:8px;display:block}
+.uz-title{font-family:'Outfit',sans-serif;font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px}
+.uz-sub{font-size:12.5px;color:var(--text3);line-height:1.5}
+.file-list{margin-top:12px;display:flex;flex-direction:column;gap:6px;text-align:left}
+.file-item{
+  display:flex;align-items:center;gap:8px;
+  background:var(--surf);border:1px solid var(--bdr);
+  border-radius:6px;padding:7px 12px;
+  font-size:12.5px;color:var(--text2);
+}
+.fi-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.fi-size{color:var(--text3);font-size:11.5px;flex-shrink:0}
+
+.upload-zone-sm{padding:16px 14px}
+.upload-zone-sm .uz-icon{font-size:24px;margin-bottom:5px}
+.upload-zone-sm .uz-title{font-size:13px}
+
+/* ═══════════════════════════════════════════
+   GRID HELPERS
+═══════════════════════════════════════════ */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+@media(max-width:640px){.two-col,.three-col{grid-template-columns:1fr}}
+
+/* ═══════════════════════════════════════════
+   BUTTONS
+═══════════════════════════════════════════ */
+.btn{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:10px 20px;
+  border-radius:9px;
+  font-family:'Outfit',sans-serif;
+  font-size:14px;font-weight:700;
+  cursor:pointer;border:none;
+  transition:all .2s;
+  text-decoration:none;
+  white-space:nowrap;
+}
+.btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
+.btn-lg{padding:12px 28px;font-size:15px;border-radius:10px}
+.btn-sm{padding:7px 14px;font-size:13px;border-radius:7px}
+
+.btn-amber{background:var(--amber);color:#000}
+.btn-amber:hover{background:var(--amber-d);transform:translateY(-1px);box-shadow:0 4px 16px rgba(245,158,11,.35)}
+
+.btn-primary{background:var(--blue);color:#fff}
+.btn-primary:hover{background:#1d4ed8;transform:translateY(-1px);box-shadow:0 4px 16px rgba(37,99,235,.3)}
+
+.btn-secondary{background:var(--surf);color:var(--text2);border:1.5px solid var(--bdr)}
+.btn-secondary:hover{border-color:var(--bdr2);color:var(--text)}
+
+.btn-green{background:var(--green);color:#fff}
+.btn-green:hover{background:#15803d;transform:translateY(-1px);box-shadow:0 4px 16px rgba(22,163,74,.3)}
+
+/* ═══════════════════════════════════════════
+   PROGRESS
+═══════════════════════════════════════════ */
+.progress-card{
+  background:var(--surf);border:1.5px solid var(--bdr);
+  border-radius:var(--r);padding:22px 24px;
+  margin-bottom:16px;display:none;
+}
+.progress-card.active{display:block}
+.progress-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.progress-label{font-family:'Outfit',sans-serif;font-size:14px;font-weight:700;color:var(--text)}
+.progress-pct{font-family:'Outfit',sans-serif;font-size:14px;font-weight:700;color:var(--amber)}
+.progress-track{height:9px;background:var(--bg2);border-radius:100px;overflow:hidden;margin-bottom:14px}
+.progress-bar{
+  height:100%;border-radius:100px;
+  background:linear-gradient(90deg,var(--amber-d),var(--amber));
+  transition:width .4s ease;width:0;
+  position:relative;overflow:hidden;
+}
+.progress-bar::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.3),transparent);
+  animation:shimmer 1.4s infinite;
+}
+@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(200%)}}
+.progress-log{
+  font-size:12.5px;color:var(--text2);
+  max-height:110px;overflow-y:auto;
+  display:flex;flex-direction:column;gap:4px;
+}
+.log-line{display:flex;gap:8px;align-items:flex-start}
+.log-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex-shrink:0;margin-top:6px}
+
+/* ═══════════════════════════════════════════
+   SUCCESS / RESULT
+═══════════════════════════════════════════ */
+.result-card{
+  background:var(--green-xl);border:1.5px solid #86efac;
+  border-radius:var(--r);padding:22px 24px;
+  margin-bottom:16px;display:none;
+}
+.result-card.active{display:block}
+.result-title{font-family:'Outfit',sans-serif;font-size:17px;font-weight:800;color:var(--green);margin-bottom:5px}
+.result-desc{font-size:13.5px;color:#15803d;margin-bottom:14px}
+.result-downloads{display:flex;flex-direction:column;gap:8px}
+.dl-row{
+  display:flex;align-items:center;gap:12px;
+  background:#fff;border:1px solid #bbf7d0;
+  border-radius:10px;padding:13px 16px;
+}
+.dl-icon{font-size:22px;flex-shrink:0}
+.dl-info{flex:1}
+.dl-name{font-weight:700;font-size:13.5px;color:var(--text)}
+.dl-desc{font-size:12px;color:var(--text2)}
+.dl-btn{flex-shrink:0}
+
+/* ═══════════════════════════════════════════
+   STEP GUIDE
+═══════════════════════════════════════════ */
+.steps{display:flex;flex-direction:column;gap:0}
+.step-row{display:flex;gap:14px;padding:14px 0;position:relative}
+.step-row:not(:last-child)::after{
+  content:'';position:absolute;left:17px;top:52px;bottom:0;
+  width:2px;background:var(--bdr);border-radius:2px;
+}
+.step-circle{
+  width:34px;height:34px;border-radius:50%;
+  background:var(--amber-xl);color:var(--amber-d);
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Outfit',sans-serif;font-weight:800;font-size:14px;
+  flex-shrink:0;
+}
+.step-body{flex:1;padding-top:4px}
+.step-title{font-family:'Outfit',sans-serif;font-weight:700;font-size:14.5px;color:var(--text);margin-bottom:4px}
+.step-desc{font-size:13px;color:var(--text2);line-height:1.6}
+
+/* ═══════════════════════════════════════════
+   FAQ
+═══════════════════════════════════════════ */
+.faq-item{border-bottom:1px solid var(--bdr)}
+.faq-q{
+  width:100%;text-align:left;background:none;border:none;
+  padding:16px 0;
+  font-family:'Outfit',sans-serif;font-size:14px;font-weight:700;
+  color:var(--text);cursor:pointer;
+  display:flex;justify-content:space-between;align-items:center;gap:12px;
+  transition:color .2s;
+}
+.faq-q:hover{color:var(--amber-d)}
+.faq-arrow{font-size:18px;color:var(--text3);transition:transform .25s;flex-shrink:0}
+.faq-q.open .faq-arrow{transform:rotate(180deg)}
+.faq-a{display:none;padding:4px 0 16px;font-size:13.5px;color:var(--text2);line-height:1.7}
+.faq-a.open{display:block}
+
+/* ═══════════════════════════════════════════
+   STATUS TABLE
+═══════════════════════════════════════════ */
+.status-table{width:100%;border-collapse:collapse;font-size:13px}
+.status-table th{
+  text-align:left;padding:10px 12px;
+  font-family:'Outfit',sans-serif;font-size:11px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--text3);
+  background:var(--bg2);border-bottom:1px solid var(--bdr);
+}
+.status-table td{padding:10px 12px;border-bottom:1px solid var(--bdr);color:var(--text2)}
+.status-table tr:last-child td{border-bottom:none}
+.status-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 10px;border-radius:100px;
+  font-size:12px;font-weight:700;font-family:'Outfit',sans-serif;
+}
+.badge-done{background:var(--green-xl);color:var(--green)}
+.badge-running{background:var(--amber-xl);color:var(--amber-d)}
+.badge-fail{background:var(--red-xl);color:var(--red)}
+
+/* ═══════════════════════════════════════════
+   CAPTCHA
+═══════════════════════════════════════════ */
+.captcha-card{
+  background:#fefce8;border:2px solid #fde68a;
+  border-radius:var(--r-sm);padding:18px;
+  margin-bottom:16px;display:none;
+}
+.captcha-card.active{display:block}
+.captcha-title{font-family:'Outfit',sans-serif;font-size:14px;font-weight:700;color:#92400e;margin-bottom:12px}
+
+/* ═══════════════════════════════════════════
+   MOBILE LAYOUT
+═══════════════════════════════════════════ */
+/* Mobile sidebar overlay */
+.mobile-sidebar-overlay{
+  display:none;
+  position:fixed;inset:0;
+  background:rgba(0,0,0,.45);
+  z-index:399;
+}
+.mobile-sidebar-overlay.active{display:block}
+
+@media(max-width:900px){
+  .sidebar{
+    position:fixed;top:0;left:0;bottom:0;
+    z-index:400;
+    transform:translateX(-100%);
+    transition:transform .25s ease;
+    display:flex;flex-direction:column;
+  }
+  .sidebar.mobile-open{transform:translateX(0)}
+  .main{margin-left:0}
+  .main::before{left:0}
+
+  .mobile-topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    background:var(--sidebar);
+    padding:0 16px;height:52px;
+    position:sticky;top:0;z-index:200;
+    flex-shrink:0;
+  }
+  .mobile-logo{display:flex;align-items:center;gap:9px;text-decoration:none}
+  .mobile-logo-badge{
+    background:var(--amber);color:#000;
+    font-family:'Outfit',sans-serif;font-weight:900;
+    font-size:12px;padding:4px 9px;border-radius:6px;
+  }
+  .mobile-logo-name{font-family:'Outfit',sans-serif;font-weight:700;font-size:14px;color:#fff}
+  .mobile-menu-btn{
+    background:rgba(255,255,255,.1);border:none;
+    padding:8px 12px;border-radius:7px;
+    font-size:18px;cursor:pointer;color:#fff;
+  }
+
+  /* Mobile tab strip */
+  .mobile-tabs{
+    background:#fff;border-bottom:2px solid var(--bdr);
+    overflow-x:auto;scrollbar-width:none;
+    white-space:nowrap;
+    position:sticky;top:52px;z-index:190;
+    box-shadow:0 2px 8px rgba(15,23,42,.06);
+  }
+  .mobile-tabs::-webkit-scrollbar{display:none}
+  .mobile-tab-inner{display:inline-flex;gap:2px;padding:0 12px}
+  .mtab-btn{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:12px 14px;
+    border:none;border-bottom:3px solid transparent;
+    margin-bottom:-2px;background:none;
+    color:var(--text2);
+    font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;
+    cursor:pointer;white-space:nowrap;
+    transition:all .2s;
+  }
+  .mtab-btn:hover{color:var(--text)}
+  .mtab-btn.active{color:var(--amber-d);border-bottom-color:var(--amber)}
+
+  .page{padding:20px 16px 60px}
+  .hero{padding:22px 20px}
+  .hero-title{font-size:18px}
+  .card{padding:16px 18px}
+}
+
+/* ═══════════════════════════════════════════
+   MISC UTILITIES
+═══════════════════════════════════════════ */
+.divider{height:1px;background:var(--bdr);margin:18px 0}
+.tag-row{display:flex;flex-wrap:wrap;gap:6px}
+.tag{display:inline-flex;align-items:center;gap:4px;padding:4px 11px;border-radius:100px;font-size:12px;font-weight:700}
+.page-footer{
+  text-align:center;padding:0 24px 28px;
+  font-size:12.5px;color:var(--text3);
+  position:relative;z-index:1;
+}
+
+/* Highlight box inside card */
+.highlight-row{
+  display:flex;align-items:flex-start;gap:10px;
+  background:var(--amber-xxl);border:1px solid #fde68a;
+  border-radius:var(--r-xs);padding:11px 14px;
+  font-size:13px;color:#78350f;margin-bottom:12px;
+}
+.hr-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+
+/* required/optional inline labels */
+.req-badge{
+  font-size:10.5px;font-weight:700;
+  background:var(--red-xl);color:var(--red);
+  padding:1px 7px;border-radius:100px;
+  margin-left:6px;
+}
+.opt-badge{
+  font-size:10.5px;font-weight:700;
+  background:var(--bg2);color:var(--text3);
+  padding:1px 7px;border-radius:100px;
+  margin-left:6px;
+}
+
+/* file-chosen confirmation */
+.file-chosen{
+  margin-top:8px;font-size:12px;
+  color:var(--green);font-weight:700;
+  display:none;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════
+     SIDEBAR NAVIGATION
+═══════════════════════════════════════════ -->
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <span class="sidebar-logo-badge">RPR</span>
+    <div>
+      <div class="sidebar-logo-text">Tax Tools</div>
+      <div class="sidebar-logo-sub">v10.6 · AY 2025-26</div>
+    </div>
+  </div>
+
+  <div class="sidebar-status">
+    <span class="status-pill"><span class="status-dot"></span> Online &amp; Ready</span>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">GST Tools</div>
+    <button class="nav-item active" onclick="switchTab('gst-recon',this)">
+      <span class="nav-emoji">📊</span> GST Reconciliation
+    </button>
+    <button class="nav-item" onclick="switchTab('gstr1',this)">
+      <span class="nav-emoji">📋</span> GSTR-1 Report
+    </button>
+    <button class="nav-item" onclick="switchTab('gstr2b',this)">
+      <span class="nav-emoji">📥</span> Purchase Summary
+    </button>
+    <button class="nav-item" onclick="switchTab('tally',this)">
+      <span class="nav-emoji">🔎</span> Tally Check
+    </button>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Income Tax</div>
+    <button class="nav-item" onclick="switchTab('itrecon',this)">
+      <span class="nav-emoji">🏦</span> Income Tax Recon
+    </button>
+    <button class="nav-item" onclick="switchTab('itrecon',this);setTimeout(()=>document.getElementById('it-autodown-card').scrollIntoView({behavior:'smooth'}),150)">
+      <span class="nav-emoji">🌐</span> IT Auto Download
+      <span class="nav-badge">New</span>
+    </button>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Combined Reports</div>
+    <button class="nav-item" onclick="switchTab('master',this)">
+      <span class="nav-emoji">🔗</span> Full Combined Report
+    </button>
+    <button class="nav-item" onclick="switchTab('gstvit',this)">
+      <span class="nav-emoji">📈</span> GST vs IT Check
+    </button>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-label">Automation</div>
+    <button class="nav-item" onclick="switchTab('autodown',this)">
+      <span class="nav-emoji">⬇️</span> Auto Download
+      <span class="nav-badge">New</span>
+    </button>
+  </div>
+
+  <div class="sidebar-section" style="margin-bottom:auto">
+    <div class="sidebar-section-label">Support</div>
+    <button class="nav-item" onclick="switchTab('help',this)">
+      <span class="nav-emoji">❓</span> Help &amp; FAQ
+    </button>
+    <button class="nav-item" onclick="switchTab('help',this);setTimeout(()=>document.getElementById('software-downloads').scrollIntoView({behavior:'smooth'}),150)">
+      <span class="nav-emoji">💾</span> Download Software
+    </button>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="sidebar-footer-title">Contact Support</div>
+    <a href="https://wa.me/917845998125" target="_blank" class="sidebar-contact-btn">💬 WhatsApp Us</a>
+    <a href="mailto:auprabakaran@gmail.com" class="sidebar-contact-btn">✉️ Send Email</a>
+    <div style="font-size:11px;color:rgba(255,255,255,.3);margin-top:8px">Mon–Sat · 9 AM–7 PM IST</div>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════
+     MOBILE TOPBAR (hidden on desktop)
+═══════════════════════════════════════════ -->
+<div class="main">
+<div class="mobile-topbar">
+  <a href="#" class="mobile-logo">
+    <span class="mobile-logo-badge">RPR</span>
+    <span class="mobile-logo-name">Tax Tools</span>
+  </a>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="status-pill"><span class="status-dot"></span> Live</span>
+    <button class="mobile-menu-btn" onclick="toggleMobileSidebar()" aria-label="Open menu">☰</button>
+  </div>
+</div>
+<div class="mobile-sidebar-overlay" id="mobile-overlay" onclick="closeMobileSidebar()"></div>
+
+<!-- Mobile tab strip -->
+<div class="mobile-tabs">
+  <div class="mobile-tab-inner">
+    <button class="mtab-btn active" onclick="switchTab('gst-recon',this)">📊 GST Recon</button>
+    <button class="mtab-btn" onclick="switchTab('gstr1',this)">📋 GSTR-1</button>
+    <button class="mtab-btn" onclick="switchTab('itrecon',this)">🏦 IT Recon</button>
+    <button class="mtab-btn" onclick="switchTab('itrecon',this);setTimeout(()=>document.getElementById('it-autodown-card').scrollIntoView({behavior:'smooth'}),150)">🌐 IT Download</button>
+    <button class="mtab-btn" onclick="switchTab('gstr2b',this)">📥 Purchases</button>
+    <button class="mtab-btn" onclick="switchTab('master',this)">🔗 Combined</button>
+    <button class="mtab-btn" onclick="switchTab('gstvit',this)">📈 GST vs IT</button>
+    <button class="mtab-btn" onclick="switchTab('tally',this)">🔎 Tally</button>
+    <button class="mtab-btn" onclick="switchTab('autodown',this)">⬇️ Download</button>
+    <button class="mtab-btn" onclick="switchTab('help',this)">❓ Help</button>
+  </div>
+</div>
+
+<div class="page">
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- TAB 1: GST RECONCILIATION -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane active" id="pane-gst-recon">
+
+  <div class="hero hero-blue">
+    <div class="hero-tag">📊 Annual GST Report</div>
+    <div class="hero-title">GST Reconciliation — Full Year Summary</div>
+    <div class="hero-desc">Upload your GST return files and get a ready-to-use Excel report in minutes. All calculations are done automatically — just upload and click Run.</div>
+    <div class="hero-steps">
+      <div class="hero-step"><span class="hero-step-n">1</span> Fill in client name &amp; year</div>
+      <div class="hero-step"><span class="hero-step-n">2</span> Upload your GST files</div>
+      <div class="hero-step"><span class="hero-step-n">3</span> Click Run → download Excel</div>
+    </div>
+  </div>
+
+  <div class="wyg" style="background:var(--blue-xxl);border:1px solid #bfdbfe;color:#1e40af">
+    <div class="wyg-title" style="color:#1d4ed8">📄 You will receive an Excel file with 7 ready-to-use sheets</div>
+    <div class="wyg-desc">Compares what you filed — sales returns, purchase credits, and tax paid — and clearly shows if everything matches or flags anything that needs your attention.</div>
+    <div class="sheet-chips">
+      <span class="sc" style="background:#dbeafe;color:#1e40af">Overview &amp; Summary</span>
+      <span class="sc" style="background:#dbeafe;color:#1e40af">Sales (GSTR-1)</span>
+      <span class="sc" style="background:#dbeafe;color:#1e40af">Purchase Credits (GSTR-2B)</span>
+      <span class="sc" style="background:#dbeafe;color:#1e40af">Auto-Purchases (GSTR-2A)</span>
+      <span class="sc" style="background:#dbeafe;color:#1e40af">Monthly Returns (GSTR-3B)</span>
+      <span class="sc" style="background:#dbeafe;color:#1e40af">Sales vs Returns Match</span>
+      <span class="sc" style="background:#dbeafe;color:#1e40af">Tax Payable Breakdown</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-blue">🏢</div>
+      <div><div class="card-title">Who is this report for?</div><div class="card-sub">Enter the client name and the financial year before uploading files.</div></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">Client / Firm Name <span class="req">*</span></label>
+        <input type="text" id="r-client" placeholder="e.g. Sharma Trading Co.">
+        <div class="form-hint">This name will appear on the report header</div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Financial Year <span class="req">*</span></label>
+        <select id="r-fy">
+          <option value="2025-26">2025–26 (Current year)</option>
+          <option value="2024-25">2024–25</option>
+          <option value="2023-24">2023–24</option>
+          <option value="2022-23">2022–23</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label class="form-label">GST Number <span class="opt-badge">Optional</span></label>
+        <input type="text" id="r-gstin" placeholder="e.g. 33AABCS1429B1ZB" maxlength="15" style="text-transform:uppercase">
+        <div class="form-hint">Your 15-digit GST number — used to auto-fill firm name</div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Custom Report Title <span class="opt-badge">Optional</span></label>
+        <input type="text" id="r-title" placeholder="Leave blank to use client name">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-blue">📂</div>
+      <div><div class="card-title">Upload your GST return files</div><div class="card-sub">Files you downloaded from the GST portal (gst.gov.in). You can upload multiple files at once.</div></div>
+    </div>
+
+    <div class="alert alert-info">
+      <div class="alert-icon">💡</div>
+      <div class="alert-body">
+        <strong>Which files do I need?</strong><br>
+        Upload files from the GST portal — your <em>sales filing (GSTR-1)</em>, your <em>purchase credits (GSTR-2B)</em>, and your <em>monthly returns (GSTR-3B)</em>. They can be ZIP, Excel, or JSON format.<br><br>
+        <strong>Tip:</strong> Use the <em>Auto Download</em> tab to fetch all these files automatically — no manual clicking needed!
+      </div>
+    </div>
+
+    <div class="upload-zone" id="recon-drop" onclick="triggerUpload('recon-files')">
+      <input type="file" id="recon-files" multiple accept=".zip,.xlsx,.xls,.json" onchange="handleFiles('recon',this.files)">
+      <span class="uz-icon">📂</span>
+      <div class="uz-title">Click here to choose files — or drag &amp; drop them here</div>
+      <div class="uz-sub">Accepts ZIP, Excel (.xlsx), and JSON files · Up to 100 MB per file</div>
+      <div class="file-list" id="recon-filelist"></div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-amber btn-lg" id="recon-run-btn" onclick="runRecon()" disabled>
+        ▶ Run Reconciliation
+      </button>
+      <button class="btn btn-secondary" onclick="clearFiles('recon')">🗑 Clear Files</button>
+      <span id="recon-file-count" style="font-size:13px;color:var(--text3)"></span>
+    </div>
+  </div>
+
+  <div class="progress-card" id="recon-progress">
+    <div class="progress-header">
+      <span class="progress-label" id="recon-prog-label">⏳ Processing your files…</span>
+      <span class="progress-pct" id="recon-prog-pct">0%</span>
+    </div>
+    <div class="progress-track"><div class="progress-bar" id="recon-prog-bar"></div></div>
+    <div class="progress-log" id="recon-prog-log"></div>
+  </div>
+
+  <div class="result-card" id="recon-result">
+    <div class="result-title">✅ Your report is ready!</div>
+    <div class="result-desc">Your GST Reconciliation Excel has been created. Click below to download it.</div>
+    <div class="result-downloads" id="recon-result-files"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- TAB 2: GSTR-1 REPORT -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane" id="pane-gstr1">
+
+  <div class="hero hero-navy">
+    <div class="hero-tag">📋 Sales Return Details</div>
+    <div class="hero-title">GSTR-1 — Detailed Sales Breakdown</div>
+    <div class="hero-desc">Turn your GSTR-1 filing into a fully organised Excel workbook showing every invoice — sorted by customer type, month, and category.</div>
+  </div>
+
+  <div class="wyg" style="background:#f0f9ff;border:1px solid #bae6fd;color:#0c4a6e">
+    <div class="wyg-title" style="color:#0369a1">📄 You will get an Excel file with 13 sheets</div>
+    <div class="wyg-desc">Every sheet covers a different type of sale so you can quickly find any invoice and see your full year's sales picture.</div>
+    <div class="sheet-chips">
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Business-to-Business Invoices</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Item-level Detail</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Product Code Summary (HSN)</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Small Consumer Sales</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Large Consumer Sales</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Credit Notes (Returns / Discounts)</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Debit Notes (Extra Charges)</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Export Sales</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Advances Received</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Amendments</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Exempt / Nil-rated Sales</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Customer GST Number Index</span>
+      <span class="sc" style="background:#e0f2fe;color:#0369a1">Monthly Totals</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-blue">🏢</div>
+      <div><div class="card-title">Client &amp; Year</div><div class="card-sub">Tell us who this report is for.</div></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">Client / Firm Name <span class="req">*</span></label>
+        <input type="text" id="g1-client" placeholder="e.g. Sharma Trading Co.">
+      </div>
+      <div class="form-row">
+        <label class="form-label">Financial Year <span class="req">*</span></label>
+        <select id="g1-fy">
+          <option value="2025-26">2025–26 (Current year)</option>
+          <option value="2024-25">2024–25</option>
+          <option value="2023-24">2023–24</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-blue">📂</div>
+      <div><div class="card-title">Upload your GSTR-1 files</div><div class="card-sub">Sales return files downloaded from the GST portal. Upload one per month or all months at once.</div></div>
+    </div>
+    <div class="upload-zone" onclick="triggerUpload('g1-files')">
+      <input type="file" id="g1-files" multiple accept=".zip,.json" onchange="handleFiles('g1',this.files)">
+      <span class="uz-icon">📂</span>
+      <div class="uz-title">Click to choose GSTR-1 files</div>
+      <div class="uz-sub">Upload ZIP or JSON files from the GST portal · One per month or all at once</div>
+      <div class="file-list" id="g1-filelist"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-amber btn-lg" id="g1-run-btn" onclick="runJob('g1','gstr1')" disabled>▶ Generate GSTR-1 Report</button>
+      <button class="btn btn-secondary" onclick="clearFiles('g1')">🗑 Clear</button>
+    </div>
+  </div>
+
+  <div class="progress-card" id="g1-progress">
+    <div class="progress-header"><span class="progress-label" id="g1-prog-label">⏳ Processing…</span><span class="progress-pct" id="g1-prog-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-bar" id="g1-prog-bar"></div></div>
+    <div class="progress-log" id="g1-prog-log"></div>
+  </div>
+  <div class="result-card" id="g1-result">
+    <div class="result-title">✅ Report ready!</div>
+    <div class="result-desc">Your detailed GSTR-1 Excel is ready to download.</div>
+    <div class="result-downloads" id="g1-result-files"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- TAB 3: INCOME TAX RECONCILIATION -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane" id="pane-itrecon">
+
+  <div class="hero hero-teal">
+    <div class="hero-tag">🏦 Income Tax Report</div>
+    <div class="hero-title">Income Tax Reconciliation — ITR Readiness Report</div>
+    <div class="hero-desc">Upload your Annual Tax Statement and related files from the Income Tax portal. Get a full reconciliation Excel ready for ITR filing — with any discrepancies clearly highlighted.</div>
+    <div class="hero-steps">
+      <div class="hero-step"><span class="hero-step-n">1</span> Upload Annual Tax Statement PDF (required)</div>
+      <div class="hero-step"><span class="hero-step-n">2</span> Add AIS &amp; TIS PDFs (optional but recommended)</div>
+      <div class="hero-step"><span class="hero-step-n">3</span> Run — get a 9-sheet Excel</div>
+    </div>
+  </div>
+
+  <div class="wyg" style="background:var(--teal-xl);border:1px solid #99f6e4;color:#0f766e">
+    <div class="wyg-title" style="color:#0f766e">📄 You will get an Excel file with 9 sheets</div>
+    <div class="wyg-desc">This report consolidates your TDS details, income info, turnover, and tax paid — and flags any differences before you file your ITR.</div>
+    <div class="sheet-chips">
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">Summary Overview</span>
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">TDS Details (from 26AS)</span>
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">All Income Sources (AIS)</span>
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">Turnover Summary (TIS)</span>
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">GST vs Income Tax Match</span>
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">Discrepancies &amp; Gaps</span>
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">High-value Transactions</span>
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">Tax Paid Summary</span>
+      <span class="sc" style="background:#ccfbf1;color:#0f766e">Notices, Demands &amp; Refunds</span>
+    </div>
+  </div>
+
+  <div class="alert alert-tip">
+    <div class="alert-icon">📌</div>
+    <div class="alert-body"><strong>Where to download these files:</strong> Log in to <strong>incometax.gov.in</strong> → <em>Annual Information Statement (AIS)</em> for AIS &amp; TIS files, and <em>Services → Annual Tax Statement</em> for the 26AS. Download each as a PDF and upload below.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-teal">🏢</div>
+      <div><div class="card-title">Client &amp; Assessment Year</div></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">Client / Firm Name <span class="req">*</span></label>
+        <input type="text" id="it-client" placeholder="e.g. Sharma Trading Co.">
+      </div>
+      <div class="form-row">
+        <label class="form-label">Assessment Year <span class="req">*</span></label>
+        <select id="it-ay">
+          <option value="2025-26">AY 2025–26 (for FY 2024-25 income)</option>
+          <option value="2024-25">AY 2024–25</option>
+          <option value="2023-24">AY 2023–24</option>
+        </select>
+        <div class="form-hint">Assessment Year = the year you file the return for the previous year's income</div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">PAN Number <span class="opt-badge">Optional</span></label>
+        <input type="text" id="it-pan" placeholder="e.g. ABCDE1234F" maxlength="10" style="text-transform:uppercase">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-teal">📄</div>
+      <div>
+        <div class="card-title">Upload your Income Tax portal files</div>
+        <div class="card-sub">All files come from <strong>incometax.gov.in</strong>. The 26AS is required; AIS and TIS are optional but make the report more complete.</div>
+      </div>
+    </div>
+
+    <div class="three-col" style="margin-bottom:16px">
+      <div>
+        <div class="sec-label">26AS PDF <span class="req-badge">Required</span></div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('it-26as')">
+          <input type="file" id="it-26as" accept=".pdf" onchange="handleSingleFile('it26as',this.files)">
+          <span class="uz-icon">📄</span>
+          <div class="uz-title">Annual Tax Statement</div>
+          <div class="uz-sub">26AS PDF from IT portal</div>
+          <div id="it26as-name" class="file-chosen"></div>
+        </div>
+      </div>
+      <div>
+        <div class="sec-label">AIS PDF <span class="opt-badge">Optional</span></div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('it-ais')">
+          <input type="file" id="it-ais" accept=".pdf" onchange="handleSingleFile('itais',this.files)">
+          <span class="uz-icon">📋</span>
+          <div class="uz-title">Annual Info Statement</div>
+          <div class="uz-sub">AIS PDF — all income sources</div>
+          <div id="itais-name" class="file-chosen"></div>
+        </div>
+      </div>
+      <div>
+        <div class="sec-label">TIS PDF <span class="opt-badge">Optional</span></div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('it-tis')">
+          <input type="file" id="it-tis" accept=".pdf" onchange="handleSingleFile('ittis',this.files)">
+          <span class="uz-icon">📊</span>
+          <div class="uz-title">Taxpayer Info Summary</div>
+          <div class="uz-sub">TIS PDF — turnover summary</div>
+          <div id="ittis-name" class="file-chosen"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-row" style="margin-bottom:16px">
+      <label class="form-label">GST Reconciliation Excel <span class="opt-badge">Optional — for automatic turnover matching</span></label>
+      <div class="upload-zone upload-zone-sm" onclick="triggerUpload('it-gstexcel')">
+        <input type="file" id="it-gstexcel" accept=".xlsx,.xls" onchange="handleSingleFile('itgst',this.files)">
+        <div style="font-size:13px;font-weight:700;color:var(--text2)">📎 Upload the GST Recon Excel from Tab 1 (optional)</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:3px">Lets the tool automatically match GST turnover with Income Tax turnover figures</div>
+        <div id="itgst-name" class="file-chosen"></div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-lg" id="it-run-btn" style="background:#0f766e;color:white" onclick="runJob('it','itrecon')" disabled>▶ Run IT Reconciliation</button>
+    </div>
+  </div>
+
+  <!-- IT Portal Auto Download -->
+  <div class="card" id="it-autodown-card" style="border-color:rgba(124,58,237,.3)">
+    <div class="card-head">
+      <div class="card-icon" style="background:#f5f3ff">🌐</div>
+      <div>
+        <div class="card-title" style="color:#6d28d9">IT Portal Auto Download — 26AS, AIS &amp; TIS</div>
+        <div class="card-sub">Enter your Income Tax portal credentials to auto-fetch all three PDFs — no manual downloading needed.</div>
+      </div>
+    </div>
+
+    <div class="alert alert-safe" style="margin-bottom:14px">
+      <div class="alert-icon">🔒</div>
+      <div class="alert-body"><strong>Your credentials are safe.</strong> Used only for this session to log in and download your files — never stored anywhere.</div>
+    </div>
+
+    <div class="form-grid" style="margin-bottom:16px">
+      <div class="form-row">
+        <label class="form-label">IT Portal Username (PAN) <span class="req">*</span></label>
+        <input type="text" id="it-ad-user" placeholder="e.g. ABCDE1234F" maxlength="10" style="text-transform:uppercase" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label class="form-label">IT Portal Password <span class="req">*</span></label>
+        <input type="password" id="it-ad-pass" placeholder="Your Income Tax portal password" autocomplete="off">
+      </div>
+    </div>
+
+    <button class="btn btn-lg" style="background:#6d28d9;color:#fff" onclick="startITAutoDownload()">
+      🌐 Start IT Auto Download (26AS + AIS + TIS)
+    </button>
+
+    <!-- IT auto-download progress -->
+    <div id="it-ad-pw" style="display:none;margin-top:16px">
+      <div class="progress-header">
+        <span class="progress-label" id="it-ad-label">⏳ Connecting to IT portal…</span>
+        <span class="progress-pct" id="it-ad-pct">0%</span>
+      </div>
+      <div class="progress-track"><div class="progress-bar" id="it-ad-bar" style="background:linear-gradient(90deg,#6d28d9,#8b5cf6)"></div></div>
+      <div class="progress-log" id="it-ad-log"></div>
+    </div>
+
+    <!-- IT auto-download OTP/CAPTCHA -->
+    <div class="captcha-card" id="it-ad-captcha-card" style="margin-top:14px">
+      <div class="captcha-title">🔐 OTP / CAPTCHA Required — Enter it below to continue</div>
+      <div style="margin-bottom:.5rem;font-size:13px;color:#92400e">If OTP was sent to your phone/email, enter it. If a CAPTCHA is shown, type the characters. If no input is needed, type <strong>SKIP</strong>.</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <img id="it-ad-captcha-img" src="" alt="IT Portal Screenshot" style="max-height:80px;border-radius:6px;border:1px solid #fcd34d;cursor:pointer" onclick="itAdRefreshShot()">
+        <span style="font-size:12px;color:#92400e">(click image to refresh)</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="it-ad-captcha-input" placeholder="Enter OTP, CAPTCHA, or type SKIP" style="max-width:220px">
+        <button class="btn btn-lg" style="background:#6d28d9;color:#fff" onclick="itAdSubmit()">Submit →</button>
+      </div>
+    </div>
+
+    <!-- IT auto-download results -->
+    <div id="it-ad-dw" style="display:none;margin-top:14px">
+      <div class="result-card active">
+        <div class="result-title">✅ IT Portal files downloaded!</div>
+        <div class="result-desc">26AS, AIS, and TIS PDFs are ready. Click below to load them into the upload zones above automatically.</div>
+        <button class="btn btn-lg" style="background:#6d28d9;color:#fff;margin-top:4px" onclick="itAdTransfer()">📤 Load PDFs into Upload Zones →</button>
+        <span id="it-ad-transfer-status" style="font-size:12px;color:var(--text3);margin-left:12px"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="progress-card" id="it-progress">
+    <div class="progress-header"><span class="progress-label" id="it-prog-label">⏳ Processing…</span><span class="progress-pct" id="it-prog-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-bar" id="it-prog-bar" style="background:linear-gradient(90deg,#0f766e,#14b8a6)"></div></div>
+    <div class="progress-log" id="it-prog-log"></div>
+  </div>
+  <div class="result-card" id="it-result">
+    <div class="result-title">✅ IT Reconciliation complete!</div>
+    <div class="result-desc">Your Income Tax reconciliation report is ready to download.</div>
+    <div class="result-downloads" id="it-result-files"></div>
+  </div>
+</div>
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane" id="pane-gstr2b">
+
+  <div class="hero hero-violet">
+    <div class="hero-tag">📥 Purchase Summary</div>
+    <div class="hero-title">Annual Purchase &amp; Tax Credit Summary — All 12 Months Combined</div>
+    <div class="hero-desc">Merge all your monthly GSTR-2B files into one clean annual Excel. See your full year of purchases and eligible tax credits in one place — sorted by supplier.</div>
+  </div>
+
+  <div class="wyg" style="background:var(--violet-xl);border:1px solid #c4b5fd;color:#5b21b6">
+    <div class="wyg-title" style="color:#6d28d9">📄 You will get 4 Excel sheets</div>
+    <div class="wyg-desc">This merges all 12 monthly files from the GST portal into one annual workbook — saving hours of manual copy-paste work.</div>
+    <div class="sheet-chips">
+      <span class="sc" style="background:#ddd6fe;color:#6d28d9">Supplier-wise Purchases &amp; Credits</span>
+      <span class="sc" style="background:#ddd6fe;color:#6d28d9">Credit Notes &amp; Debit Notes</span>
+      <span class="sc" style="background:#ddd6fe;color:#6d28d9">Input Service Distributor</span>
+      <span class="sc" style="background:#ddd6fe;color:#6d28d9">Total Tax Credit Summary</span>
+    </div>
+  </div>
+
+  <div class="alert alert-tip">
+    <div class="alert-icon">📌</div>
+    <div class="alert-body"><strong>What is GSTR-2B?</strong> It's the auto-populated statement from the GST portal that shows all the purchases your suppliers have reported — and the tax credit (ITC) you can claim. Download it as Excel from the GST portal, once per month.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-violet">🏢</div>
+      <div><div class="card-title">Client &amp; Year</div></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">Client / Firm Name <span class="req">*</span></label>
+        <input type="text" id="g2b-client" placeholder="e.g. Sharma Trading Co.">
+      </div>
+      <div class="form-row">
+        <label class="form-label">Financial Year <span class="req">*</span></label>
+        <select id="g2b-fy">
+          <option value="2025-26">2025–26 (Current year)</option>
+          <option value="2024-25">2024–25</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-violet">📂</div>
+      <div>
+        <div class="card-title">Upload Monthly GSTR-2B Excel Files</div>
+        <div class="card-sub">Upload all monthly files at once. Files should be the Excel format downloaded from the GST portal — one file per month.</div>
+      </div>
+    </div>
+    <div class="upload-zone" onclick="triggerUpload('g2b-files')">
+      <input type="file" id="g2b-files" multiple accept=".xlsx,.xls" onchange="handleFiles('g2b',this.files)">
+      <span class="uz-icon">📂</span>
+      <div class="uz-title">Click to choose GSTR-2B Excel files</div>
+      <div class="uz-sub">Upload up to 12 monthly files at once</div>
+      <div class="file-list" id="g2b-filelist"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+      <button class="btn btn-lg" id="g2b-run-btn" style="background:#7c3aed;color:white" onclick="runJob('g2b','gstr2b')" disabled>▶ Consolidate Purchases</button>
+      <button class="btn btn-secondary" onclick="clearFiles('g2b')">🗑 Clear</button>
+    </div>
+  </div>
+
+  <div class="progress-card" id="g2b-progress">
+    <div class="progress-header"><span class="progress-label" id="g2b-prog-label">⏳ Combining files…</span><span class="progress-pct" id="g2b-prog-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-bar" id="g2b-prog-bar" style="background:linear-gradient(90deg,#7c3aed,#8b5cf6)"></div></div>
+    <div class="progress-log" id="g2b-prog-log"></div>
+  </div>
+  <div class="result-card" id="g2b-result">
+    <div class="result-title">✅ Purchase Summary ready!</div>
+    <div class="result-desc">Your annual GSTR-2B workbook is ready to download.</div>
+    <div class="result-downloads" id="g2b-result-files"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- TAB 5: FULL COMBINED REPORT (MASTER BRIDGE) -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane" id="pane-master">
+
+  <div class="hero hero-amber">
+    <div class="hero-tag">🔗 Full Combined Report</div>
+    <div class="hero-title">Master Report — GST + Income Tax in One Workbook</div>
+    <div class="hero-desc">The ultimate report — combines your GST and Income Tax data into one master reconciliation workbook for the complete picture before ITR filing.</div>
+  </div>
+
+  <div class="wyg" style="background:var(--amber-xxl);border:1px solid #fcd34d;color:#92400e">
+    <div class="wyg-title" style="color:#b45309">📄 What you'll get</div>
+    <div class="wyg-desc">A single <strong>Master Reconciliation Excel</strong> that merges GST recon output with Income Tax portal data. Instantly see GST turnover vs IT turnover, purchase credits vs AIS purchases, and any gaps before filing.</div>
+    <div class="sheet-chips">
+      <span class="sc" style="background:#fef3c7;color:#b45309">Annual GST vs IT</span>
+      <span class="sc" style="background:#fef3c7;color:#b45309">Monthly Returns vs AIS</span>
+      <span class="sc" style="background:#fef3c7;color:#b45309">Tax Credits vs Purchases</span>
+      <span class="sc" style="background:#fef3c7;color:#b45309">Tax Gaps Identified</span>
+      <span class="sc" style="background:#fef3c7;color:#b45309">Filing Checklist</span>
+    </div>
+  </div>
+
+  <div class="alert alert-warn">
+    <div class="alert-icon">⚠️</div>
+    <div class="alert-body">
+      <strong>Before you run this:</strong> You need to have already run the <em>GST Reconciliation</em> (Tab 1) and <em>Income Tax Recon</em> (Tab 3) for this client. Upload those two output Excel files here to combine them.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-amber">📤</div>
+      <div><div class="card-title">Upload the two report files you already generated</div><div class="card-sub">One from GST Reconciliation (Tab 1) and one from Income Tax Recon (Tab 3).</div></div>
+    </div>
+    <div class="two-col" style="margin-bottom:16px">
+      <div>
+        <div class="sec-label">GST Reconciliation Excel <span class="req-badge">Required</span></div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('mb-gst')">
+          <input type="file" id="mb-gst" accept=".xlsx,.xls" onchange="handleSingleFile('mbgst',this.files)">
+          <span class="uz-icon" style="font-size:26px">📊</span>
+          <div class="uz-title">GST Recon Excel</div>
+          <div class="uz-sub">Output from Tab 1</div>
+          <div id="mbgst-name" class="file-chosen" style="color:#b45309"></div>
+        </div>
+      </div>
+      <div>
+        <div class="sec-label">IT Reconciliation Excel <span class="req-badge">Required</span></div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('mb-it')">
+          <input type="file" id="mb-it" accept=".xlsx,.xls" onchange="handleSingleFile('mbit',this.files)">
+          <span class="uz-icon" style="font-size:26px">🏦</span>
+          <div class="uz-title">IT Recon Excel</div>
+          <div class="uz-sub">Output from Tab 3</div>
+          <div id="mbit-name" class="file-chosen" style="color:#b45309"></div>
+        </div>
+      </div>
+    </div>
+    <div class="form-row" style="max-width:300px;margin-bottom:16px">
+      <label class="form-label">Client Name <span class="req">*</span></label>
+      <input type="text" id="mb-client" placeholder="e.g. Sharma Trading Co.">
+    </div>
+    <button class="btn btn-lg" id="mb-run-btn" style="background:#b45309;color:white" onclick="runJob('mb','masterbridge')" disabled>▶ Build Master Report</button>
+  </div>
+
+  <div class="progress-card" id="mb-progress">
+    <div class="progress-header"><span class="progress-label" id="mb-prog-label">⏳ Merging reports…</span><span class="progress-pct" id="mb-prog-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-bar" id="mb-prog-bar" style="background:linear-gradient(90deg,#b45309,#d97706)"></div></div>
+    <div class="progress-log" id="mb-prog-log"></div>
+  </div>
+  <div class="result-card" id="mb-result">
+    <div class="result-title">✅ Master Report complete!</div>
+    <div class="result-desc">Your combined GST + IT workbook is ready.</div>
+    <div class="result-downloads" id="mb-result-files"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- TAB 6: GST vs IT CHECK -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane" id="pane-gstvit">
+
+  <div class="hero hero-cyan">
+    <div class="hero-tag">📈 Quick Comparison</div>
+    <div class="hero-title">GST vs Income Tax — Spot Any Differences</div>
+    <div class="hero-desc">Compare your GST return figures against Income Tax portal data to find any gaps before filing your ITR. Catch discrepancies before they become tax notices.</div>
+  </div>
+
+  <div class="wyg" style="background:var(--cyan-xl);border:1px solid #a5f3fc;color:#0e7490">
+    <div class="wyg-title" style="color:#0e7490">📄 What you'll get</div>
+    <div class="wyg-desc">Compares GSTR-1 / GSTR-3B sales against TIS / AIS data to find mismatches in sales, purchases, and tax — before it becomes a notice from the department.</div>
+    <div class="sheet-chips">
+      <span class="sc" style="background:#cffafe;color:#0e7490">Sales Comparison (Returns vs IT Statement)</span>
+      <span class="sc" style="background:#cffafe;color:#0e7490">Purchase Comparison (Credits vs AIS)</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-cyan">📂</div>
+      <div><div class="card-title">Upload Files</div><div class="card-sub">Upload your GST files and IT portal PDFs for comparison.</div></div>
+    </div>
+    <div class="two-col" style="margin-bottom:14px">
+      <div>
+        <div class="sec-label" style="--amber:#0e7490">GST Data (Returns / Excel)</div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('comp-gst')">
+          <input type="file" id="comp-gst" accept=".xlsx,.xls,.zip,.json" onchange="handleFiles('compgst',this.files)" multiple>
+          <span class="uz-icon" style="font-size:26px">📊</span>
+          <div class="uz-title">GST Files</div>
+          <div class="uz-sub">GSTR-1, GSTR-3B, or Recon Excel</div>
+          <div class="file-list" id="compgst-filelist" style="pointer-events:none"></div>
+        </div>
+      </div>
+      <div>
+        <div class="sec-label">IT Portal Files (AIS / TIS PDFs)</div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('comp-it')">
+          <input type="file" id="comp-it" accept=".pdf,.xlsx" onchange="handleFiles('compit',this.files)" multiple>
+          <span class="uz-icon" style="font-size:26px">🏦</span>
+          <div class="uz-title">IT Files</div>
+          <div class="uz-sub">AIS PDF, TIS PDF</div>
+          <div class="file-list" id="compit-filelist" style="pointer-events:none"></div>
+        </div>
+      </div>
+    </div>
+    <div class="form-row" style="max-width:300px;margin-bottom:16px">
+      <label class="form-label">Client Name</label>
+      <input type="text" id="comp-client" placeholder="e.g. Sharma Trading Co.">
+    </div>
+    <button class="btn btn-lg" style="background:#0e7490;color:white" onclick="runJob('comp','gstitcomp')">▶ Compare GST vs IT</button>
+  </div>
+
+  <div class="progress-card" id="comp-progress">
+    <div class="progress-header"><span class="progress-label" id="comp-prog-label">⏳ Comparing…</span><span class="progress-pct" id="comp-prog-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-bar" id="comp-prog-bar" style="background:linear-gradient(90deg,#0e7490,#06b6d4)"></div></div>
+    <div class="progress-log" id="comp-prog-log"></div>
+  </div>
+  <div class="result-card" id="comp-result">
+    <div class="result-title">✅ Comparison complete!</div>
+    <div class="result-desc">The GST vs Income Tax comparison report is ready.</div>
+    <div class="result-downloads" id="comp-result-files"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- TAB 7: TALLY CHECK -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane" id="pane-tally">
+
+  <div class="hero hero-indigo">
+    <div class="hero-tag">🔎 Tally Verification</div>
+    <div class="hero-title">Tally vs GST Portal — Are Your Books Matching?</div>
+    <div class="hero-desc">Check whether your Tally sales records match what was actually filed on the GST portal — catch any differences before they become problems.</div>
+  </div>
+
+  <div class="wyg" style="background:var(--indigo-xl);border:1px solid #c7d2fe;color:#3730a3">
+    <div class="wyg-title" style="color:#4338ca">📄 What you'll get</div>
+    <div class="wyg-desc">Compares invoices from your <strong>Tally-exported Excel</strong> against the <strong>GSTR-1 filed on the portal</strong>. Shows exact differences invoice by invoice.</div>
+    <div class="sheet-chips">
+      <span class="sc" style="background:#e0e7ff;color:#4338ca">Matched Invoices</span>
+      <span class="sc" style="background:#e0e7ff;color:#4338ca">Only in Tally (not filed)</span>
+      <span class="sc" style="background:#e0e7ff;color:#4338ca">Only in Portal (not in Tally)</span>
+      <span class="sc" style="background:#e0e7ff;color:#4338ca">Amount Differences</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-indigo">📂</div>
+      <div><div class="card-title">Upload Your Files</div><div class="card-sub">Export your sales register from Tally, and download the filed GSTR-1 JSON from the GST portal.</div></div>
+    </div>
+    <div class="two-col" style="margin-bottom:16px">
+      <div>
+        <div class="sec-label">Tally Sales Excel</div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('tv-tally')">
+          <input type="file" id="tv-tally" accept=".xlsx,.xls" onchange="handleSingleFile('tvtally',this.files)">
+          <span class="uz-icon" style="font-size:26px">💾</span>
+          <div class="uz-title">Tally Export Excel</div>
+          <div class="uz-sub">Sales register from Tally</div>
+          <div id="tvtally-name" class="file-chosen" style="color:#4338ca"></div>
+        </div>
+      </div>
+      <div>
+        <div class="sec-label">GSTR-1 Portal JSON / ZIP</div>
+        <div class="upload-zone upload-zone-sm" onclick="triggerUpload('tv-json')">
+          <input type="file" id="tv-json" accept=".json,.zip" onchange="handleFiles('tvjson',this.files)" multiple>
+          <span class="uz-icon" style="font-size:26px">🌐</span>
+          <div class="uz-title">GSTR-1 Filed JSON</div>
+          <div class="uz-sub">Downloaded from GST portal</div>
+          <div class="file-list" id="tvjson-filelist" style="pointer-events:none"></div>
+        </div>
+      </div>
+    </div>
+    <div class="form-row" style="max-width:300px;margin-bottom:16px">
+      <label class="form-label">Client Name</label>
+      <input type="text" id="tv-client" placeholder="e.g. Sharma Trading Co.">
+    </div>
+    <button class="btn btn-lg" style="background:#4f46e5;color:white" onclick="runJob('tv','tallyvsjson')">▶ Compare Tally vs Portal</button>
+  </div>
+
+  <div class="progress-card" id="tv-progress">
+    <div class="progress-header"><span class="progress-label" id="tv-prog-label">⏳ Comparing…</span><span class="progress-pct" id="tv-prog-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-bar" id="tv-prog-bar" style="background:linear-gradient(90deg,#4f46e5,#6366f1)"></div></div>
+    <div class="progress-log" id="tv-prog-log"></div>
+  </div>
+  <div class="result-card" id="tv-result">
+    <div class="result-title">✅ Tally check complete!</div>
+    <div class="result-desc">The Tally vs Portal comparison is ready to download.</div>
+    <div class="result-downloads" id="tv-result-files"></div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- TAB 8: AUTO DOWNLOAD -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane" id="pane-autodown">
+
+  <div class="hero hero-green">
+    <div class="hero-tag">⬇️ Automated Downloads</div>
+    <div class="hero-title">Auto Download from GST Portal — No Manual Clicking</div>
+    <div class="hero-desc">Enter your GST login credentials and let the tool download all return files automatically. Fetches GSTR-1, GSTR-2B, and GSTR-3B for the entire year in one go.</div>
+  </div>
+
+  <div class="alert alert-safe">
+    <div class="alert-icon">🔒</div>
+    <div class="alert-body">
+      <strong>Your credentials are safe.</strong> Your username and password are only used for this session to log in to the GST portal and download your files. They are <strong>never stored or saved</strong> anywhere on our servers.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon ci-green">🔑</div>
+      <div><div class="card-title">GST Portal Login</div><div class="card-sub">Enter the same credentials you use at <strong>gst.gov.in</strong></div></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-row">
+        <label class="form-label">GSTIN <span class="req">*</span></label>
+        <input type="text" id="dl-gstin" placeholder="e.g. 33ABCDE1234F1ZX" maxlength="15" style="text-transform:uppercase" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label class="form-label">Company Name <span class="req">*</span></label>
+        <input type="text" id="dl-name" placeholder="e.g. ABC Traders" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label class="form-label">Username <span class="req">*</span></label>
+        <input type="text" id="dl-user" placeholder="Your GST portal username" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label class="form-label">Password <span class="req">*</span></label>
+        <input type="password" id="dl-pass" placeholder="Your GST portal password" autocomplete="off">
+      </div>
+      <div class="form-row">
+        <label class="form-label">Financial Year <span class="req">*</span></label>
+        <select id="dl-fy">
+          <option value="2026-27">2026–27</option>
+          <option value="2025-26" selected>2025–26</option>
+          <option value="2024-25">2024–25</option>
+          <option value="2023-24">2023–24</option>
+          <option value="2022-23">2022–23</option>
+          <option value="2021-22">2021–22</option>
+          <option value="2020-21">2020–21</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Returns to Download</label>
+        <select id="dl-type">
+          <optgroup label="── FULL COMBINATIONS ──">
+            <option value="all">All Returns (GSTR-1, 1A, 2B, 2A, 3B)</option>
+            <option value="fast_2b_3b">⚡ FAST — GSTR-2B + 3B only (instant, ~10 min)</option>
+            <option value="combo_1_2b_3b">GSTR-1 + 2B + 3B (no 2A, no 1A)</option>
+            <option value="combo_1_2b_2a_3b">GSTR-1 + 2B + 2A + 3B</option>
+            <option value="combo_1_1a_2b_3b">⚡ GSTR-1 + 1A + 2B + 3B (no 2A)</option>
+          </optgroup>
+          <optgroup label="── SINGLE RETURN ──">
+            <option value="gstr1">GSTR-1 Only</option>
+            <option value="gstr1a">GSTR-1A Only</option>
+            <option value="gstr2b">⚡ GSTR-2B Only (instant download)</option>
+            <option value="gstr2a">GSTR-2A Only</option>
+            <option value="gstr3b">⚡ GSTR-3B Only (instant download)</option>
+          </optgroup>
+          <optgroup label="── PURCHASE RETURNS ──">
+            <option value="gstr2b_2a">GSTR-2B + 2A (both purchase returns)</option>
+          </optgroup>
+        </select>
+        <div class="form-hint">⚡ marked options download instantly — no Generate step needed</div>
+      </div>
+    </div>
+    <div style="margin-top:16px">
+      <button class="btn btn-green btn-lg" id="dl-run-btn" onclick="startAutoDownload()">⬇️ Start Auto Download</button>
+    </div>
+  </div>
+
+  <div class="captcha-card" id="captcha-box">
+    <div class="captcha-title">⚠️ The GST portal is asking for a security code. Please type it below to continue.</div>
+    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+      <img id="captcha-img" src="" alt="Security code" style="height:50px;border-radius:6px;border:1px solid #fcd34d">
+      <button class="btn btn-secondary btn-sm" onclick="refreshCaptcha()">🔄 New Code</button>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <input type="text" id="captcha-input" placeholder="Type the security code here" style="max-width:180px">
+      <button class="btn btn-lg" style="background:#b45309;color:white" onclick="submitCaptcha()">Submit</button>
+    </div>
+  </div>
+
+  <div class="progress-card" id="dl-progress">
+    <div class="progress-header"><span class="progress-label" id="dl-prog-label">⬇️ Downloading…</span><span class="progress-pct" id="dl-prog-pct">0%</span></div>
+    <div class="progress-track"><div class="progress-bar" id="dl-prog-bar" style="background:linear-gradient(90deg,#166534,#22c55e)"></div></div>
+    <div class="progress-log" id="dl-prog-log"></div>
+  </div>
+
+  <div class="result-card" id="dl-result">
+    <div class="result-title">✅ Files downloaded!</div>
+    <div class="result-desc" style="color:#15803d">All files have been loaded automatically. You can now run the Reconciliation report.</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+      <button class="btn btn-green" onclick="switchTabById('gst-recon')">📊 Go to GST Reconciliation →</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════ -->
+<!-- TAB 9: HELP & FAQ -->
+<!-- ══════════════════════════════════════════════ -->
+<div class="tab-pane" id="pane-help">
+
+  <div class="hero hero-orange" style="margin-bottom:24px">
+    <div class="hero-tag">❓ Help &amp; FAQ</div>
+    <div class="hero-title">Frequently Asked Questions</div>
+    <div class="hero-desc">Answers to the most common questions. Still stuck? WhatsApp us — we reply within 2 hours during support hours.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="margin-bottom:16px">Common Questions</div>
+
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">Which tab should I start with for GST annual reconciliation? <span class="faq-arrow">▾</span></button>
+      <div class="faq-a">Start with <strong>GST Reconciliation</strong> (first item in the sidebar). Download your GSTR-1, GSTR-2B, and GSTR-3B files from the GST portal, upload them here, and click Run. You'll get a 7-sheet Excel with everything reconciled automatically.</div>
+    </div>
+
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">What files do I need to download from the GST portal? <span class="faq-arrow">▾</span></button>
+      <div class="faq-a">For GST Reconciliation you need:<br><br>
+        • <strong>GSTR-1</strong> — download as JSON/ZIP from the Returns section<br>
+        • <strong>GSTR-2B</strong> — download as Excel (monthly) from the ITC section<br>
+        • <strong>GSTR-3B</strong> — download as Excel from the Returns section<br><br>
+        <strong>Tip:</strong> Use the <em>Auto Download</em> tab to fetch everything automatically with just your login credentials — no manual downloading needed.</div>
+    </div>
+
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">Where do I get the 26AS, AIS, and TIS files for Income Tax? <span class="faq-arrow">▾</span></button>
+      <div class="faq-a">Log in to <strong>incometax.gov.in</strong>:<br><br>
+        • <strong>26AS</strong> → Services → Annual Tax Statement → Download PDF<br>
+        • <strong>AIS</strong> → e-File → Income Tax Returns → View AIS → Download PDF<br>
+        • <strong>TIS</strong> → Found inside the AIS page → Download TIS → PDF<br><br>
+        Download all as PDF and upload to the <em>Income Tax Recon</em> tab.</div>
+    </div>
+
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">My PDF is not being read properly — what should I do? <span class="faq-arrow">▾</span></button>
+      <div class="faq-a">The most common cause is a <strong>"printed" PDF</strong>. When someone uses File → Print → Save as PDF, the result contains only images — not readable text. Our tool cannot process image-based PDFs.<br><br>
+        <strong>Fix:</strong> Go back to the portal and use the official <strong>Download button</strong> on the website. The original downloaded PDF has readable text and will work correctly.</div>
+    </div>
+
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">Is my data safe? How long are my files kept? <span class="faq-arrow">▾</span></button>
+      <div class="faq-a">Your uploaded files and generated reports are <strong>automatically deleted after 2 hours</strong>. Nothing is stored permanently on our servers. Your GST portal login credentials (used in Auto Download) are never saved — they are used only for that one session and then discarded immediately.</div>
+    </div>
+
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">The processing seems stuck or taking too long — what do I do? <span class="faq-arrow">▾</span></button>
+      <div class="faq-a">Large file batches can take up to 3 minutes. If the progress bar hasn't moved for more than 5 minutes, refresh the page and try again with the same files. If the problem continues, WhatsApp us at <strong>+91 78459 98125</strong> with details of what you uploaded and we'll help you directly.</div>
+    </div>
+
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">What is the difference between Assessment Year and Financial Year? <span class="faq-arrow">▾</span></button>
+      <div class="faq-a">
+        • <strong>Financial Year (FY)</strong> — the year the income was earned. Example: FY 2024-25 = April 2024 to March 2025. Used for GST filings.<br><br>
+        • <strong>Assessment Year (AY)</strong> — the year you file the Income Tax Return for the previous year's income. Example: AY 2025-26 = the ITR you file in 2025 for income earned in FY 2024-25.<br><br>
+        So if you earned income in FY 2024-25, your GST reports use "FY 2024-25" and your IT Recon uses "AY 2025-26".
+      </div>
+    </div>
+
+    <div class="faq-item">
+      <button class="faq-q" onclick="toggleFaq(this)">I use Tally — can this tool verify my GST filings? <span class="faq-arrow">▾</span></button>
+      <div class="faq-a">Yes! Use the <strong>Tally Check</strong> tab in the sidebar. Export your Sales Register from Tally as an Excel file, download the filed GSTR-1 JSON from the portal, and upload both. The tool will show you invoice-by-invoice: what matched, what's missing from the portal, what's missing from Tally, and any amounts that differ.</div>
+    </div>
+  </div>
+
+  <!-- ── SOFTWARE DOWNLOADS ── -->
+  <div id="software-downloads" class="card" style="border-color:rgba(245,158,11,.35);background:linear-gradient(135deg,#fffbeb 0%,#fff 100%)">
+    <div class="card-head">
+      <div class="card-icon" style="background:#fef3c7">💾</div>
+      <div>
+        <div class="card-title" style="color:#92400e">Download RPR Tax Suite Software</div>
+        <div class="card-sub">Install the desktop application on your PC. Try the Demo for free — upgrade to Full when you're ready.</div>
+      </div>
+    </div>
+
+    <div class="two-col" style="margin-bottom:16px">
+      <!-- DEMO EXE -->
+      <div style="background:#f8fafc;border:1.5px solid var(--bdr);border-radius:var(--r-sm);padding:18px 20px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <span style="font-size:28px">🆓</span>
+          <div>
+            <div style="font-family:'Outfit',sans-serif;font-weight:800;font-size:15px;color:var(--text)">Demo Version</div>
+            <div style="font-size:12px;color:var(--text3)">Free · 14-day trial · 5 clients</div>
+          </div>
+        </div>
+        <ul style="font-size:13px;color:var(--text2);line-height:1.9;margin:0 0 14px 0;padding-left:18px">
+          <li>GST Suite (GSTR-1, 2B, 3B)</li>
+          <li>IT Suite (26AS, AIS, TIS)</li>
+          <li>Up to 5 clients</li>
+          <li>14-day expiry</li>
+        </ul>
+        <a href="/download/demo" class="btn btn-secondary" style="width:100%;justify-content:center;font-size:13.5px" download>
+          ⬇ Download DEMO.EXE
+        </a>
+      </div>
+
+      <!-- FULL EXE -->
+      <div style="background:linear-gradient(135deg,#fffbeb,#fef9ec);border:2px solid var(--amber);border-radius:var(--r-sm);padding:18px 20px;position:relative">
+        <div style="position:absolute;top:-11px;left:16px;background:var(--amber);color:#000;font-size:11px;font-weight:800;padding:2px 10px;border-radius:100px;font-family:'Outfit',sans-serif">⭐ Full Version</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;margin-top:4px">
+          <span style="font-size:28px">🚀</span>
+          <div>
+            <div style="font-family:'Outfit',sans-serif;font-weight:800;font-size:15px;color:var(--text)">Full Version</div>
+            <div style="font-size:12px;color:var(--text3)">₹2,500/yr (Basic) · ₹6,500/yr (Pro)</div>
+          </div>
+        </div>
+        <ul style="font-size:13px;color:var(--text2);line-height:1.9;margin:0 0 14px 0;padding-left:18px">
+          <li>Everything in Demo</li>
+          <li>Unlimited financial years</li>
+          <li>20 clients (Basic) / Unlimited (Pro)</li>
+          <li>Priority WhatsApp support</li>
+        </ul>
+        <a href="https://wa.me/917845998125?text=Hi%2C%20I%20want%20to%20buy%20the%20Full%20version%20of%20RPR%20Tax%20Suite" target="_blank" class="btn btn-amber" style="width:100%;justify-content:center;font-size:13.5px">
+          💬 WhatsApp to Buy Full Version →
+        </a>
+      </div>
+    </div>
+
+    <div class="alert alert-warn" style="margin-bottom:12px">
+      <div class="alert-icon">🔑</div>
+      <div class="alert-body"><strong>License activation:</strong> After installing, run <code style="background:rgba(0,0,0,.06);padding:1px 6px;border-radius:4px">GET_MY_MACHINE_ID.bat</code> to get your Machine ID, then WhatsApp it to us. Your license key will be sent back within minutes.</div>
+    </div>
+
+    <!-- Non-Technical Launcher note -->
+    <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid #86efac;border-radius:var(--r-sm);padding:16px 18px;display:flex;gap:14px;align-items:flex-start">
+      <span style="font-size:26px;flex-shrink:0">🟢</span>
+      <div>
+        <div style="font-family:'Outfit',sans-serif;font-weight:800;font-size:14px;color:#15803d;margin-bottom:4px">Non-Technical? Use LAUNCH_SUITE.bat</div>
+        <div style="font-size:13px;color:#166534;line-height:1.6">
+          No Python knowledge needed. Just double-click <strong>LAUNCH_SUITE.bat</strong> — it checks Python, installs if needed, and opens the full GUI launcher (<strong>RPR_Suite_Launcher.py</strong>) automatically. Click one button to start everything.
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <span style="background:#dcfce7;border:1px solid #86efac;border-radius:5px;padding:3px 10px;font-size:12px;font-weight:700;color:#15803d">📁 LAUNCH_SUITE.bat</span>
+          <span style="background:#dcfce7;border:1px solid #86efac;border-radius:5px;padding:3px 10px;font-size:12px;font-weight:700;color:#15803d">🐍 RPR_Suite_Launcher.py</span>
+          <span style="background:#dcfce7;border:1px solid #86efac;border-radius:5px;padding:3px 10px;font-size:12px;font-weight:700;color:#15803d">✅ No CMD needed</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DEMO VIDEO ── -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-icon" style="background:#fee2e2">▶️</div>
+      <div>
+        <div class="card-title">Watch: How RPR Tax Suite Works</div>
+        <div class="card-sub">Full walkthrough — GST auto-download, reconciliation, IT filing, and the new GUI Launcher — from login to Excel report.</div>
+      </div>
+    </div>
+
+    <!-- Tab switcher: Local vs YouTube -->
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button id="vid-tab-local" onclick="switchVideo('local')"
+        style="padding:6px 16px;border-radius:20px;border:1.5px solid var(--amber);background:var(--amber);color:#000;font-weight:700;font-size:13px;cursor:pointer">
+        📁 Local Video
+      </button>
+      <button id="vid-tab-yt" onclick="switchVideo('yt')"
+        style="padding:6px 16px;border-radius:20px;border:1.5px solid var(--bdr2);background:transparent;color:var(--text2);font-weight:700;font-size:13px;cursor:pointer">
+        ▶ YouTube
+      </button>
+    </div>
+
+    <!-- LOCAL VIDEO PANEL -->
+    <div id="vid-panel-local" style="border-radius:var(--r-sm);overflow:hidden;background:#000">
+      <video id="local-video-player" controls style="width:100%;max-height:480px;display:block"
+        poster="">
+        <source src="RPR_Suite_Demo_Video.mp4" type="video/mp4">
+        <source src="/static/RPR_Suite_Demo_Video.mp4" type="video/mp4">
+        Your browser does not support the video tag.
+      </video>
+    </div>
+
+    <!-- YOUTUBE PANEL (hidden by default) -->
+    <div id="vid-panel-yt" style="display:none;position:relative;padding-bottom:56.25%;height:0;border-radius:var(--r-sm);overflow:hidden;background:#0f172a">
+      <iframe
+        id="demo-video-frame"
+        src="about:blank"
+        data-src="https://www.youtube.com/embed/YOUR_VIDEO_ID"
+        title="RPR Tax Suite Demo"
+        frameborder="0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowfullscreen
+        style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:var(--r-sm)">
+      </iframe>
+      <div id="demo-video-placeholder" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:10px">
+        <div style="font-size:42px">▶</div>
+        <div style="font-family:'Outfit',sans-serif;font-weight:700;font-size:14px">Paste your YouTube Video ID above</div>
+        <div style="font-size:12px;opacity:.6">Replace YOUR_VIDEO_ID in the HTML with your actual YouTube ID</div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:12.5px;color:var(--text3)">💡 <strong>Local video</strong> plays from the same folder as this HTML file. For YouTube, replace <code style="background:var(--bg2);padding:1px 5px;border-radius:3px">YOUR_VIDEO_ID</code> in the source.</span>
+      <a href="RPR_Suite_Demo_Video.mp4" download class="btn btn-secondary btn-sm">⬇ Download Video</a>
+    </div>
+  </div>
+
+  <div class="card">
+      <div>
+        <div class="card-title">Contact RPR Associates</div>
+        <div class="card-sub">Support hours: Monday–Saturday, 9 AM to 7 PM IST. We typically reply within 2 hours on WhatsApp.</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <a href="https://wa.me/917845998125" target="_blank" class="btn btn-green btn-lg">💬 WhatsApp: +91 78459 98125</a>
+      <a href="mailto:auprabakaran@gmail.com" class="btn btn-secondary btn-lg">✉️ auprabakaran@gmail.com</a>
+    </div>
+  </div>
+
+  <!-- Quick-start guide card -->
+  <div class="card">
+    <div class="card-title" style="margin-bottom:16px">🚀 Quick Start Guide</div>
+    <div class="steps">
+      <div class="step-row">
+        <div class="step-circle">1</div>
+        <div class="step-body">
+          <div class="step-title">Download files from the GST portal</div>
+          <div class="step-desc">Go to <strong>gst.gov.in</strong> and download your GSTR-1 (sales), GSTR-2B (purchases), and GSTR-3B (monthly returns) for the year. Or use <em>Auto Download</em> to skip this step.</div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">2</div>
+        <div class="step-body">
+          <div class="step-title">Upload &amp; run GST Reconciliation</div>
+          <div class="step-desc">Go to the <em>GST Reconciliation</em> tab, enter the client name and year, upload the files, and click Run. Takes about 1-2 minutes.</div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-circle">3</div>
+        <div class="step-body">
+          <div class="step-title">Download &amp; review your Excel report</div>
+          <div class="step-desc">Once done, a download button appears. Save the Excel file. The report clearly shows everything reconciled — and highlights anything that needs attention.</div>
+        </div>
+      </div>
+      <div class="step-row" style="border:0">
+        <div class="step-circle">4</div>
+        <div class="step-body">
+          <div class="step-title">Optionally run Income Tax Recon &amp; Combined Report</div>
+          <div class="step-desc">For a full ITR readiness picture, also run the <em>Income Tax Recon</em> tab (upload 26AS, AIS, TIS from incometax.gov.in), then use the <em>Full Combined Report</em> tab to merge both into one master workbook.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /page -->
+
+<div class="page-footer">
+  RPR Associates · Tax Automation Suite v10.6 · Support: +91 78459 98125 · auprabakaran@gmail.com
+</div>
+</div><!-- /main -->
+
+<script>
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+const fileStore = {};
+const jobStore  = {};
+
+// ═══════════════════════════════════════════
+// TAB SWITCHING
+// ═══════════════════════════════════════════
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item,.mtab-btn').forEach(b => b.classList.remove('active'));
+  const pane = document.getElementById('pane-' + id);
+  if (pane) pane.classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+function switchTabById(id) {
+  const btn = [...document.querySelectorAll('.nav-item,.mtab-btn')].find(b =>
+    b.getAttribute('onclick') && b.getAttribute('onclick').includes("'"+id+"'"));
+  switchTab(id, btn || null);
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+// ═══════════════════════════════════════════
+// FILE UPLOADS
+// ═══════════════════════════════════════════
+function triggerUpload(inputId) {
+  const inp = document.getElementById(inputId);
+  if (inp) inp.click();
+}
+
+function handleFiles(key, files) {
+  if (!files || !files.length) return;
+  fileStore[key] = fileStore[key] ? [...fileStore[key], ...Array.from(files)] : Array.from(files);
+  renderFileList(key);
+  updateRunBtn(key);
+}
+
+function handleSingleFile(key, files) {
+  if (!files || !files.length) return;
+  fileStore[key] = [files[0]];
+  const el = document.getElementById(key + '-name');
+  if (el) { el.textContent = '✓ ' + files[0].name; el.style.display = 'block'; }
+  // Re-evaluate run buttons that depend on single-file uploads
+  updateItRunBtn();
+  updateMbRunBtn();
+}
+
+function updateItRunBtn() {
+  const btn = document.getElementById('it-run-btn');
+  if (!btn) return;
+  btn.disabled = !(fileStore['it26as'] && fileStore['it26as'].length);
+}
+
+function updateMbRunBtn() {
+  const btn = document.getElementById('mb-run-btn');
+  if (!btn) return;
+  btn.disabled = !(
+    fileStore['mbgst'] && fileStore['mbgst'].length &&
+    fileStore['mbit']  && fileStore['mbit'].length
+  );
+}
+
+function renderFileList(key) {
+  const el = document.getElementById(key + '-filelist');
+  if (!el || !fileStore[key]) return;
+  el.innerHTML = fileStore[key].map(f =>
+    `<div class="file-item"><span style="font-size:14px">📄</span><span class="fi-name">${f.name}</span><span class="fi-size">${fmtSize(f.size)}</span></div>`
+  ).join('');
+}
+
+function clearFiles(key) {
+  fileStore[key] = [];
+  const listEl = document.getElementById(key + '-filelist');
+  if (listEl) listEl.innerHTML = '';
+  const countEl = document.getElementById(key + '-file-count');
+  if (countEl) countEl.textContent = '';
+  updateRunBtn(key);
+}
+
+function updateRunBtn(key) {
+  const btn = document.getElementById(key + '-run-btn');
+  if (!btn) return;
+  const hasFiles = fileStore[key] && fileStore[key].length > 0;
+  btn.disabled = !hasFiles;
+  const countEl = document.getElementById(key + '-file-count');
+  if (countEl && hasFiles) {
+    countEl.textContent = `${fileStore[key].length} file${fileStore[key].length>1?'s':''} selected`;
+  }
+}
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/(1024*1024)).toFixed(1) + ' MB';
+}
+
+// ═══════════════════════════════════════════
+// DRAG & DROP
+// ═══════════════════════════════════════════
+document.querySelectorAll('.upload-zone').forEach(zone => {
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const inp = zone.querySelector('input[type=file]');
+    if (inp && e.dataTransfer.files.length) {
+      // Derive fileStore key from the onchange attribute to stay consistent
+      const onchange = inp.getAttribute('onchange') || '';
+      const m = onchange.match(/handleFiles\('([^']+)'/);
+      if (m) {
+        handleFiles(m[1], e.dataTransfer.files);
+      }
+    }
+  });
+});
+
+// ═══════════════════════════════════════════
+// PROGRESS & RESULT
+// ═══════════════════════════════════════════
+function showProgress(key, label) {
+  const card = document.getElementById(key + '-progress');
+  if (card) card.classList.add('active');
+  const lbl = document.getElementById(key + '-prog-label');
+  if (lbl) lbl.textContent = label || '⏳ Processing…';
+  setProgress(key, 0);
+}
+
+function setProgress(key, pct, label) {
+  const bar = document.getElementById(key + '-prog-bar');
+  const pctEl = document.getElementById(key + '-prog-pct');
+  const lbl = document.getElementById(key + '-prog-label');
+  if (bar) bar.style.width = pct + '%';
+  if (pctEl) pctEl.textContent = pct + '%';
+  if (label && lbl) lbl.textContent = label;
+}
+
+function addLog(key, msg) {
+  const log = document.getElementById(key + '-prog-log');
+  if (!log) return;
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-dot"></span><span>${msg}</span>`;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function showResult(key, files, dlEndpoint) {
+  const card = document.getElementById(key + '-result');
+  if (!card) return;
+  card.classList.add('active');
+  const container = document.getElementById(key + '-result-files');
+  if (!container || !files) return;
+  const ep = dlEndpoint || '/api/download';
+  container.innerHTML = files.map(f => `
+    <div class="dl-row">
+      <span class="dl-icon">📊</span>
+      <div class="dl-info">
+        <div class="dl-name">${f.name}</div>
+        <div class="dl-desc">${f.desc || 'Your generated report'}</div>
+      </div>
+      <a href="${f.url || ep + '/' + f.jobId + '/' + f.name}" class="btn btn-primary dl-btn" download>⬇ Download</a>
+    </div>`).join('');
+}
+
+// ═══════════════════════════════════════════
+// API CALLS
+// ═══════════════════════════════════════════
+async function runRecon() {
+  const client = document.getElementById('r-client').value.trim();
+  const fy = document.getElementById('r-fy').value;
+  if (!client) { alert('Please enter a client name before running.'); return; }
+  if (!fileStore['recon'] || !fileStore['recon'].length) { alert('Please upload at least one file.'); return; }
+
+  showProgress('recon', '⏳ Uploading your files…');
+  addLog('recon', 'Uploading ' + fileStore['recon'].length + ' file(s)…');
+
+  const fd = new FormData();
+  fd.append('client_name', client);
+  fd.append('fy', fy);
+  fd.append('gstin', document.getElementById('r-gstin').value || '');
+  fd.append('report_title', document.getElementById('r-title').value || '');
+  fileStore['recon'].forEach(f => fd.append('files', f));
+
+  try {
+    setProgress('recon', 15, '⏳ Uploading files to server…');
+    const r = await fetch('/api/upload', {method:'POST', body:fd});
+    if (!r.ok) throw new Error('Upload failed: ' + r.status);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    jobStore['recon'] = data.job_id;
+    addLog('recon', '✓ Files uploaded successfully');
+    setProgress('recon', 30, '⏳ Processing your GST files…');
+    pollJob('recon', data.job_id);
+  } catch (err) {
+    setProgress('recon', 0, '❌ Error: ' + err.message);
+    addLog('recon', 'Error: ' + err.message);
+  }
+}
+
+async function runJob(key, type) {
+  const clientEl = document.getElementById(key + '-client');
+  const client = clientEl ? clientEl.value.trim() : 'Client';
+
+  showProgress(key, '⏳ Processing…');
+  addLog(key, 'Starting…');
+
+  const fd = new FormData();
+  fd.append('job_type', type);
+  fd.append('client_name', client);
+
+  // Collect all fileStore entries whose key starts with this tab's prefix
+  // (covers both multi-file keys like 'g1', 'g2b' and single-file keys like 'it26as', 'mbgst')
+  Object.keys(fileStore).forEach(k => {
+    if (k === key || k.startsWith(key)) {
+      if (fileStore[k]) fileStore[k].forEach(f => fd.append('files', f));
+    }
+  });
+
+  try {
+    setProgress(key, 20, '⏳ Uploading files…');
+    const endpoint = type === 'itrecon' ? '/api/it-upload' : '/api/upload';
+    const r = await fetch(endpoint, {method:'POST', body:fd});
+    if (!r.ok) throw new Error('Upload failed');
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    jobStore[key] = data.job_id;
+    setProgress(key, 35, '⏳ Processing…');
+    addLog(key, '✓ Files uploaded');
+    pollJob(key, data.job_id, type);
+  } catch(err) {
+    setProgress(key, 0, '❌ ' + err.message);
+  }
+}
+
+function pollJob(key, jobId, type) {
+  const statusEndpoint = (type === 'itrecon') ? '/api/it-job/' : '/api/job/';
+  const dlEndpoint     = (type === 'itrecon') ? '/api/it-dl'   : '/api/download';
+  let attempts = 0;
+  const maxAttempts = 120;
+
+  const timer = setInterval(async () => {
+    attempts++;
+    if (attempts > maxAttempts) {
+      clearInterval(timer);
+      setProgress(key, 0, '❌ Timed out — please try again');
+      return;
+    }
+    try {
+      const r = await fetch(statusEndpoint + jobId);
+      const data = await r.json();
+      if (data.progress !== undefined) setProgress(key, Math.round(data.progress));
+      if (data.log) addLog(key, data.log);
+      if (data.status === 'done') {
+        clearInterval(timer);
+        setProgress(key, 100, '✅ Done!');
+        const files = (data.files || []).map(f => ({
+          name: f,
+          url: dlEndpoint + '/' + jobId + '/' + encodeURIComponent(f),
+          desc: 'Your generated report'
+        }));
+        showResult(key, files.length ? files : [{name:'Report.xlsx', url: dlEndpoint+'/'+jobId+'/output.xlsx', desc:'Your report'}]);
+      } else if (data.status === 'error') {
+        clearInterval(timer);
+        setProgress(key, 0, '❌ ' + (data.error || 'Processing failed'));
+        addLog(key, 'Error: ' + (data.error || 'Unknown error'));
+      }
+    } catch(e) { /* keep polling */ }
+  }, 2500);
+}
+
+// ═══════════════════════════════════════════
+// AUTO DOWNLOAD
+// ═══════════════════════════════════════════
+async function startAutoDownload() {
+  const gstin = document.getElementById('dl-gstin').value.trim();
+  const name  = document.getElementById('dl-name').value.trim();
+  const user  = document.getElementById('dl-user').value.trim();
+  const pass  = document.getElementById('dl-pass').value;
+  const fy    = document.getElementById('dl-fy').value;
+  const type  = document.getElementById('dl-type').value;
+  if (!user || !pass) { alert('Please enter your GST portal username and password.'); return; }
+
+  showProgress('dl', '⬇️ Connecting to GST portal…');
+  addLog('dl', 'Starting download for FY ' + fy + '…');
+
+  try {
+    const r = await fetch('/api/auto-download', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({gstin, company_name:name, username:user, password:pass, fy, download_type:type})
+    });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    if (data.job_id) {
+      jobStore['dl'] = data.job_id;
+      setProgress('dl', 20, '⬇️ Logging in to GST portal…');
+      pollJob('dl', data.job_id, 'autodl');
+    }
+    if (data.captcha_required) showCaptcha(data.job_id);
+  } catch(err) {
+    setProgress('dl', 0, '❌ ' + err.message);
+  }
+}
+
+function showCaptcha(jobId) {
+  jobStore['dl'] = jobId;
+  document.getElementById('captcha-box').classList.add('active');
+  document.getElementById('captcha-img').src = '/api/captcha-img/' + jobId + '?t=' + Date.now();
+}
+
+async function refreshCaptcha() {
+  const jid = jobStore['dl'];
+  if (!jid) return;
+  try {
+    await fetch('/api/captcha-refresh/' + jid, {method:'POST'});
+    document.getElementById('captcha-img').src = '/api/captcha-img/' + jid + '?t=' + Date.now();
+  } catch(e) {}
+}
+
+async function submitCaptcha() {
+  const jid = jobStore['dl'];
+  const code = document.getElementById('captcha-input').value.trim();
+  if (!code) { alert('Please type the security code.'); return; }
+  try {
+    await fetch('/api/captcha-submit/' + jid, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({captcha:code})
+    });
+    document.getElementById('captcha-box').classList.remove('active');
+    document.getElementById('captcha-input').value = '';
+    setProgress('dl', 30, '⬇️ Downloading your files…');
+  } catch(e) {}
+}
+
+// ═══════════════════════════════════════════
+// IT AUTO DOWNLOAD
+// ═══════════════════════════════════════════
+async function startITAutoDownload() {
+  const user = document.getElementById('it-ad-user').value.trim();
+  const pass = document.getElementById('it-ad-pass').value;
+  if (!user || !pass) { alert('Please enter your IT portal username (PAN) and password.'); return; }
+
+  const pw = document.getElementById('it-ad-pw');
+  pw.style.display = 'block';
+  document.getElementById('it-ad-label').textContent = '⏳ Connecting to IT portal…';
+  document.getElementById('it-ad-bar').style.width = '0%';
+  document.getElementById('it-ad-pct').textContent = '0%';
+  document.getElementById('it-ad-dw').style.display = 'none';
+  document.getElementById('it-ad-captcha-card').classList.remove('active');
+
+  try {
+    const r = await fetch('/api/it-auto-download', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: user, password: pass})
+    });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    if (data.job_id) {
+      jobStore['it-ad'] = data.job_id;
+      document.getElementById('it-ad-bar').style.width = '20%';
+      document.getElementById('it-ad-pct').textContent = '20%';
+      document.getElementById('it-ad-label').textContent = '⏳ Logging in…';
+      pollITAutoDownload(data.job_id);
+    }
+    if (data.captcha_required || data.otp_required) showITAdCaptcha(data.job_id);
+  } catch(err) {
+    document.getElementById('it-ad-label').textContent = '❌ ' + err.message;
+  }
+}
+
+function pollITAutoDownload(jobId) {
+  let attempts = 0;
+  const timer = setInterval(async () => {
+    attempts++;
+    if (attempts > 120) { clearInterval(timer); return; }
+    try {
+      const r = await fetch('/api/it-job/' + jobId);
+      const data = await r.json();
+      if (data.progress !== undefined) {
+        document.getElementById('it-ad-bar').style.width = data.progress + '%';
+        document.getElementById('it-ad-pct').textContent = Math.round(data.progress) + '%';
+      }
+      if (data.log) {
+        const log = document.getElementById('it-ad-log');
+        const line = document.createElement('div');
+        line.className = 'log-line';
+        line.innerHTML = `<span class="log-dot" style="background:#8b5cf6"></span><span>${data.log}</span>`;
+        log.appendChild(line); log.scrollTop = log.scrollHeight;
+      }
+      if (data.captcha_required || data.otp_required) { clearInterval(timer); showITAdCaptcha(jobId); }
+      if (data.status === 'done') {
+        clearInterval(timer);
+        document.getElementById('it-ad-label').textContent = '✅ Download complete!';
+        document.getElementById('it-ad-bar').style.width = '100%';
+        document.getElementById('it-ad-pct').textContent = '100%';
+        document.getElementById('it-ad-dw').style.display = 'block';
+      } else if (data.status === 'error') {
+        clearInterval(timer);
+        document.getElementById('it-ad-label').textContent = '❌ ' + (data.error || 'Download failed');
+      }
+    } catch(e) { /* keep polling */ }
+  }, 2500);
+}
+
+function showITAdCaptcha(jobId) {
+  jobStore['it-ad'] = jobId;
+  document.getElementById('it-ad-captcha-card').classList.add('active');
+  document.getElementById('it-ad-captcha-img').src = '/api/captcha-img/' + jobId + '?t=' + Date.now();
+}
+function itAdRefreshShot() {
+  const jid = jobStore['it-ad'];
+  if (jid) document.getElementById('it-ad-captcha-img').src = '/api/captcha-img/' + jid + '?t=' + Date.now();
+}
+async function itAdSubmit() {
+  const jid = jobStore['it-ad'];
+  const code = document.getElementById('it-ad-captcha-input').value.trim();
+  if (!code) { alert('Please enter the OTP, CAPTCHA, or type SKIP.'); return; }
+  try {
+    await fetch('/api/captcha-submit/' + jid, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({captcha: code})
+    });
+    document.getElementById('it-ad-captcha-card').classList.remove('active');
+    document.getElementById('it-ad-captcha-input').value = '';
+    document.getElementById('it-ad-label').textContent = '⏳ Continuing download…';
+    pollITAutoDownload(jid);
+  } catch(e) {}
+}
+async function itAdTransfer() {
+  const jid = jobStore['it-ad'];
+  const status = document.getElementById('it-ad-transfer-status');
+  status.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/it-ad-transfer/' + jid, {method:'POST'});
+    const data = await r.json();
+    status.textContent = data.message || '✓ Files loaded into upload zones';
+  } catch(e) { status.textContent = 'Transfer failed — please download manually'; }
+}
+
+// ═══════════════════════════════════════════
+// DEMO VIDEO TABS
+// ═══════════════════════════════════════════
+function switchVideo(tab) {
+  const localPanel = document.getElementById('vid-panel-local');
+  const ytPanel    = document.getElementById('vid-panel-yt');
+  const btnLocal   = document.getElementById('vid-tab-local');
+  const btnYt      = document.getElementById('vid-tab-yt');
+  const iframe     = document.getElementById('demo-video-frame');
+  const placeholder= document.getElementById('demo-video-placeholder');
+
+  if (tab === 'local') {
+    localPanel.style.display = 'block';
+    ytPanel.style.display    = 'none';
+    btnLocal.style.background    = 'var(--amber)';
+    btnLocal.style.borderColor   = 'var(--amber)';
+    btnLocal.style.color         = '#000';
+    btnYt.style.background       = 'transparent';
+    btnYt.style.borderColor      = 'var(--bdr2)';
+    btnYt.style.color            = 'var(--text2)';
+  } else {
+    localPanel.style.display = 'none';
+    ytPanel.style.display    = 'block';
+    btnYt.style.background       = 'var(--amber)';
+    btnYt.style.borderColor      = 'var(--amber)';
+    btnYt.style.color            = '#000';
+    btnLocal.style.background    = 'transparent';
+    btnLocal.style.borderColor   = 'var(--bdr2)';
+    btnLocal.style.color         = 'var(--text2)';
+    // Lazy-load YouTube only when tab opened
+    if (iframe && iframe.src === 'about:blank') {
+      const realSrc = iframe.getAttribute('data-src') || '';
+      if (!realSrc.includes('YOUR_VIDEO_ID')) {
+        iframe.src = realSrc;
+        if (placeholder) placeholder.style.display = 'none';
+      } else {
+        if (placeholder) placeholder.style.display = 'flex';
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════
+// MOBILE SIDEBAR
+// ═══════════════════════════════════════════
+function toggleMobileSidebar() {
+  document.querySelector('.sidebar').classList.toggle('mobile-open');
+  document.getElementById('mobile-overlay').classList.toggle('active');
+}
+function closeMobileSidebar() {
+  document.querySelector('.sidebar').classList.remove('mobile-open');
+  document.getElementById('mobile-overlay').classList.remove('active');
+}
+
+// Close sidebar when a nav item is tapped on mobile
+document.querySelectorAll('.nav-item').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (window.innerWidth <= 900) closeMobileSidebar();
+  });
+});
+// ═══════════════════════════════════════════
+function toggleFaq(btn) {
+  const answer = btn.nextElementSibling;
+  const isOpen = answer.classList.contains('open');
+  document.querySelectorAll('.faq-a').forEach(a => a.classList.remove('open'));
+  document.querySelectorAll('.faq-q').forEach(q => q.classList.remove('open'));
+  if (!isOpen) {
+    answer.classList.add('open');
+    btn.classList.add('open');
+  }
+}
+</script>
+</body>
+</html>

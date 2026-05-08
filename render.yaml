@@ -1,20 +1,15 @@
 services:
   - type: web
-    name: gst-it-portal
-    runtime: docker
-    region: singapore
-    dockerfilePath: ./Dockerfile
+    name: rpr-gst-demo
+    env: python
+    buildCommand: pip install -r requirements_demo.txt
+    startCommand: gunicorn demo_app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 300
     envVars:
-      - key: PYTHONUNBUFFERED
-        value: "true"
-      - key: RENDER
-        value: "true"
-      - key: CHROME_BIN
-        value: /usr/bin/chromium
-      - key: CHROMEDRIVER_PATH
-        value: /usr/bin/chromedriver
-    plan: standard
-    healthCheckPath: /
-    # 512MB /dev/shm prevents Chromium crashes under memory pressure
-    dockerCommand: >
-      /bin/sh -c "mount -t tmpfs -o size=512m tmpfs /dev/shm 2>/dev/null || true && exec gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 600 --worker-class gthread --keep-alive 5"
+      - key: DEMO_MODE
+        value: online
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    disk:
+      name: gst-demo-storage
+      mountPath: /tmp/gst_demo
+      sizeGB: 1

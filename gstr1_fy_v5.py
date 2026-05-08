@@ -469,7 +469,7 @@ def write_b2cs(ws, d, pl, fmts, nc):
         rows.append([pl,rec.get("typ",""),rec.get("pos",""),rec.get("rt",0),
                      tv,ig,cg,sg,ig+cg+sg,rec.get("etin","")])
     tv,ig,cg,sg=_simple_write(ws,rows,fmts,nc,10,4,5,6,7,pl)
-    return {"tv":tv,"ig":ig,"cg":cg,"sg":sg}
+    return {"tv":tv,"ig":ig,"cg":cg,"sg":sg,"val":tv+ig+cg+sg}  # FIX: include invoice val
 
 def write_b2cl(ws, d, pl, fmts, nc):
     rows=[]
@@ -1122,7 +1122,7 @@ def extract_fy(zip_paths, trader_name="", out_path=None):
             "cdnr_dr":scdnr.get("dr",0),"hsn_tv":shsn.get("tv",0),
             "tot_ig":tot_ig,"tot_cg":tot_cg,"tot_sg":tot_sg,
             "tot_tax":tot_ig+tot_cg+tot_sg,
-            "inv_val":sb2b.get("val",0)+sb2cl.get("val",0)+sexp.get("val",0),
+            "inv_val":sb2b.get("val",0)+sb2cs.get("val",0)+sb2cl.get("val",0)+sexp.get("val",0),  # FIX: added sb2cs val
         }
 
         # Master sheet rows (B2B invoices)

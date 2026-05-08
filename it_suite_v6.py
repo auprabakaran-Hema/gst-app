@@ -95,10 +95,10 @@ IT_DASHBOARD   = "https://eportal.incometax.gov.in/iec/foservices/#/dashboard"
 IT_PROFILE_URL = "https://eportal.incometax.gov.in/iec/foservices/#/dashboard/myProfile/profileDetail"
 TRACES_URL     = "https://traces.tdscpc.gov.in"
 TRACES_URL_OLD = "https://www.tdscpc.gov.in"
-PAGE_WAIT      = 10
-SHORT_WAIT     = 4
-ACTION_WAIT    = 1.5
-CLIENT_GAP     = 2   # reduced — parallel batching handles pacing
+PAGE_WAIT      = 4    # was 10 — smart waits replace fixed sleeps
+SHORT_WAIT     = 1.5  # was 4
+ACTION_WAIT    = 0.8  # was 1.5
+CLIENT_GAP     = 2
 FY_LABEL       = "2025-26"   # ← Change ONLY this line each new financial year
 # AY is always FY start_year+1 — computed automatically — never gets out of sync
 _fy_yr         = int(FY_LABEL.split("-")[0])
@@ -224,9 +224,19 @@ def make_driver(download_dir):
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--disable-extensions")
+        # Speed: disable heavy features not needed for automation
+        opts.add_argument("--disable-images")          # skip image loading (~20% faster)
+        opts.add_argument("--disable-javascript-harmony-shipping")
+        opts.add_argument("--disable-background-networking")
+        opts.add_argument("--disable-default-apps")
+        opts.add_argument("--disable-sync")
+        opts.add_argument("--no-first-run")
+        opts.add_argument("--disable-translate")
+        opts.add_argument("--disable-plugins")
+        opts.add_argument("--disable-logging")
         opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         opts.add_experimental_option("useAutomationExtension", False)
-        # Eager page load: don't wait for all resources, just DOM ready (30-50% faster)
+        # Eager page load: don't wait for all resources, just DOM ready (~40% faster)
         opts.page_load_strategy = "eager"
         # On Render, use system chromium; locally use webdriver_manager
         if _IS_SERVER:
@@ -441,11 +451,18 @@ def get_profile_details(driver, pan_hint=None, log=None):
         _dismiss_portal_popup(driver, log)
         time.sleep(2)
 
-        # Wait for the profile card to load (look for "Date of Birth" label)
+        # Wait for the profile card to load.
+        # Individuals  → "Date of Birth"
+        # Firms / HUF  → "Date of Formation"   (confirmed from screenshot 03-May-2026)
+        # Both labels must be checked so the wait doesn't time out for firm accounts.
+        _DATE_LABELS = (
+            "date of birth", "date of formation",
+            "date of incorporation", "date of registration",
+        )
         for _ in range(20):
             try:
-                body_text = driver.find_element(By.TAG_NAME, "body").text
-                if "Date of Birth" in body_text or "date of birth" in body_text.lower():
+                body_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+                if any(lbl in body_text for lbl in _DATE_LABELS):
                     break
             except Exception:
                 pass
@@ -504,26 +521,55 @@ def get_profile_details(driver, pan_hint=None, log=None):
             except Exception:
                 pass
 
-        # ── Extract Date of Birth ──────────────────────────────────
-        # DOB format on profile page: DD-MMM-YYYY  (e.g. 01-Mar-1985)
-        # Also handle DD/MM/YYYY or DD-MM-YYYY variants just in case
+        # ── Extract Date of Birth / Date of Formation ──────────────────
+        # Individuals → "Date of Birth"    (format: DD-MMM-YYYY)
+        # Firms/LLP   → "Date of Formation"  (confirmed screenshot 03-May-2026)
+        # Companies   → "Date of Incorporation"
+        # The PDF password formula is the same regardless:
+        #   PAN (lowercase) + date as DDMMYYYY
+        # Example firm:  PAN=AAHFE3141K  DOF=16-Aug-2018  → aahfe3141k16082018
         dob = None
         dob_match = None
 
-        # Strategy 1: look near the label "Date of Birth" in the card
-        dob_label_match = re.search(
+        # Strategy 1: look near any known date label in the profile card.
+        # Order matters — check all possible label variants.
+        _DATE_LABEL_PATTERNS = [
             r'Date of Birth\s*\n?\s*(\d{2}[-/](?:[A-Za-z]{3}|\d{2})[-/]\d{4})',
-            page_text)
-        if dob_label_match:
-            dob = dob_label_match.group(1)
-            if log: log.info(f"    DOB found near label: {dob}")
+            r'Date of Formation\s*\n?\s*(\d{2}[-/](?:[A-Za-z]{3}|\d{2})[-/]\d{4})',
+            r'Date of Incorporation\s*\n?\s*(\d{2}[-/](?:[A-Za-z]{3}|\d{2})[-/]\d{4})',
+            r'Date of Registration\s*\n?\s*(\d{2}[-/](?:[A-Za-z]{3}|\d{2})[-/]\d{4})',
+            r'DOB\s*[:\-]?\s*(\d{2}[-/](?:[A-Za-z]{3}|\d{2})[-/]\d{4})',
+            r'DOF\s*[:\-]?\s*(\d{2}[-/](?:[A-Za-z]{3}|\d{2})[-/]\d{4})',
+        ]
+        for _pat in _DATE_LABEL_PATTERNS:
+            _lm = re.search(_pat, page_text, re.IGNORECASE)
+            if _lm:
+                dob = _lm.group(1)
+                _label_used = _pat.split(r'\s')[0].replace('r\'','')
+                if log: log.info(f"    DOB/DOF found near label '{_label_used}': {dob}")
+                break
 
         # Strategy 2: general scan for DD-MMM-YYYY (most common on portal)
+        # FIX v10.11: Skip dates that are clearly NOT a DOB/DOI — e.g. "last login",
+        # "account created", "password changed" dates which appear on the same page.
+        # A real DOB/DOI is always at least 18 years ago; a firm DOI is at least
+        # a few years old.  We reject any date within the last 2 calendar years
+        # (i.e. year >= current_year - 1) so stale-login dates like "28-Sep-2024"
+        # are skipped even though they match DD-MMM-YYYY format.
         if not dob:
-            dob_match = re.search(r'(\d{2})-([A-Za-z]{3})-(\d{4})', page_text)
-            if dob_match:
-                dob = dob_match.group(0)
-                if log: log.info(f"    DOB found via regex (DD-MMM-YYYY): {dob}")
+            _current_year = datetime.now().year
+            _cutoff_year  = _current_year - 2   # DOB/DOI must be older than this
+            for _m in re.finditer(r'(\d{2})-([A-Za-z]{3})-(\d{4})', page_text):
+                _candidate_year = int(_m.group(3))
+                if _candidate_year <= _cutoff_year:
+                    dob = _m.group(0)
+                    if log: log.info(f"    DOB found via regex (DD-MMM-YYYY): {dob}")
+                    break
+                else:
+                    if log: log.info(
+                        f"    Skipping date {_m.group(0)} "
+                        f"(year {_candidate_year} too recent — likely last-login/registration date)"
+                    )
 
         # Strategy 3: DD/MM/YYYY or DD-MM-YYYY numeric format
         if not dob:
@@ -532,31 +578,57 @@ def get_profile_details(driver, pan_hint=None, log=None):
                 dob = dob_num_match.group(0)
                 if log: log.info(f"    DOB found via regex (numeric): {dob}")
 
-        # Strategy 4: JS DOM scan for date near DOB label
+        # Strategy 4: JS DOM scan for date near any date label
+        # Also applies the year filter: skip dates within last 2 years
         if not dob:
             try:
+                _cutoff_js = datetime.now().year - 2
                 dob = driver.execute_script("""
+                    var cutoffYear = arguments[0];
                     var pat1 = /\\d{2}-[A-Za-z]{3}-\\d{4}/;
-                    var pat2 = /\\d{2}[\\/-]\\d{2}[\\/-]\\d{4}/;
-                    var els = document.querySelectorAll('p,span,td,div');
-                    for (var el of els) {
-                        var t = (el.innerText || el.textContent || '').trim();
-                        var m = t.match(pat1) || t.match(pat2);
-                        if (m) return m[0];
+                    var pat2 = /\\d{2}[\\/\\-]\\d{2}[\\/\\-]\\d{4}/;
+                    var dateLabels = [
+                        'date of formation', 'date of birth',
+                        'date of incorporation', 'date of registration', 'dob', 'dof'
+                    ];
+                    // First pass: find elements near a date label
+                    var allEls = document.querySelectorAll('p,span,td,div,label,th');
+                    for (var i = 0; i < allEls.length; i++) {
+                        var t = (allEls[i].innerText || allEls[i].textContent || '').trim().toLowerCase();
+                        var isDateLabel = dateLabels.some(function(l){ return t.includes(l); });
+                        if (!isDateLabel) continue;
+                        // Look at siblings and next elements for the actual date value
+                        var candidates = [allEls[i].nextElementSibling, allEls[i+1]];
+                        for (var j = 0; j < candidates.length; j++) {
+                            if (!candidates[j]) continue;
+                            var ct = (candidates[j].innerText || candidates[j].textContent || '').trim();
+                            var m = ct.match(pat1) || ct.match(pat2);
+                            if (m) {
+                                var yr = parseInt(m[0].split(/[-\\/]/)[2] || m[0].split(/[-\\/]/)[2]);
+                                if (!isNaN(yr) && yr <= cutoffYear) return m[0];
+                            }
+                        }
+                    }
+                    // Second pass: any date on page with valid year
+                    var bodyText = document.body.innerText || '';
+                    var matches = bodyText.match(/\\d{2}-[A-Za-z]{3}-\\d{4}/g) || [];
+                    for (var k = 0; k < matches.length; k++) {
+                        var parts = matches[k].split('-');
+                        var yr2 = parseInt(parts[2]);
+                        if (!isNaN(yr2) && yr2 <= cutoffYear) return matches[k];
                     }
                     return null;
-                """)
-                if dob: log.info(f"    DOB found via JS DOM scan: {dob}") if log else None
+                """, _cutoff_js)
+                if dob: log.info(f"    DOB/DOF found via JS DOM scan: {dob}") if log else None
             except Exception:
                 pass
 
         # ── Build PDF password from PAN + DOB ─────────────────────
         if not pan or not dob:
             if log: log.warning(
-                f"    Profile extraction incomplete — PAN: {pan}, DOB: {dob}")
-            # Partial return: at least pass what we have
+                f"    Profile extraction incomplete — PAN: {pan}, DOB/DOF: {dob}")
             if pan and not dob:
-                if log: log.warning("    PAN found but DOB missing — cannot build password")
+                if log: log.warning("    PAN found but DOB/DOF missing — cannot build password")
             return None
 
         month_map = {
@@ -598,7 +670,7 @@ def get_profile_details(driver, pan_hint=None, log=None):
             "year":         year
         }
 
-        if log: log.info(f"    ✓ Profile extracted — PAN: {pan}  DOB: {dob}")
+        if log: log.info(f"    ✓ Profile extracted — PAN: {pan}  DOB/DOF: {dob}")
         if log: log.info(f"    ✓ PDF Password: {pdf_password}")
         return result
 
@@ -741,7 +813,7 @@ def it_login(driver, pan, password, log):
         if not filled:
             log.error("    PAN field not found — portal may be slow")
             print("\n  ✗ PAN field not found. Waiting 15s for page to load...")
-            time.sleep(15)
+            time.sleep(3)   # was 15
             filled = (_type_mat_input(driver, By.ID, "panAdhaarUserId", pan, log) or
                       _type_mat_input(driver, By.CSS_SELECTOR, "input[type='text']:not([readonly])", pan, log))
             if not filled: continue
@@ -830,7 +902,7 @@ def it_login(driver, pan, password, log):
             "//input[@value='Continue']",
             "//button[contains(@class,'btn')][not(@disabled)]",
         ], timeout=8, log=log)
-        time.sleep(PAGE_WAIT + 3)
+        time.sleep(PAGE_WAIT)  # trimmed +3
 
         _handle_otp(driver, pan, log)
         _handle_remember_device(driver, pan, password, log)
@@ -947,14 +1019,14 @@ def _handle_remember_device(driver, pan, password, log):
 
         if clicked:
             log.info("    Device registration clicked — waiting 10s for portal to settle...")
-            time.sleep(10)
+            time.sleep(3)   # was 10
             log.info(f"    URL after device-YES: {driver.current_url}")
         else:
             print()
             print("  Could not auto-click YES. Please click 'Yes'/'Register'")
             print("  in the browser, then press ENTER here.")
             input("  >> Press ENTER after clicking YES: ")
-            time.sleep(5)
+            time.sleep(2)   # was 5
             log.info("    User manually registered device")
 
         # The portal goes back to #/login after YES — do a second login (no OTP needed)
@@ -997,7 +1069,7 @@ def _handle_remember_device(driver, pan, password, log):
                         EC.element_to_be_clickable((By.XPATH, xp)))
                     el.click(); break
                 except: continue
-            time.sleep(PAGE_WAIT + 3)
+            time.sleep(PAGE_WAIT)  # trimmed +3
             log.info(f"    After re-login submit: {driver.current_url}")
             # Wait up to 30s for dashboard
             for _w in range(15):
@@ -1243,7 +1315,7 @@ def _download_26as_from_traces(driver, client_dir, before, log):
         "//button[contains(normalize-space(),'Proceed')]",
         "//a[normalize-space()='Proceed']",
     ], timeout=8, log=log)
-    time.sleep(PAGE_WAIT + 2)
+    time.sleep(PAGE_WAIT)  # trimmed +2
     log.info(f"    After Proceed: {driver.current_url}")
 
     log.info("    Stage C: clicking 'View Tax Credit (Form 26AS/Annual Tax Statement)' link...")
@@ -1258,7 +1330,7 @@ def _download_26as_from_traces(driver, client_dir, before, log):
         "//a[contains(@href,'annualTaxStatement')]",
     ], timeout=10, log=log)
     if clicked:
-        time.sleep(PAGE_WAIT + 2)
+        time.sleep(PAGE_WAIT)  # trimmed +2
         log.info(f"    After 'View Tax Credit': {driver.current_url}")
 
     log.info("    Stage D: selecting Financial Year 2026-27...")
@@ -1320,7 +1392,7 @@ def _download_26as_from_traces(driver, client_dir, before, log):
         "//button[contains(normalize-space(),'View')]",
         "//input[contains(@value,'View')]",
     ], timeout=10, log=log)
-    time.sleep(PAGE_WAIT + 3)
+    time.sleep(PAGE_WAIT)  # trimmed +3
 
     log.info("    Stage G: clicking 'Export as PDF'...")
     clicked = try_click(driver, [
@@ -2143,7 +2215,13 @@ def process_it_client(client, base_dir, log):
     log.info(f"IT CLIENT: {name}  |  PAN: {pan}  [PARALLEL 3-WAY v6]")
     log.info(f"{'='*60}")
 
+    # Folder = "CompanyName_GSTIN" — easy to identify for online/offline runs
+    _gstin_it = (client.get("gstin","") or "")
+    if isinstance(_gstin_it, list):
+        _gstin_it = _gstin_it[0] if _gstin_it else ""
+    _gstin_it = str(_gstin_it).strip().upper()
     safe = name.replace(" ", "_").replace("/", "_")
+    safe = f"{safe}_{_gstin_it}" if _gstin_it else safe
     cdir = Path(base_dir) / safe
     cdir.mkdir(parents=True, exist_ok=True)
 
@@ -2214,7 +2292,7 @@ def process_it_client(client, base_dir, log):
         # then switches BACK to TRACES before releasing lock.
         def _bg_profile_and_ais():
             try:
-                time.sleep(4)  # let TRACES start loading before we steal the driver
+                time.sleep(2)  # was 4 — let TRACES start loading
 
                 with _drv_lock:
                     log.info("    [BG1] Switching to IT portal tab for profile...")
@@ -2485,28 +2563,50 @@ def _run_it_recon(client_dir, name, pan, gstin, fy, log, gst_folder=None):
     if not gst_folder:
         try:
             home = Path(os.path.expanduser("~"))
-            gst_base = home / "Downloads" / "GST_Automation"
-            # Match client by name (first 6 chars) across any run folder
-            for run_dir in sorted(gst_base.iterdir(),
-                                  key=lambda d: d.stat().st_mtime, reverse=True):
-                if not run_dir.is_dir(): continue
-                # Direct child with matching name
-                for sub in run_dir.iterdir():
-                    if not sub.is_dir(): continue
-                    if name.upper()[:6] in sub.name.upper():
-                        if any(sub.glob("ANNUAL_RECONCILIATION*.xlsx")) or \
-                           any(sub.glob("GSTR2B*.xlsx")):
-                            gst_folder = str(sub)
-                            log.info(f"    GST folder auto-found: {sub.name}")
+            dl   = home / "Downloads"
+            # FIX v10.10: Option B layout — ClientName/GST Automation/ under Downloads
+            # Search per-client folders first, then legacy GST_Automation staging
+            _search_bases = []
+            try:
+                for _ch in sorted(dl.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True):
+                    _gd = _ch / "GST Automation"
+                    if _gd.is_dir():
+                        _search_bases.append(("option_b", _gd))
+            except Exception:
+                pass
+            # Legacy staging
+            gst_base = dl / "GST_Automation"
+            if gst_base.is_dir():
+                _search_bases.append(("legacy", gst_base))
+
+            for _src_type, _base in _search_bases:
+                if _src_type == "option_b":
+                    # Option B: _base IS the GST Automation folder for a specific client
+                    if name.upper()[:6] in _base.parent.name.upper():
+                        if any(_base.glob("ANNUAL_RECONCILIATION*.xlsx")) or \
+                           any(_base.glob("GSTR2B*.xlsx")):
+                            gst_folder = str(_base)
+                            log.info(f"    GST folder auto-found (Option B): {_base.parent.name}/GST Automation")
                             break
-                    # Also match by GSTIN subfolder under MultiYear_*/AY*/
-                    for grandchild in run_dir.rglob("ANNUAL_RECONCILIATION*.xlsx"):
-                        cand = str(grandchild.parent)
-                        if name.upper()[:6] in grandchild.parent.name.upper():
-                            gst_folder = cand
-                            log.info(f"    GST folder auto-found (deep): {grandchild.parent.name}")
-                            break
-                    if gst_folder: break
+                else:
+                    # Legacy: look inside run_dirs
+                    for run_dir in sorted(_base.iterdir(),
+                                          key=lambda d: d.stat().st_mtime, reverse=True):
+                        if not run_dir.is_dir(): continue
+                        for sub in run_dir.iterdir():
+                            if not sub.is_dir(): continue
+                            if name.upper()[:6] in sub.name.upper():
+                                if any(sub.glob("ANNUAL_RECONCILIATION*.xlsx")) or \
+                                   any(sub.glob("GSTR2B*.xlsx")):
+                                    gst_folder = str(sub)
+                                    log.info(f"    GST folder auto-found: {sub.name}")
+                                    break
+                        for grandchild in run_dir.rglob("ANNUAL_RECONCILIATION*.xlsx"):
+                            if name.upper()[:6] in grandchild.parent.name.upper():
+                                gst_folder = str(grandchild.parent)
+                                log.info(f"    GST folder auto-found (deep): {grandchild.parent.name}")
+                                break
+                        if gst_folder: break
                 if gst_folder: break
         except Exception as e:
             log.warning(f"    GST folder auto-detect failed: {e}")
@@ -2678,8 +2778,12 @@ def ask_menu():
     print("  [4]  IT Recon Excel only  (from already-downloaded PDFs)")
     print("  " + "-"*56)
     print()
+    _auto_it = os.environ.get("IT_MENU_CHOICE", "").strip()
+    if _auto_it:
+        print(f"  [AUTO] IT menu choice: {_auto_it}")
     while True:
-        c = input("  Enter choice [1/2/3/4]: ").strip()
+        c = (_auto_it if _auto_it else input("  Enter choice [1/2/3/4]: ").strip())
+        _auto_it = ""
         if c in ("1","2","3","4"): return c
         print("  Invalid choice. Enter 1, 2, 3, or 4.")
 
@@ -2757,7 +2861,9 @@ def main():
     print("  After device register → fully automatic.")
     print()
 
-    if input("  Type YES to start: ").strip().upper() != "YES":
+    _auto_it_start = os.environ.get("IT_MENU_CHOICE", "").strip()
+    _it_yes = "YES" if _auto_it_start else input("  Type YES to start: ").strip().upper()
+    if _it_yes != "YES":
         print("  Cancelled."); return
 
     # ── Parallel batch settings ────────────────────────────────────
@@ -2769,9 +2875,14 @@ def main():
     # ──────────────────────────────────────────────────────────────
     DEFAULT_WORKERS = 3
     try:
-        w_input = input(
-            f"\n  Enter number of clients to process in parallel (default={DEFAULT_WORKERS}, max=5): "
-        ).strip()
+        _auto_workers = os.environ.get("IT_WORKERS", "").strip()
+        if _auto_workers:
+            w_input = _auto_workers
+            print(f"  [AUTO] Parallel workers: {w_input}")
+        else:
+            w_input = input(
+                f"\n  Enter number of clients to process in parallel (default={DEFAULT_WORKERS}, max=5): "
+            ).strip()
         MAX_WORKERS = max(1, min(5, int(w_input))) if w_input else DEFAULT_WORKERS
     except ValueError:
         MAX_WORKERS = DEFAULT_WORKERS
@@ -2821,7 +2932,7 @@ def main():
         done_count += len(batch)
         if b_idx < len(batches):
             print(f"\n  Batch {b_idx} complete. Starting next batch in 5s...")
-            time.sleep(5)
+            time.sleep(2)   # was 5
 
     print("\n  Generating IT Master Report...")
     report = write_it_master_report(all_results, base_dir)

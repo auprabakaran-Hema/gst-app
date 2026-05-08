@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: rpr-it-demo
+    runtime: python
+    buildCommand: pip install -r requirements_it_demo.txt
+    startCommand: python online_it_demo.py
+    envVars:
+      - key: PORT
+        value: 10000
+    plan: free

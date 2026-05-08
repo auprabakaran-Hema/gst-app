@@ -1601,19 +1601,60 @@ def main():
         return home / "Downloads"
     home_dl = _find_output_base_mb()
 
-    gst_base = Path(args.gst) if args.gst else \
-               (find_latest_run_folder(home_dl/"GST_Automation","FY") or
-                find_latest_run_folder(home_dl/"GST_Automation","AY") or
-                home_dl/"GST_Automation")
+    # ── Option B detection ─────────────────────────────────────────────────
+    # New structure: home_dl/ClientName/GST Automation/   (instead of GST_Automation/)
+    #                home_dl/ClientName/IT Download/       (instead of IT_Automation/)
+    # If we find any client folder with these subfolders, use home_dl as gst_base
+    # and resolve per-client dirs at gst_cdir/it_cdir level below.
+    def _detect_option_b(base: Path) -> bool:
+        try:
+            for d in base.iterdir():
+                if d.is_dir() and not d.name.startswith("."):
+                    if (d / "GST Automation").exists() or (d / "IT Download").exists():
+                        return True
+        except Exception:
+            pass
+        return False
 
-    it_base_raw = Path(args.it) if args.it else \
-                  (find_latest_run_folder(home_dl/"IT_Automation","AY") or
-                   home_dl/"IT_Automation")
+    _option_b = _detect_option_b(home_dl)
 
-    # KEY FIX (Issue 2): it_suite may create a DIFFERENT AY* folder than the one
-    # run_all expected. Always pick the folder containing the LARGEST (most-data)
-    # IT_RECONCILIATION file across all AY* sibling folders.
-    if not args.it and (home_dl/"IT_Automation").exists():
+    if args.gst:
+        gst_base = Path(args.gst)
+    elif _option_b:
+        gst_base = home_dl          # ClientName/ subfolders are inside home_dl
+    else:
+        gst_base = (find_latest_run_folder(home_dl/"GST_Automation","FY") or
+                    find_latest_run_folder(home_dl/"GST_Automation","AY") or
+                    home_dl/"GST_Automation")
+
+    if args.it:
+        it_base_raw = Path(args.it)
+    elif _option_b:
+        it_base_raw = home_dl       # IT Download is inside ClientName/ inside home_dl
+    else:
+        it_base_raw = (find_latest_run_folder(home_dl/"IT_Automation","AY") or
+                       home_dl/"IT_Automation")
+
+    # KEY FIX (Issue 2): pick the folder with the LARGEST IT_RECONCILIATION file.
+    # Option B: IT files are in ClientName/IT Download/ inside home_dl.
+    # Legacy:   IT files are in home_dl/IT_Automation/AY*/ subfolders.
+    if not args.it and _option_b:
+        # OptionB: scan all ClientName/IT Download/ folders
+        best_it_folder = None
+        best_it_size   = 0
+        for d in home_dl.iterdir():
+            if not d.is_dir() or d.name.startswith("."): continue
+            it_dl = d / "IT Download"
+            if not it_dl.exists(): continue
+            for xl in it_dl.rglob("IT_RECONCILIATION*.xlsx"):
+                try:
+                    sz = xl.stat().st_size
+                    if sz > best_it_size:
+                        best_it_size   = sz
+                        best_it_folder = home_dl   # keep base as home_dl
+                except: pass
+        it_base = best_it_folder if (best_it_folder and best_it_size >= 25_000) else it_base_raw
+    elif not args.it and (home_dl/"IT_Automation").exists():
         best_it_folder = None
         best_it_size   = 0
         for d in (home_dl/"IT_Automation").iterdir():
@@ -1647,12 +1688,10 @@ def main():
     global_fy = args.fy or FALLBACK_FY
     clients   = load_clients(script_dir, global_fy)
 
-    gst_nested = not _is_client_folder(gst_base)
-    it_nested  = not _is_client_folder(it_base)
+    gst_nested = True if _option_b else not _is_client_folder(gst_base)
+    it_nested  = True if _option_b else not _is_client_folder(it_base)
 
-    # If it_base IS already a client folder (contains 26AS/AIS/IT_RECON directly),
-    # remember it so we can assign it directly to each matching client below.
-    it_base_is_client = _is_client_folder(it_base)
+    it_base_is_client = (not _option_b) and _is_client_folder(it_base)
 
     if not clients:
         # Auto-detect: each subfolder = one client
@@ -1666,7 +1705,21 @@ def main():
                         "fy":global_fy,"_gst_dir":gst_base,"_it_dir":it_base}]
 
     ts     = datetime.now().strftime("%Y%m%d_%H%M")
-    outdir = Path(args.out) if args.out else home_dl/"GST_IT_Bridge"/f"Run_{ts}"
+    if args.out:
+        outdir = Path(args.out)
+    elif _option_b:
+        # OptionB: output goes into the first client's IT Bridge/ folder.
+        # For multi-client runs each result is saved per-client later.
+        _first_client_dir = None
+        for d in home_dl.iterdir():
+            if d.is_dir() and not d.name.startswith(".") and                ((d / "GST Automation").exists() or (d / "IT Download").exists()):
+                _first_client_dir = d; break
+        if _first_client_dir:
+            outdir = _first_client_dir / "IT Bridge"
+        else:
+            outdir = home_dl / "IT Bridge"
+    else:
+        outdir = home_dl / "GST_IT_Bridge" / f"Run_{ts}"
     outdir.mkdir(parents=True, exist_ok=True)
 
     print(f"  Output     : {outdir}")
@@ -1685,24 +1738,41 @@ def main():
 
         # ── Resolve GST folder ──────────────────────────────────────────
         gst_cdir = client.get("_gst_dir")
+        safe = re.sub(r'[\\\\/:"*?<>|]','_', name).replace(' ', '_')
+        _norm_mb = lambda s: s.upper().replace("_"," ").replace("-"," ")
+
+        if not gst_cdir and _option_b:
+            # OptionB: ClientName/GST Automation/ inside home_dl
+            for d in gst_base.iterdir():
+                if not d.is_dir() or d.name.startswith("."): continue
+                if _norm_mb(d.name) == _norm_mb(safe):
+                    gst_cdir = d / "GST Automation"; break
+            if not gst_cdir:
+                for d in gst_base.iterdir():
+                    if not d.is_dir() or d.name.startswith("."): continue
+                    du = d.name.upper()
+                    if (pan and pan in du) or any(g.upper() in du for g in gstins) or safe.upper()[:6] in du:
+                        gst_cdir = d / "GST Automation"; break
+            if not gst_cdir:
+                # last resort: first client folder found
+                for d in gst_base.iterdir():
+                    if d.is_dir() and not d.name.startswith("."):
+                        gst_cdir = d / "GST Automation"; break
+
         if not gst_cdir:
-            safe = re.sub(r'[\\/:"*?<>|]','_', name).replace(' ', '_')
             gst_cdir = gst_base / safe
             if not gst_cdir.exists():
                 for d in gst_base.iterdir():
                     if not d.is_dir(): continue
                     du = d.name.upper()
-                    if (pan and pan in du) or \
-                       any(g.upper() in du for g in gstins) or \
-                       safe.upper()[:6] in du:
+                    if (pan and pan in du) or any(g.upper() in du for g in gstins) or safe.upper()[:6] in du:
                         gst_cdir = d; break
                 else:
-                    gst_cdir = gst_base  # fallback flat
+                    gst_cdir = gst_base
         gst_cdir = Path(gst_cdir)
-        # If still not found, try underscore↔space normalisation
-        if not gst_cdir.exists() and gst_cdir != gst_base:
+        if not gst_cdir.exists() and gst_cdir != gst_base and not _option_b:
             for d in gst_base.iterdir():
-                if d.is_dir() and d.name.upper().replace("_"," ") == safe.upper().replace("_"," "):
+                if d.is_dir() and _norm_mb(d.name) == _norm_mb(safe):
                     gst_cdir = d; break
 
         # ── Resolve IT folder ─────────────────────────────────────────────
@@ -1716,7 +1786,25 @@ def main():
         #   7. Folder contains IT_RECONCILIATION*.xlsx with matching PAN inside
         #   8. Fallback: gst_cdir (single-folder layout)
         it_cdir = client.get("_it_dir")
-        # Pass 0: if it_base itself is a client folder, use it directly
+
+        # Pass 0 (OptionB): ClientName/IT Download/ inside home_dl
+        if not it_cdir and _option_b:
+            for d in it_base.iterdir():
+                if not d.is_dir() or d.name.startswith("."): continue
+                if _norm_mb(d.name) == _norm_mb(safe):
+                    it_cdir = d / "IT Download"; break
+            if not it_cdir:
+                for d in it_base.iterdir():
+                    if not d.is_dir() or d.name.startswith("."): continue
+                    du = d.name.upper()
+                    if (pan and pan in du) or any(g.upper() in du for g in gstins) or safe.upper()[:6] in du:
+                        it_cdir = d / "IT Download"; break
+            if not it_cdir:
+                for d in it_base.iterdir():
+                    if d.is_dir() and not d.name.startswith("."):
+                        it_cdir = d / "IT Download"; break
+
+        # Pass 0b: if it_base itself is a client folder, use it directly
         if not it_cdir and it_base_is_client:
             it_cdir = it_base
         if not it_cdir:
@@ -1782,6 +1870,29 @@ def main():
             for f in sorted(it_cdir.rglob("*.xlsx")):
                 if "IT_RECON" in f.name.upper():
                     it_recon_path = f; break
+
+        # ── FALLBACK: widen search to client root and sibling folders ──
+        # Handles case where it_cdir resolved to a wrong subfolder
+        # (e.g. "26AS vs GSTR1\IT Download") but the actual
+        # IT_RECONCILIATION file sits in "IT Download\" at the client root.
+        if not it_recon_path:
+            _search_roots = []
+            if it_cdir.parent != it_cdir:
+                _search_roots.append(it_cdir.parent)
+            if it_cdir.parent.parent != it_cdir.parent:
+                _search_roots.append(it_cdir.parent.parent)
+            if gst_cdir.parent not in _search_roots:
+                _search_roots.append(gst_cdir.parent)
+            for _root in _search_roots:
+                for f in sorted(_root.rglob("IT_RECONCILIATION*.xlsx")):
+                    it_recon_path = f; break
+                if not it_recon_path:
+                    for f in sorted(_root.rglob("*.xlsx")):
+                        if "IT_RECON" in f.name.upper():
+                            it_recon_path = f; break
+                if it_recon_path:
+                    print(f"    i  IT_RECONCILIATION found via fallback: {it_recon_path.parent}")
+                    break
 
         it_data = None
         if it_recon_path:

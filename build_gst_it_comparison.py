@@ -1415,12 +1415,18 @@ if __name__ == "__main__":
 
     # ── Find output folder ────────────────────────────────────────
     def _find_output_base():
+        here = pathlib.Path(__file__).parent.resolve()
         home = pathlib.Path.home()
+        # Priority 1: script's own folder has known sub-folders (runs from Downloads)
+        for marker in ["GST_Automation", "IT_Automation", "GST_IT_Bridge",
+                       "GST_IT_Comparison", "26as", "TALLY EXTRACTED"]:
+            if (here / marker).exists():
+                return str(here)
+        # Priority 2: OneDrive / Desktop OUTPUT
         candidates = [
             home / "OneDrive" / "Desktop" / "OUTPUT",
             home / "OneDrive - Personal" / "Desktop" / "OUTPUT",
             home / "Desktop" / "OUTPUT",
-            home / "Downloads",
         ]
         try:
             candidates[2:2] = [p / "Desktop" / "OUTPUT"
@@ -1429,9 +1435,23 @@ if __name__ == "__main__":
         for c in candidates:
             if c.exists():
                 return str(c)
+        # Priority 3: Downloads
+        dl = home / "Downloads"
+        if dl.exists():
+            return str(dl)
         return os.path.expanduser("~/Downloads")
 
-    out_dir = args.out or os.path.join(_find_output_base(), "GST_IT_Comparison")
+    _base = _find_output_base()
+    # Use GST_IT_Bridge if it already exists on disk, else GST_IT_Comparison
+    _bridge_dir = os.path.join(_base, "GST_IT_Bridge")
+    _comp_dir   = os.path.join(_base, "GST_IT_Comparison")
+    if os.path.exists(_bridge_dir):
+        _default_out = _bridge_dir
+    elif os.path.exists(_comp_dir):
+        _default_out = _comp_dir
+    else:
+        _default_out = _comp_dir   # will be created below
+    out_dir = args.out or _default_out
     os.makedirs(out_dir, exist_ok=True)
 
     print("=" * 60)
