@@ -411,13 +411,14 @@ footer a{color:var(--accent);text-decoration:none}
     </div>
   </div>
   <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-    <span style="padding:.35rem .85rem;background:rgba(0,230,118,.12);border:1px solid rgba(0,230,118,.35);
+    <a href="https://drive.google.com/drive/folders/1EjM1iyO5E4BxPXiYEs8jgAM0DSxhbb14?usp=drive_link" target="_blank"
+      style="padding:.35rem .85rem;background:rgba(0,230,118,.12);border:1px solid rgba(0,230,118,.35);
       border-radius:8px;font-size:.68rem;font-weight:700;color:var(--grn);font-family:var(--mono);
-      white-space:nowrap">✅ Full Version</span>
-    <a id="demoDownloadBtn" href="#" onclick="alert('Build the demo EXE using BUILD_DEMO_EXE.bat, then share dist/RPR_GST_Demo.exe with customers.');return false;"
+      text-decoration:none;white-space:nowrap">✅ Full Version →</a>
+    <a id="demoDownloadBtn" href="https://drive.google.com/file/d/1dtMHtwdRHjolTBEs8yzI778edR9_M3Sz/view?usp=drive_link" target="_blank"
       style="padding:.35rem .85rem;background:linear-gradient(135deg,#7c3aed,#4f46e5);
       border-radius:8px;font-size:.68rem;font-weight:700;color:#fff;font-family:var(--sans);
-      text-decoration:none;white-space:nowrap;cursor:pointer">📦 Share Demo EXE →</a>
+      text-decoration:none;white-space:nowrap;cursor:pointer">📦 Download Demo EXE →</a>
   </div>
 </div>
 
