@@ -28,6 +28,8 @@ def _auto_install():
         ("flask",              "flask"),
         ("werkzeug",           "werkzeug"),
         ("requests",           "requests"),
+        ("pandas",             "pandas"),
+        ("pypdf",              "pypdf"),
     ]
     for mod, pkg in _REQUIRED:
         try:
