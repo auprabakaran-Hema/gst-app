@@ -1616,6 +1616,7 @@ function glCopyTable(e){
 </div>
 
 
+<div class="card pw" id="it-pw" style="display:none">
   <div class="ct">Processing <span class="sbg s-p pulse" id="it-badge">Running</span></div>
   <div class="pb-w"><div class="pb" id="it-pb"></div></div>
   <div class="lb" id="it-lb"></div>
