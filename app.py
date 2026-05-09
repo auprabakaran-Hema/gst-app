@@ -1,11 +1,14 @@
 """
-GST Reconciliation Web App — v6 with Auto Download
-===================================================
+GST Reconciliation Web App — v7 FULL UPDATED
+==============================================
 • Fully free — no license, no restrictions
 • Scripts (gst_suite_final.py, gstr1_extract.py) never exposed to users
 • 4 tabs: Reconciliation | GSTR-1 Detail | Download Status | Auto Download
 • NEW: Download directly from GST portal using PC browser bridge
 • Render.com ready — binds to $PORT
+• UPDATED: Demo EXE Folder Link (Working)
+  → https://drive.google.com/drive/folders/1hW3iNVQC-BtRWVBS4ZCEHCvvg2XNZW89?usp=sharing
+• Full Suite link → https://drive.google.com/drive/folders/1EjM1iyO5E4BxPXiYEs8jgAM0DSxhbb14?usp=sharing
 """
 
 import os, sys, json, zipfile, re, time, shutil, uuid, threading, asyncio
@@ -13,6 +16,32 @@ from pathlib import Path
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, render_template_string, abort
 import tempfile, platform
+
+# ── Auto-install missing packages ────────────────────────────────
+def _auto_install():
+    """Silently install any missing runtime dependencies on first run."""
+    import subprocess
+    _REQUIRED = [
+        ("selenium",           "selenium"),
+        ("webdriver_manager",  "webdriver-manager"),
+        ("openpyxl",           "openpyxl"),
+        ("flask",              "flask"),
+        ("werkzeug",           "werkzeug"),
+        ("requests",           "requests"),
+    ]
+    for mod, pkg in _REQUIRED:
+        try:
+            __import__(mod)
+        except ImportError:
+            print(f"[AutoInstall] Installing missing package: {pkg} ...")
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--quiet",
+                 "--break-system-packages", pkg],
+                check=False
+            )
+            print(f"[AutoInstall] ✅ {pkg} installed")
+
+_auto_install()
 
 # ── HTTP long-poll bridge (no WebSocket needed) ───────────────────
 WEBSOCKET_AVAILABLE = True   # always True — uses plain HTTP polling
@@ -114,7 +143,7 @@ def _find_engine(name):
     """Locate a script by name. Supports version-aliased filenames."""
     # Alias map: canonical name → list of versioned filenames to try
     _ALIASES = {
-        "gst_suite_final.py":         ["gst_suite_v31.py", "gst_suite_final.py"],
+        "gst_suite_final.py":         ["gst_suite_v32.py", "gst_suite_v31.py", "gst_suite_final.py"],
         "gstr1_extract.py":            ["gstr1_fy_v5.py", "gstr1_extract.py"],
         "it_suite.py":                 ["it_suite_v6.py", "it_suite.py"],
         "gstr2b_extractor.py":         ["gstr2b_extractor_v2.py", "gstr2b_extractor.py"],
@@ -402,23 +431,32 @@ footer a{color:var(--accent);text-decoration:none}
   flex-wrap:wrap;gap:.75rem">
   <div>
     <div style="font-size:.82rem;font-weight:800;color:#a78bfa;margin-bottom:.25rem">
-      🚀 Full Suite — Share &amp; Sell
+      🚀 Full Suite v32 — Latest Build
     </div>
     <div style="font-size:.73rem;color:var(--muted);line-height:1.55">
-      Share the <strong style="color:var(--txt)">Free Demo EXE</strong> with clients so they can try
-      reconciliation before buying. The full suite adds IT recon, auto-download,
-      bulk processing &amp; more.
+      <strong style="color:var(--grn)">NEW v32</strong> — GSTR-3B tile fix, faster online downloads.
+      Share the <strong style="color:var(--txt)">Free Demo EXE</strong> with clients before buying.
+      Full suite adds IT recon, auto-download, bulk processing &amp; more.
     </div>
   </div>
-  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-    <a href="https://drive.google.com/drive/folders/1EjM1iyO5E4BxPXiYEs8jgAM0DSxhbb14?usp=drive_link" target="_blank"
-      style="padding:.35rem .85rem;background:rgba(0,230,118,.12);border:1px solid rgba(0,230,118,.35);
-      border-radius:8px;font-size:.68rem;font-weight:700;color:var(--grn);font-family:var(--mono);
-      text-decoration:none;white-space:nowrap">✅ Full Version →</a>
-    <a id="demoDownloadBtn" href="https://drive.google.com/file/d/1dtMHtwdRHjolTBEs8yzI778edR9_M3Sz/view?usp=drive_link" target="_blank"
-      style="padding:.35rem .85rem;background:linear-gradient(135deg,#7c3aed,#4f46e5);
-      border-radius:8px;font-size:.68rem;font-weight:700;color:#fff;font-family:var(--sans);
-      text-decoration:none;white-space:nowrap;cursor:pointer">📦 Download Demo EXE →</a>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <a href="https://drive.google.com/drive/folders/1hW3iNVQC-BtRWVBS4ZCEHCvvg2XNZW89?usp=sharing"
+      target="_blank"
+      style="padding:.38rem 1rem;background:linear-gradient(135deg,#7c3aed,#4f46e5);
+      border-radius:8px;font-size:.7rem;font-weight:800;color:#fff;font-family:var(--sans);
+      text-decoration:none;white-space:nowrap;cursor:pointer;letter-spacing:.03em">
+      ⬇ Demo EXE</a>
+    <a href="https://drive.google.com/drive/folders/1EjM1iyO5E4BxPXiYEs8jgAM0DSxhbb14?usp=sharing"
+      target="_blank"
+      style="padding:.38rem 1rem;background:linear-gradient(135deg,var(--grn),#00c853);
+      border-radius:8px;font-size:.7rem;font-weight:800;color:#000;font-family:var(--sans);
+      text-decoration:none;white-space:nowrap;cursor:pointer;letter-spacing:.03em">
+      ⬇ Full Suite</a>
+    <a href="/download/gst-suite-v32"
+      style="padding:.38rem 1rem;background:rgba(0,229,255,.12);border:1px solid rgba(0,229,255,.4);
+      border-radius:8px;font-size:.7rem;font-weight:800;color:var(--accent);font-family:var(--mono);
+      text-decoration:none;white-space:nowrap;cursor:pointer">
+      ⬇ gst_suite_v32.py</a>
   </div>
 </div>
 
@@ -4049,10 +4087,10 @@ def run_reconciliation(job_id):
 
         prog(25)
 
-        suite_path = _find_engine("gst_suite_final.py")   # resolves to gst_suite_v31.py
+        suite_path = _find_engine("gst_suite_final.py")   # resolves to gst_suite_v32.py
         if not suite_path:
             raise FileNotFoundError(
-                "GST suite engine not found. Place gst_suite_v31.py (or gst_suite_final.py) "
+                "GST suite engine not found. Place gst_suite_v32.py (or gst_suite_final.py) "
                 "in the same folder as app.py."
             )
 
@@ -4232,6 +4270,89 @@ def run_gstr1_only(job_id):
         _cleanup_uploads(job_id)
 
 # ── Routes ────────────────────────────────────────────────────────
+
+# ── Local file download routes ────────────────────────────────────
+# Place these files in the same folder as app.py:
+#   GST_Demo.exe          → served at /download/demo-exe
+#   GST_Full_Suite.zip    → served at /download/full-suite
+#   gst_suite_v32.py      → served at /download/gst-suite-v32  AND /gst_suite_v32.py
+
+# ── Local file search helpers ─────────────────────────────────────
+_SEARCH_DIRS = [
+    Path(__file__).parent,
+    Path(os.getcwd()),
+    Path(os.path.expanduser("~")) / "Desktop",
+    Path(os.path.expanduser("~")) / "Downloads",
+]
+
+def _find_local_file(candidates):
+    """Search by exact filename list."""
+    for name in candidates:
+        for d in _SEARCH_DIRS:
+            p = d / name
+            if p.exists():
+                return p
+    return None
+
+def _find_any_ext(ext):
+    """Auto-detect the FIRST file with given extension in app folder.
+    Works with ANY filename — no renaming needed."""
+    for d in _SEARCH_DIRS:
+        try:
+            matches = sorted([f for f in d.iterdir()
+                              if f.suffix.lower() == ext.lower() and f.is_file()])
+            if matches:
+                return matches[0]
+        except Exception:
+            pass
+    return None
+
+_GST_PY_NAMES = ["gst_suite_v32.py", "gst_suite_v31.py", "gst_suite_final.py"]
+
+@app.route("/api/available-downloads")
+def api_available_downloads():
+    """Return which local download files are present on the server."""
+    return jsonify(
+        demo_exe   = _find_any_ext(".exe")  is not None,
+        full_suite = _find_any_ext(".zip")  is not None,
+        gst_v32    = _find_local_file(_GST_PY_NAMES) is not None,
+    )
+
+@app.route("/download/demo-exe")
+def download_demo_exe():
+    p = _find_any_ext(".exe")
+    if not p:
+        return (
+            "<h2 style='font-family:sans-serif;color:#c00'>No EXE file found in server folder.</h2>"
+            "<p style='font-family:monospace'>Place any <b>.exe</b> file (Demo or Full) "
+            "in the same folder as app.py — it will be served automatically.</p>", 404
+        )
+    return send_file(str(p), as_attachment=True, download_name=p.name)
+
+@app.route("/download/full-suite")
+def download_full_suite():
+    p = _find_any_ext(".zip")
+    if not p:
+        return (
+            "<h2 style='font-family:sans-serif;color:#c00'>No ZIP file found in server folder.</h2>"
+            "<p style='font-family:monospace'>Place any <b>.zip</b> file (Full Suite) "
+            "in the same folder as app.py — it will be served automatically.</p>", 404
+        )
+    return send_file(str(p), as_attachment=True, download_name=p.name)
+
+@app.route("/download/gst-suite-v32")
+@app.route("/gst_suite_v32.py")
+def serve_gst_suite_v32():
+    """Serve gst_suite_v32.py as a direct download."""
+    p = _find_local_file(_GST_PY_NAMES)
+    if not p:
+        return (
+            "<h2 style='font-family:sans-serif;color:#c00'>gst_suite_v32.py not found.</h2>"
+            "<p style='font-family:monospace'>Place <b>gst_suite_v32.py</b> "
+            "in the same folder as app.py.</p>", 404
+        )
+    return send_file(str(p), as_attachment=True, download_name="gst_suite_v32.py")
+
 @app.route("/")
 def index():
     return render_template_string(HTML)
@@ -4717,7 +4838,17 @@ def _auto_download(job_id, gstin, client_name,
         from selenium.webdriver.chrome.service import Service as ChromeService
         import selenium.common.exceptions as SeEx
     except ImportError:
-        raise RuntimeError("Selenium not installed on server. Run: pip install selenium")
+        import subprocess as _sp
+        print("[AutoInstall] selenium not found — installing now...")
+        _sp.run([sys.executable, "-m", "pip", "install", "--quiet",
+                 "--break-system-packages", "selenium", "webdriver-manager"], check=False)
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait, Select
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.chrome.options import Options as ChromeOptions
+        from selenium.webdriver.chrome.service import Service as ChromeService
+        import selenium.common.exceptions as SeEx
 
     # ── Helper functions (mirrors gst_suite_final.py) ───────────────
     def _try_click(xpaths, timeout=8):
@@ -6301,7 +6432,16 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         from selenium.webdriver.chrome.options import Options as ChromeOptions
         from selenium.webdriver.chrome.service import Service as ChromeService
     except ImportError:
-        raise RuntimeError("Selenium not installed. Run: pip install selenium")
+        import subprocess as _sp
+        print("[AutoInstall] selenium not found — installing now...")
+        _sp.run([sys.executable, "-m", "pip", "install", "--quiet",
+                 "--break-system-packages", "selenium", "webdriver-manager"], check=False)
+        from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait, Select
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.chrome.options import Options as ChromeOptions
+        from selenium.webdriver.chrome.service import Service as ChromeService
 
     # ── Helper: try_click ─────────────────────────────────────────────────
     def _click(xpaths, timeout=8):
@@ -8059,7 +8199,7 @@ def api_gstr1_tally_download(job_id, fname):
 def api_engines():
     """Return availability of all required engine scripts."""
     engines = {
-        "gst_suite":        ("gst_suite_final.py",           "gst_suite_v31.py"),
+        "gst_suite":        ("gst_suite_final.py",           "gst_suite_v32.py"),
         "gstr1_extract":    ("gstr1_extract.py",              "gstr1_fy_v5.py"),
         "it_recon_engine":  ("it_recon_engine.py",            "it_recon_engine.py"),
         "it_suite":         ("it_suite.py",                   "it_suite_v6.py"),
@@ -8087,15 +8227,19 @@ def api_engines():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"\n  ================================================================")
-    print(f"   GST + IT Automation Portal v7 — Full Suite Integration")
-    print(f"  ================================================================")
-    print(f"   Upload dir    : {UPLOAD_DIR}")
-    print(f"   Output dir    : {OUTPUT_DIR}")
-    print(f"   Feedback file : {FEEDBACK_FILE}")
+    print(f"\n  ════════════════════════════════════════════════════════════════════")
+    print(f"   🚀 GST + IT Automation Portal v7 — Full Suite Integration")
+    print(f"  ════════════════════════════════════════════════════════════════════")
+    print(f"   📁 Upload dir    : {UPLOAD_DIR}")
+    print(f"   📂 Output dir    : {OUTPUT_DIR}")
+    print(f"   💾 Feedback file : {FEEDBACK_FILE}")
+    print()
+    print(f"   ⬇  DOWNLOAD LINKS (Active):")
+    print(f"      📦 Demo EXE   : https://drive.google.com/drive/folders/1hW3iNVQC-BtRWVBS4ZCEHCvvg2XNZW89?usp=sharing")
+    print(f"      📦 Full Suite : https://drive.google.com/drive/folders/1EjM1iyO5E4BxPXiYEs8jgAM0DSxhbb14")
     print()
     _engines = [
-        ("GST Suite (v31)     ", "gst_suite_final.py"),
+        ("GST Suite (v32)     ", "gst_suite_final.py"),
         ("GSTR-1 Extract (v5) ", "gstr1_extract.py"),
         ("IT Recon Engine     ", "it_recon_engine.py"),
         ("IT Suite (v6)       ", "it_suite.py"),
@@ -8110,13 +8254,13 @@ if __name__ == "__main__":
         status = f"✅ {p.name}" if p else "⚠  NOT FOUND — place alongside app.py"
         print(f"   {label} : {status}")
     print()
-    print(f"   New API endpoints added in v7:")
-    print(f"     POST /api/client-manager/load      ← upload Client_Manager xlsx")
-    print(f"     POST /api/master-bridge/start       ← GST ↔ IT reconciliation")
-    print(f"     POST /api/gst-it-comparison/start   ← TIS/AIS comparison builder")
-    print(f"     POST /api/gstr2b-extract/start      ← GSTR-2B bulk extractor")
-    print(f"     POST /api/gstr1-tally/start         ← Tally vs JSON comparison")
-    print(f"     GET  /api/engines                   ← engine health check")
-    print(f"\n   Open: http://localhost:{port}")
-    print(f"  ================================================================\n")
+    print(f"   🔗 API ENDPOINTS:")
+    print(f"      POST /api/client-manager/load      ← upload Client_Manager xlsx")
+    print(f"      POST /api/master-bridge/start       ← GST ↔ IT reconciliation")
+    print(f"      POST /api/gst-it-comparison/start   ← TIS/AIS comparison builder")
+    print(f"      POST /api/gstr2b-extract/start      ← GSTR-2B bulk extractor")
+    print(f"      POST /api/gstr1-tally/start         ← Tally vs JSON comparison")
+    print(f"      GET  /api/engines                   ← engine health check")
+    print(f"\n   🌐 Open: http://localhost:{port}")
+    print(f"  ════════════════════════════════════════════════════════════════════\n")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
