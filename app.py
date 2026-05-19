@@ -653,7 +653,7 @@ footer a:hover{color:var(--txt)}
     <div class="logo-icon">₹</div>
     <div>
       <div class="logo-title">RPR GST + IT Suite</div>
-      <div class="logo-sub">FY 2026-27 · Tamil Nadu CA Automation</div>
+      <div class="logo-sub">FY 2025-26 · Tamil Nadu CA Automation</div>
     </div>
   </div>
   <div class="hdr-meta">
@@ -682,7 +682,7 @@ footer a:hover{color:var(--txt)}
   </div>
   <div class="kpi">
     <div class="kpi-ico">🏛️</div>
-    <div class="kpi-val kpi-grn" id="kpi-fy">2026-27</div>
+    <div class="kpi-val kpi-grn" id="kpi-fy">2025-26</div>
     <div class="kpi-lbl">Assessment Year</div>
   </div>
   <div class="kpi">
@@ -965,14 +965,7 @@ function glCopyTable(e){
       <input type="text" id="r-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="r-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
-        <option value="2020-21">2020-21</option>
+        <option value="2025-26" selected>2025-26</option>
       </select></div>
     <div class="fg"><label>State (optional)</label>
       <input type="text" id="r-state" placeholder="Tamil Nadu"></div>
@@ -1089,14 +1082,7 @@ function glCopyTable(e){
       <input type="text" id="g1-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="g1-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
-        <option value="2020-21">2020-21</option>
+        <option value="2025-26" selected>2025-26</option>
       </select></div>
   </div>
 </div>
@@ -1242,14 +1228,7 @@ function glCopyTable(e){
       <input type="password" id="ad-password" placeholder="Your GST portal password" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="ad-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
-        <option value="2020-21">2020-21</option>
+        <option value="2025-26" selected>2025-26</option>
       </select></div>
     <div class="fg"><label>Returns to Download</label>
       <select id="ad-returns">
@@ -1449,14 +1428,7 @@ function glCopyTable(e){
     <div class="fg">
       <label>Financial Year</label>
       <select id="bulk-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
-        <option value="2020-21">2020-21</option>
+        <option value="2025-26" selected>2025-26</option>
       </select>
     </div>
     <div class="fg">
@@ -1581,11 +1553,7 @@ function glCopyTable(e){
     <div class="fg">
       <label>Financial Year</label>
       <select id="itbulk-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
+        <option value="2025-26" selected>2025-26</option>
       </select>
     </div>
     <div class="fg">
@@ -1696,14 +1664,7 @@ function glCopyTable(e){
              style="text-transform:uppercase"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="it-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
-        <option value="2020-21">2020-21</option>
+        <option value="2025-26" selected>2025-26</option>
       </select>
     </div>
     <div class="fg"><label>ITR Form Type</label>
@@ -1915,13 +1876,7 @@ function glCopyTable(e){
       <input type="text" id="g2bext-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="g2bext-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
+        <option value="2025-26" selected>2025-26</option>
       </select></div>
   </div>
 </div>
@@ -1998,13 +1953,7 @@ function glCopyTable(e){
              style="text-transform:uppercase"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="mb-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
+        <option value="2025-26" selected>2025-26</option>
       </select></div>
   </div>
 </div>
@@ -2105,13 +2054,7 @@ function glCopyTable(e){
              style="text-transform:uppercase"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="gic-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
+        <option value="2025-26" selected>2025-26</option>
       </select></div>
   </div>
 </div>
@@ -2207,13 +2150,7 @@ function glCopyTable(e){
       <input type="text" id="tvj-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="tvj-fy">
-        <option value="2026-27" selected>2026-27</option>
-        <option value="2027-28">2027-28</option>
-        <option value="2025-26">2025-26</option>
-        <option value="2024-25">2024-25</option>
-        <option value="2023-24">2023-24</option>
-        <option value="2022-23">2022-23</option>
-        <option value="2021-22">2021-22</option>
+        <option value="2025-26" selected>2025-26</option>
       </select></div>
   </div>
 </div>
@@ -2329,7 +2266,7 @@ function glCopyTable(e){
   <div class="footer-row">
     <span>Built for Indian CA Firms</span>
     <span class="footer-divider">|</span>
-    <span>FY 2026-27</span>
+    <span>FY 2025-26</span>
     <span class="footer-divider">|</span>
     <span>Tamil Nadu GST Automation</span>
   </div>
@@ -2423,7 +2360,7 @@ document.getElementById('recon-form').addEventListener('submit', async e=>{
   e.preventDefault();
   const gstin=document.getElementById('r-gstin').value.trim().toUpperCase();
   const cname=document.getElementById('r-name').value.trim();
-  const fy=document.getElementById('r-fy').value.trim()||'2026-27';
+  const fy=document.getElementById('r-fy').value.trim()||'2025-26';
   if(!gstin||gstin.length!==15){alert('Enter a valid 15-character GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
   const hasFiles=['r1','r1a','r2b','r2a','r3b','cust','taxlib'].some(z=>(zoneFiles[z]||[]).length>0);
@@ -2482,7 +2419,7 @@ document.getElementById('g1-form').addEventListener('submit', async e=>{
   e.preventDefault();
   const gstin=document.getElementById('g1-gstin').value.trim().toUpperCase();
   const cname=document.getElementById('g1-name').value.trim();
-  const fy=document.getElementById('g1-fy').value.trim()||'2026-27';
+  const fy=document.getElementById('g1-fy').value.trim()||'2025-26';
   if(!gstin||gstin.length!==15){alert('Enter a valid 15-character GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
   if(!(zoneFiles['g1r1']||[]).length){alert('Upload at least one GSTR-1 ZIP');return;}
@@ -4695,7 +4632,7 @@ def api_upload():
     _cleanup_old_jobs()
     gstin       = request.form.get("gstin","").strip().upper()
     client_name = request.form.get("client_name","").strip()
-    fy          = request.form.get("fy","2026-27").strip() or "2025-26"
+    fy          = request.form.get("fy","2025-26").strip() or "2025-26"
     mode        = request.form.get("mode","recon")
 
     if not gstin or len(gstin) != 15:
@@ -4925,7 +4862,6 @@ def api_pipeline_health():
 
     # Check client manager
     client_files = [
-        "Client_Manager_Secure_AY2027-28.xlsx",
         "Client_Manager_Secure_AY2026-27.xlsx",
         "Client_Manager_Secure_AY2025-26.xlsx",
         "clients.xlsx",
@@ -5108,7 +5044,7 @@ def api_auto_download():
     username    = d.get("username","").strip()
     password    = d.get("password","")
     token       = d.get("token","").strip()
-    fy          = d.get("fy","2026-27")
+    fy          = d.get("fy","2025-26")
     returns     = d.get("returns","all")
 
     if not gstin or len(gstin) != 15:
@@ -6219,7 +6155,7 @@ def api_bulk_start():
     fobj = request.files.get("companies_file")
     if not fobj:
         return jsonify(error="No file uploaded"), 400
-    fy      = request.form.get("fy","2026-27")
+    fy      = request.form.get("fy","2025-26")
     returns = request.form.get("returns","all")
 
     # Parse the Excel
@@ -6639,7 +6575,7 @@ def api_it_upload():
     company_name = request.form.get("company_name","").strip()
     pan          = request.form.get("pan","").strip().upper()
     gstin        = request.form.get("gstin","").strip().upper()
-    fy           = request.form.get("fy","2026-27").strip() or "2025-26"
+    fy           = request.form.get("fy","2025-26").strip() or "2025-26"
     itr_form     = request.form.get("itr_form","ITR-3").strip()
     entity_type  = request.form.get("entity_type","company").strip()
 
@@ -6734,7 +6670,7 @@ def api_it_auto_download():
     company_name = d.get("company_name","").strip()
     username     = d.get("username","").strip()
     password     = d.get("password","")
-    fy           = d.get("fy","2026-27")
+    fy           = d.get("fy","2025-26")
 
     if not pan or len(pan) != 10:
         return jsonify(error="PAN must be 10 characters"), 400
@@ -6797,7 +6733,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
 
     # ── Assessment year from FY ──────────────────────────────────────────
     fy_start = int(fy.split("-")[0])
-    AY_LABEL  = f"{fy_start+1}-{str(fy_start+2)[-2:]}"   # e.g. "2025-26"
+    AY_LABEL  = f"{fy_start+1}-{str(fy_start+2)[-2:]}"   # e.g. "2026-27"
     IT_PORTAL = "https://www.incometax.gov.in/iec/foportal"
     PAGE_WAIT, SHORT_WAIT = 8, 3
 
@@ -7442,7 +7378,7 @@ def api_it_bulk_start():
     fobj = request.files.get("clients_file")
     if not fobj:
         return jsonify(error="No file uploaded"), 400
-    fy   = request.form.get("fy", "2026-27")
+    fy   = request.form.get("fy", "2025-26")
     mode = request.form.get("mode", "all")
 
     import io, openpyxl
@@ -8020,7 +7956,7 @@ def _run_master_bridge(job_id):
 
     try:
         job     = jobs[job_id]
-        fy      = job.get("fy", "2026-27")
+        fy      = job.get("fy", "2025-26")
         gst_dir = job.get("gst_dir", "")
         it_dir  = job.get("it_dir", "")
         out_dir = Path(job["out_dir"])
@@ -8114,7 +8050,7 @@ def api_master_bridge_start():
     Accepts either JSON {fy, gst_dir, it_dir} or multipart form with file uploads.
     """
     if request.content_type and "multipart" in request.content_type:
-        fy           = request.form.get("fy", "2026-27")
+        fy           = request.form.get("fy", "2025-26")
         company_name = request.form.get("company_name", "")
         gstin        = request.form.get("gstin", "")
         pan          = request.form.get("pan", "")
@@ -8137,7 +8073,7 @@ def api_master_bridge_start():
         it_dir  = str(job_dir)
     else:
         data    = request.get_json(silent=True) or {}
-        fy      = data.get("fy", "2026-27")
+        fy      = data.get("fy", "2025-26")
         gst_dir = data.get("gst_dir", "")
         it_dir  = data.get("it_dir",  "")
         company_name = data.get("company_name", "")
@@ -8199,7 +8135,7 @@ def _run_gst_it_comparison(job_id):
 
     try:
         job     = jobs[job_id]
-        fy      = job.get("fy", "2026-27")
+        fy      = job.get("fy", "2025-26")
         gst_dir = job.get("gst_dir", "")
         out_dir = Path(job["out_dir"])
 
@@ -8283,7 +8219,7 @@ def _run_gst_it_comparison(job_id):
 @rate_limit(limit=5, window=60)
 def api_gst_it_comparison_start():
     data    = request.get_json(silent=True) or {}
-    fy      = data.get("fy", "2026-27")
+    fy      = data.get("fy", "2025-26")
     gst_dir = data.get("gst_dir", "")
     job_id  = str(uuid.uuid4())
     out_dir = OUTPUT_DIR / job_id
@@ -8328,7 +8264,7 @@ def api_gst_it_comparison_upload():
     """Upload-based entry point for the GST-IT comparison tab.
     Accepts multipart files: files_gst, files_it, files_ais, files_tis.
     """
-    fy           = request.form.get("fy", "2026-27")
+    fy           = request.form.get("fy", "2025-26")
     company_name = request.form.get("company_name", "")
     gstin        = request.form.get("gstin", "")
     pan          = request.form.get("pan", "")
@@ -8374,7 +8310,7 @@ def _run_gstr2b_extractor(job_id):
 
     try:
         job        = jobs[job_id]
-        fy         = job.get("fy", "2026-27")
+        fy         = job.get("fy", "2025-26")
         input_dir  = job.get("input_dir", "")
         out_dir    = Path(job["out_dir"])
         job_dir    = Path(job.get("job_dir", str(out_dir)))
@@ -8451,7 +8387,7 @@ def api_gstr2b_extract_start():
     Upload one or more GSTR2B_*.xlsx monthly files.
     Query params: fy (default 2025-26).
     """
-    fy      = request.form.get("fy", "2026-27")
+    fy      = request.form.get("fy", "2025-26")
     files   = request.files.getlist("files")
     if not files:
         return jsonify(error="No files uploaded"), 400
@@ -8518,7 +8454,7 @@ def _run_gstr1_tally(job_id):
 
     try:
         job        = jobs[job_id]
-        fy         = job.get("fy", "2026-27")
+        fy         = job.get("fy", "2025-26")
         out_dir    = Path(job["out_dir"])
         job_dir    = Path(job.get("job_dir", str(out_dir)))
 
@@ -8592,7 +8528,7 @@ def api_gstr1_tally_start():
     Upload Tally Excel + GSTR-1 JSON zips.
     Query params: fy (default 2025-26).
     """
-    fy    = request.form.get("fy", "2026-27")
+    fy    = request.form.get("fy", "2025-26")
     files = request.files.getlist("files")
     if not files:
         return jsonify(error="No files uploaded"), 400
