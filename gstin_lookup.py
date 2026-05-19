@@ -26,9 +26,20 @@
 ================================================================================
 """
 
-import sys, os, re, time, json, ssl
+import sys, os, re, time, json, ssl, warnings
 from pathlib import Path
 from datetime import datetime
+
+# ── Suppress InsecureRequestWarning at module level ───────────────────────────
+#    GST portal cert chain triggers urllib3 warnings; silence them globally so
+#    they never appear when this module is imported by other scripts.
+warnings.filterwarnings("ignore", message=".*InsecureRequestWarning.*")
+warnings.filterwarnings("ignore", message=".*Unverified HTTPS request.*")
+try:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except Exception:
+    pass
 
 # ── Try to import requests; fall back to urllib ───────────────────────────────
 try:
@@ -67,14 +78,14 @@ GST_ENDPOINTS = [
 HEADERS   = {
     "User-Agent":      ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                         "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"),
+                        "Chrome/148.0.0.0 Safari/537.36"),
     "Accept":          "application/json, text/plain, */*",
     "Accept-Language": "en-IN,en-GB;q=0.9,en;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",
     "Connection":      "keep-alive",
     "Referer":         "https://services.gst.gov.in/services/searchtp",
     "Origin":          "https://services.gst.gov.in",
-    "sec-ch-ua":       '"Chromium";v="124","Google Chrome";v="124"',
+    "sec-ch-ua":       '"Chromium";v="148","Google Chrome";v="148"',
     "sec-fetch-dest":  "empty",
     "sec-fetch-mode":  "cors",
     "sec-fetch-site":  "same-origin",
@@ -91,6 +102,7 @@ def _get_json(gstin):
     """
     Try all GST portal endpoints in order.
     Returns parsed JSON from first one that succeeds.
+    FIX v3.2: Updated User-Agent to Chrome 148 (matches current ChromeDriver).
     """
     last_err = None
     for endpoint_tpl in GST_ENDPOINTS:
@@ -451,13 +463,11 @@ def _interactive():
 
 
 def main():
-    import argparse, warnings
-    warnings.filterwarnings("ignore")
-
-    # Suppress InsecureRequestWarning from requests
+    import argparse
+    # (SSL/InsecureRequestWarning already suppressed at module level)
     try:
         import urllib3; urllib3.disable_warnings()
-    except: pass
+    except Exception: pass
 
     _banner()
 

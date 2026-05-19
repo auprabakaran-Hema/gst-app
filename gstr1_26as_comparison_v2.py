@@ -68,12 +68,12 @@ from pathlib import Path
 # ── Optional deps ──────────────────────────────────────────────────────────────
 MISSING = []
 try:    import pdfplumber
-except: MISSING.append("pdfplumber")
+except ImportError: MISSING.append("pdfplumber")
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-except: MISSING.append("openpyxl")
+except ImportError: MISSING.append("openpyxl")
 
 if MISSING:
     print(f"Missing packages: pip install {' '.join(MISSING)}")

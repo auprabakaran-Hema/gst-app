@@ -90,13 +90,13 @@ def _cleanup_old_jobs():
             for sub in d.iterdir():
                 if sub.is_dir() and (now - sub.stat().st_mtime) > JOB_TTL_S:
                     shutil.rmtree(str(sub), ignore_errors=True)
-    except: pass
+    except Exception: pass
 
 def _cleanup_uploads(job_id):
     try:
         up = UPLOAD_DIR / job_id
         if up.exists(): shutil.rmtree(str(up), ignore_errors=True)
-    except: pass
+    except Exception: pass
 
 def _find_engine(name):
     _ALIASES = {
@@ -149,7 +149,7 @@ def _detect_month(fpath, FY_MONTHS):
                         if len(fp) == 6:
                             mon = MONTHS_MAP.get(fp[:2])
                             if mon: return mon, fp[2:]
-    except: pass
+    except Exception: pass
     return None, None
 
 @app.before_request
@@ -526,7 +526,7 @@ footer a:hover{color:var(--accent)}
     <div class="fg">
       <label>Financial Year</label>
       <select id="itFy">
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -947,7 +947,7 @@ def api_upload():
     _cleanup_old_jobs()
     gstin       = request.form.get("gstin","").strip().upper()
     client_name = request.form.get("client_name","").strip()
-    fy          = request.form.get("fy","2025-26").strip() or "2025-26"
+    fy          = request.form.get("fy","2026-27").strip() or "2026-27"
 
     if not gstin or len(gstin) != 15:
         return jsonify(error="Invalid GSTIN — must be exactly 15 characters"), 400
@@ -1030,7 +1030,7 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-1: {mon} {yr}")
             else:
                 log(f"  ⚠ Month not detected: {Path(fpath).name}", "warn")
@@ -1041,7 +1041,7 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR2B_{mon}_{yr}.xlsx"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-2B: {mon} {yr}")
 
         for fpath in saved.get("r2a", []):
@@ -1051,7 +1051,7 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR2A_{mon}_{yr}{ext}"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-2A: {mon} {yr}")
 
         for fpath in saved.get("r3b", []):
@@ -1060,14 +1060,14 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-3B: {mon} {yr}")
 
         for fpath in saved.get("cust", []):
             dest = job_dir / "customer_names.xlsx"
             if not dest.exists():
                 try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
+                except Exception: shutil.copy2(fpath, str(dest))
             log("  Customer names loaded"); break
 
         prog(25)
@@ -1176,7 +1176,7 @@ def run_it_reconciliation(job_id):
                 dest = job_dir / f"{dest_prefix}{ext}"
                 if not dest.exists():
                     try:    Path(fpath).rename(dest)
-                    except: _shutil.copy2(fpath, str(dest))
+                    except Exception: _shutil.copy2(fpath, str(dest))
                 log(f"  ✓ {dest_prefix}: {dest.name}")
                 pdf_found[zone] = dest.name
 

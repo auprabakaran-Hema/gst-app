@@ -80,8 +80,35 @@ FIXED in v29 — ALL GSTR-1A table headers extracted and shown as individual row
   Each row populated from p1a_* keys stored by extract_gstr1a_pdf.
   Zero rows are still shown (for auditability — proves the section was read).
 
-GST COMPLETE SUITE v34 — MULTI-YEAR EDITION, THREE FIXES
-=========================================================
+GST COMPLETE SUITE v35 — GSTR-1 GENERATE REFRESH FIX
+
+FIXED in v33 (this file):
+  FIX D — GSTR-1 retry poll (line ~11772) replaced driver.refresh() with
+           click_portal_refresh_symbol() — prevents JSON generation reset.
+  FIX E — GSTR-2A inline poll (line ~11817) replaced driver.refresh() with
+           click_portal_refresh_symbol() — consistent with v35 approach.
+=====================================================
+FIXED in v35:
+  FIX A — GSTR-1 generate wait now clicks the portal's in-page refresh SYMBOL
+           (rotate/⟳ button top-right of the offlinedownload page) instead of
+           calling driver.refresh() (full page reload).
+           WHY: driver.refresh() reloads the entire page, which can RESET the
+           portal's 20-minute file-generation countdown and lose the generate
+           request. The portal's own refresh symbol only re-polls the status
+           WITHOUT resetting the generation timer.
+           HOW: New helper click_portal_refresh_symbol() tries multiple XPath
+           patterns for the rotation/sync icon in the GSTR-1 offline download
+           page header. Falls back to JS click. If symbol not found, does
+           nothing (safe no-op — avoids full reload).
+  FIX B — Retry interval changed from 30s to 90s (1.5 min) when portal shows
+           "File generation is in progress and may take up to 20 minutes".
+           Clicking refresh symbol every 30s was too aggressive; the portal
+           updates its status only when generation completes. Checking every
+           90s reduces noise and matches portal behaviour.
+  FIX C — wait_for_download_link() (used by single-tab GSTR-1 flows) also
+           updated to use click_portal_refresh_symbol() instead of
+           driver.refresh().
+
 FIXED in v34:
   FIX A — Offline Reconciliation (Option 11) was broken:
            run_offline_reconciliation() body got cut off; folder-selection +
@@ -312,6 +339,25 @@ try:
 except ImportError:
     MISSING.append("openpyxl")
 
+# -- GSTIN Name Cache (portal lookup, persistent, no API key needed) ----------
+try:
+    from gstin_name_cache import GSTINNameCache as _GSTINNameCache
+    _GSTIN_CACHE    = _GSTINNameCache(log_fn=lambda m: logging.getLogger(__name__).info(m),
+                                      auto_fetch=True, prefer_portal=True)
+    _GSTIN_CACHE_OK = True
+except Exception as _gce:
+    _GSTIN_CACHE    = None
+    _GSTIN_CACHE_OK = False
+    logging.getLogger(__name__).warning(f"gstin_name_cache not available: {_gce}")
+
+def _cache_get_bulk(gstins):
+    """Bulk-fetch GSTIN names via GSTINNameCache; returns {gstin: name}."""
+    if _GSTIN_CACHE_OK and _GSTIN_CACHE:
+        result = _GSTIN_CACHE.get_bulk(list(gstins), show_progress=False)
+        _GSTIN_CACHE.save()   # persist any newly fetched names
+        return result
+    return {}
+
 # -- Constants ----------------------------------------------
 PAGE_WAIT       = 1    # v32: reduced — smart WebDriverWait handles timing
 SHORT_WAIT      = 0.3  # v32: reduced from 0.5
@@ -319,7 +365,7 @@ ACTION_WAIT     = 0.3  # v32: reduced from 0.5
 CLIENT_GAP      = 2    # v32: reduced from 3
 FILE_GEN_WAIT   = 300  # 5 min max per file (portal usually <90s)
 FILE_GEN_RETRY  = 10
-FY_LABEL        = "2025-26"   # ← Change ONLY this line each new financial year
+FY_LABEL        = "2026-27"   # ← Change ONLY this line each new financial year
 
 def _build_months_for_fy(fy_label):
     """Build 12-month list for any FY like 2024-25 or 2025-26. Auto-computes years."""
@@ -878,19 +924,171 @@ def _pdf_via_cdp(driver, save_path, log=None):
 # ==========================================================
 def keep_session_alive(driver, log=None):
     """
-    Ping the portal by scrolling the current page.
-    Call this every 5-7 mins during GENERATE wait phase
-    so session does not expire.
+    Ping the portal to reset its idle-timeout timer.
+    Strategy (3 layers — any one is enough):
+      1. Dispatch a mousemove event  — most reliable for Angular session timers
+      2. Scroll the page             — fallback DOM activity
+      3. Touch localStorage          — some portals track last-active via JS storage
+    Called every 30s during GENERATE wait so the 20-min portal timeout never fires.
     """
     try:
-        driver.execute_script("window.scrollBy(0, 100);")
-        time.sleep(0.5)
-        driver.execute_script("window.scrollBy(0, -100);")
+        driver.execute_script("""
+            document.dispatchEvent(new MouseEvent('mousemove', {
+                bubbles: true, cancelable: true, clientX: 300, clientY: 300
+            }));
+            window.scrollBy(0, 1);
+            window.scrollBy(0, -1);
+            try { localStorage.setItem('_rpr_ka', Date.now()); } catch(e) {}
+        """)
         if log: log.info("    [KeepAlive] Session pinged ✓")
         return True
     except Exception as e:
         if log: log.warning(f"    [KeepAlive] Failed: {e}")
         return False
+
+
+def click_portal_refresh_symbol(driver, log=None):
+    """
+    v35 FIX: Click the portal's in-page REFRESH SYMBOL (rotate/sync ⟳ icon)
+    on the GSTR-1 offline download page — top-right corner of the teal header.
+
+    WHY THIS IS BETTER THAN driver.refresh():
+      driver.refresh() = full browser page reload → can RESET the portal's
+      20-minute file-generation timer → generation request may be lost.
+
+      The portal's own ⟳ symbol = re-polls the current generation status
+      WITHOUT resetting the timer. This is the correct way to check if the
+      file is ready while the portal is still generating.
+
+    PORTAL HTML (GST portal Angular — confirmed from live page):
+      The teal header bar is NOT a Bootstrap panel-heading — it is an Angular
+      div with class like "row" or "heading-section" containing the title text
+      "Offline Download for GSTR-1" and the ⟳ icon as a plain <i> or <span>
+      with class "fa fa-refresh" positioned absolutely top-right.
+
+      The icon is NOT inside a panel-heading class element — that's why all
+      previous XPaths failed. The fix: search the ENTIRE page for the icon,
+      not just panel-heading descendants.
+
+    Returns True if symbol was found and clicked, False if not found.
+    Falls back silently (no full reload) so the caller can continue polling.
+    """
+    # ── Broad JS sweep — searches entire page, no class restriction ──────────
+    # This is the primary approach since the portal's Angular structure doesn't
+    # use Bootstrap panel-heading classes that we expected.
+    try:
+        result = driver.execute_script("""
+            // Strategy 1: find any <i> or <span> with fa-refresh / fa-sync class
+            var allIcons = document.querySelectorAll(
+                'i.fa-refresh, i.fa-sync, i.fa-sync-alt, ' +
+                'span.fa-refresh, span.fa-sync, ' +
+                'i[class*="refresh"], span[class*="refresh"], ' +
+                'i[class*="sync"], span[class*="sync"], ' +
+                '.glyphicon-refresh, [class*="glyphicon-refresh"]'
+            );
+            for (var ic of allIcons) {
+                try {
+                    var r = ic.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        ic.click();
+                        return 'icon:' + ic.className;
+                    }
+                } catch(e) {}
+            }
+
+            // Strategy 2: any element with ng-click containing refresh/reload
+            var ngClicks = document.querySelectorAll('[ng-click]');
+            for (var el of ngClicks) {
+                var ng = (el.getAttribute('ng-click') || '').toLowerCase();
+                if (ng.includes('refresh') || ng.includes('reload') ||
+                    ng.includes('getdata') || ng.includes('fetchdata') ||
+                    ng.includes('init') || ng.includes('load')) {
+                    try {
+                        var r2 = el.getBoundingClientRect();
+                        if (r2.width > 0 && r2.height > 0) {
+                            el.click();
+                            return 'ng-click:' + el.getAttribute('ng-click');
+                        }
+                    } catch(e) {}
+                }
+            }
+
+            // Strategy 3: any clickable <i> near the top of the page
+            // (the refresh icon is typically in the top 200px)
+            var topIcons = document.querySelectorAll('i, span.icon');
+            for (var ti of topIcons) {
+                try {
+                    var tr = ti.getBoundingClientRect();
+                    if (tr.top < 300 && tr.top > 50 && tr.width > 0) {
+                        var cls = (ti.className || '').toLowerCase();
+                        if (cls.includes('refresh') || cls.includes('sync') ||
+                            cls.includes('rotate') || cls.includes('reload') ||
+                            cls.includes('repeat') || cls.includes('redo')) {
+                            ti.click();
+                            return 'top-icon:' + ti.className;
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            // Strategy 4: debug — log ALL <i> elements to help diagnose
+            var debugInfo = [];
+            document.querySelectorAll('i, button').forEach(function(el) {
+                var r = el.getBoundingClientRect();
+                if (r.top < 400 && r.width > 0) {
+                    debugInfo.push(el.tagName + '|' + el.className + '|ng=' +
+                        (el.getAttribute('ng-click') || '') + '|top=' + Math.round(r.top));
+                }
+            });
+            return 'NOT_FOUND|DEBUG:' + debugInfo.slice(0,20).join(' ;; ');
+        """)
+
+        if result and not str(result).startswith('NOT_FOUND'):
+            if log: log.info(f"    [RefreshSymbol] Portal ⟳ clicked ✓  ({result})")
+            time.sleep(2)
+            return True
+        else:
+            # Log debug info so we can see what elements are actually on the page
+            if log: log.info(f"    [RefreshSymbol] Symbol not found — page elements: {str(result)[:300]}")
+
+    except Exception as e:
+        if log: log.info(f"    [RefreshSymbol] JS sweep error: {e}")
+
+    # ── XPath fallback — broader, no panel-heading restriction ───────────────
+    _REFRESH_XP = [
+        # Font Awesome refresh/sync anywhere on page
+        "//i[contains(@class,'fa-refresh') or contains(@class,'fa-sync')]",
+        "//span[contains(@class,'fa-refresh') or contains(@class,'fa-sync')]",
+        # Glyphicon
+        "//*[contains(@class,'glyphicon-refresh')]",
+        # Any ng-click with refresh/reload
+        "//*[contains(@ng-click,'refresh') or contains(@ng-click,'Refresh')]",
+        "//*[contains(@ng-click,'reload') or contains(@ng-click,'Reload')]",
+        "//*[contains(@ng-click,'getData') or contains(@ng-click,'getStatus')]",
+        # title/aria-label
+        "//*[@title='Refresh' or @title='refresh' or @aria-label='Refresh']",
+        # Any <a> or button near the heading text "Offline Download"
+        "//div[.//text()[contains(.,'Offline Download')]]//i",
+        "//div[.//text()[contains(.,'Offline Download')]]//*[self::i or self::span or self::a or self::button]",
+    ]
+
+    for xp in _REFRESH_XP:
+        try:
+            els = driver.find_elements(By.XPATH, xp)
+            for el in els:
+                try:
+                    if el.is_displayed():
+                        driver.execute_script("arguments[0].click();", el)
+                        if log: log.info(f"    [RefreshSymbol] Clicked via XPath: {xp[:60]} ✓")
+                        time.sleep(2)
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    if log: log.info("    [RefreshSymbol] ⟳ symbol not found on this page — no action taken")
+    return False
 
 
 # ==========================================================
@@ -1089,35 +1287,41 @@ def phased_download_coordinator(driver, client, client_dir, log, returns_todo,
 
 def wait_for_download_link(driver, timeout_seconds, log):
     """
-    After clicking GENERATE JSON/EXCEL, the portal shows:
-      - First: "Request is being processed" or spinning icon
-      - Then:  A table row with a DOWNLOAD link (href ending in .zip or .json)
+    After clicking GENERATE JSON/EXCEL, wait for the portal to finish generating.
 
-    Key: we must REFRESH the page every 30s to check if file is ready.
-    A real download link has href containing 'filedownload' or ends in .zip/.json
-    We must NOT pick up the GENERATE button itself as a link.
+    v35 FIX — Check link FIRST, only wait 90s if no link found:
+      Step A: Check for link RIGHT NOW (no wait) → if found, return it immediately
+      Step B: No link → click portal ⟳ refresh symbol (re-polls, NO timer reset)
+      Step C: Still no link → re-click GENERATE JSON if button visible
+      Step D: Wait 90s watching every 3s → if link appears, click immediately
+      → repeat from Step A
 
-    Portal behaviour (confirmed from logs):
-      - File usually ready in 30s - 2 mins
-      - Page shows "Click here" or a table with download icon/link
+    Portal behaviour:
+      - Shows "File generation is in progress and may take up to 20 minutes"
+      - When ready: shows "Click here to download" link
+      - driver.refresh() = WRONG — resets the 20-min generation timer
+      - Portal ⟳ symbol = CORRECT — just re-polls status
     """
-    log.info(f"    Waiting for file to be generated (refreshing every 30s, max {timeout_seconds}s)...")
+    log.info(f"    Waiting for file to be generated (⟳ symbol every 90s, max {timeout_seconds}s)...")
+
+    GENERATE_XP = [
+        "//button[contains(text(),'GENERATE JSON FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE JSON')]",
+        "//button[contains(text(),'Generate JSON')]",
+        "//a[contains(text(),'GENERATE JSON')]",
+        "//button[contains(text(),'GENERATE EXCEL FILE TO DOWNLOAD')]",
+        "//button[contains(text(),'GENERATE EXCEL')]",
+    ]
 
     def find_real_download_link():
-        """
-        Return a real download link element — NOT the generate button.
-        Real links have href with 'filedownload', '.zip', '.json' or 'download' path.
-        """
+        """Return a real download link — NOT the generate button."""
         try:
-            # Look for links with actual file hrefs
             all_links = driver.find_elements(By.TAG_NAME, "a")
             for el in all_links:
                 try:
-                    if not el.is_displayed():
-                        continue
+                    if not el.is_displayed(): continue
                     href = el.get_attribute("href") or ""
                     text = el.text.strip().lower()
-                    # Must have a real file URL — not just a page link
                     is_file_link = (
                         "filedownload" in href.lower() or
                         href.lower().endswith(".zip") or
@@ -1134,53 +1338,122 @@ def wait_for_download_link(driver, timeout_seconds, log):
         except Exception: pass
         return None
 
-    def page_still_processing():
-        """Check if portal is still generating (spinner or 'processing' text)."""
+    def try_generate_click():
+        """Click GENERATE JSON button. Returns True if found."""
         try:
-            page = driver.page_source.lower()
-            return any(x in page for x in [
-                "request is being processed",
-                "being processed",
-                "processing",
-                "please wait",
-                "generating",
-            ])
-        except Exception:
-            return False
+            clicked = driver.execute_script("""
+                var btns = document.querySelectorAll('button,a');
+                for (var i = 0; i < btns.length; i++) {
+                    var t = (btns[i].innerText || '').toUpperCase();
+                    if (t.includes('GENERATE') && (t.includes('JSON') || t.includes('EXCEL'))) {
+                        btns[i].click(); return true;
+                    }
+                }
+                return false;
+            """)
+            if clicked: return True
+        except Exception: pass
+        return try_click(driver, GENERATE_XP, timeout=5, log=log)
 
-    elapsed = 0
-    refresh_interval = 30  # refresh page every 30 seconds
+    # Quick initial check (portal may have already generated it)
+    time.sleep(3)
+    link = find_real_download_link()
+    if link:
+        log.info("    ✅ Download link already present — clicking immediately")
+        return link
+
+    elapsed  = 3
+    cycle    = 0
+    CYCLE_W  = 90   # seconds to wait when no link found
 
     while elapsed < timeout_seconds:
-        # Check immediately after generate click
+        cycle += 1
+        log.info(f"    Cycle {cycle} — {elapsed}s elapsed")
+
+        # ── Step 0: Detect error/notfound or logout — relogin + re-navigate ─
+        # The portal can land on gst.gov.in/error/notfound mid-generate.
+        # When this happens: ⟳ symbol disappears, session dies, all tabs sign out.
+        # Fix: detect it immediately, relogin, go back to offlinedownload page.
+        try:
+            cur_url = driver.current_url.lower()
+            if ("error/notfound" in cur_url or "logout" in cur_url or
+                    "login" in cur_url and "fowelcome" not in cur_url):
+                log.warning(f"    ⚠ Cycle {cycle}: Portal went to dead page ({cur_url[:60]}) — relogin + re-navigate...")
+                relogin_if_needed(driver, log)
+                # Navigate back to offlinedownload page for GSTR-1
+                try:
+                    safe_go_to_dashboard(driver, log)
+                    log.info(f"    Returned to dashboard after relogin — continuing wait...")
+                    time.sleep(3)
+                except Exception as nav_e:
+                    log.warning(f"    Re-nav after relogin failed: {nav_e}")
+        except Exception:
+            pass
+
+        # ── Step A: Check for link RIGHT NOW (no wait first) ─────────────
+        # Portal often shows "Click here to download - File 1" immediately
+        # after GENERATE — don't waste 90s waiting if it's already there.
+        link = find_real_download_link()
+        if link:
+            log.info(f"    ✅ Step A: Link visible — returning immediately (no 90s wait)")
+            return link
+
+        # ── Step B: No link — click ⟳ refresh symbol ─────────────────────
+        log.info(f"    Step B: No link — clicking portal ⟳ symbol...")
+        click_portal_refresh_symbol(driver, log)
         time.sleep(3)
-        elapsed += 3
 
         link = find_real_download_link()
         if link:
-            log.info(f"    ✅ Download link ready after {elapsed}s")
+            log.info(f"    ✅ Step B: Link appeared after ⟳ click ({elapsed}s)")
             return link
 
-        if page_still_processing():
-            log.info(f"    Portal still processing... ({elapsed}s)")
+        # ── Step C: Re-click GENERATE JSON if still visible ──────────────
+        gen_ok = try_generate_click()
+        if gen_ok:
+            log.info(f"    Step C: GENERATE JSON re-clicked ✓ (cycle {cycle})")
+            time.sleep(3)
+            link = find_real_download_link()
+            if link:
+                log.info(f"    ✅ Step C: Link appeared after GENERATE re-click!")
+                return link
+        else:
+            log.info(f"    Step C: GENERATE button not visible — portal still generating")
 
-        # Wait in 30s intervals, refreshing page each time
-        wait_chunk = min(refresh_interval, timeout_seconds - elapsed)
-        for _ in range(wait_chunk):
-            time.sleep(1)
-            elapsed += 1
-
-        # Refresh page to check if file is ready
-        log.info(f"    Refreshing page to check status... ({elapsed}s elapsed)")
+        # Log portal status
         try:
-            driver.refresh()
-            time.sleep(4)
+            page_lower = driver.page_source.lower()
+            if "in progress" in page_lower or "20 minutes" in page_lower:
+                log.info(f"    Portal: still generating... waiting 90s")
+            elif "downloaded the file last on" in page_lower:
+                log.info(f"    Portal: prior download message shown — re-checking link...")
+                link = find_real_download_link()
+                if link:
+                    return link
         except Exception: pass
 
-        link = find_real_download_link()
-        if link:
-            log.info(f"    ✅ Download link ready after {elapsed}s (found after refresh)")
-            return link
+        # ── Step D: Wait 90s — check for link every 3s, click immediately ─
+        log.info(f"    Step D: Waiting 90s (checking every 3s)...")
+        wait_start = time.time()
+        _last_ping = time.time()
+        while time.time() - wait_start < CYCLE_W:
+            time.sleep(3)
+
+            # ── Keep-alive ping every 30s so portal does not sign out ──
+            if time.time() - _last_ping >= 30:
+                keep_session_alive(driver, log)
+                _last_ping = time.time()
+                # Also detect & recover if session was lost mid-wait
+                if is_session_lost(driver):
+                    log.warning("    ⚠ Session expired during generate wait — attempting re-login...")
+                    relogin_if_needed(driver, log)
+
+            link = find_real_download_link()
+            if link:
+                log.info(f"    ✅ Step D: Link appeared during 90s wait — clicking immediately!")
+                return link
+
+        elapsed += CYCLE_W
 
     log.warning(f"    ⚠ File not ready after {timeout_seconds}s — moving on")
     return None
@@ -1193,18 +1466,27 @@ CURRENT_CLIENT = {}   # populated in process_client before phases start
 
 
 def is_session_lost(driver):
-    """Return True if portal has logged us out or shown access denied."""
+    """Return True if portal has logged us out or shown access denied.
+    Also catches error/notfound and logout pages which indicate dead session."""
     try:
         url = driver.current_url.lower()
         if "accessdenied" in url:
             return True
         if "login" in url and "fowelcome" not in url and "gst.gov.in" in url:
             return True
+        # ★ FIX: error/notfound page = portal session expired / tab crashed
+        if "error/notfound" in url or "error/not-found" in url:
+            return True
+        # ★ FIX: logout page = portal explicitly ended the session
+        if "services/logout" in url or "/logout" in url:
+            return True
         # Check page text for session-expired messages
         body = driver.find_element(By.TAG_NAME, "body").text.lower()
         for phrase in ["session expired", "session has expired",
                        "you are not logged in", "please login again",
-                       "access denied"]:
+                       "access denied",
+                       "successfully logged out",    # logout confirmation page
+                       "page not found"]:            # gst.gov.in/error/notfound body text
             if phrase in body:
                 return True
     except Exception:
@@ -1519,14 +1801,16 @@ def do_login(driver, username, password, log):
         log.info(f"    Login page: {driver.current_url}")
 
         # Wait for at least one text input to appear (Angular form ready)
+        # FIX v3.2: increased timeout 15→25s; GST portal Angular can be slow on first load
         try:
-            WebDriverWait(driver, 15).until(
+            WebDriverWait(driver, 25).until(
                 lambda d: len(d.find_elements(By.CSS_SELECTOR,
                     "input[type='text'], input[type='password'], input[id*='user'], input[name*='user']")) > 0
             )
         except Exception:
-            log.warning("    Username input not found yet — continuing anyway")
-        time.sleep(1)
+            log.warning("    Username input not found yet — retrying with extra wait...")
+            time.sleep(3)   # extra buffer for slow Angular render
+        time.sleep(2)
 
         # ── Fill username ──────────────────────────────────────────
         log.info(f"    Filling username: {username}")
@@ -3045,10 +3329,16 @@ def _gstr2b_multitab(driver, client_dir, log, batch_size=6):
 
     def _wait_one_file(snap_before, timeout=45):
         """Poll until exactly 1 new complete .xlsx file appears.
-        Tracks .crdownload in-progress files — extends wait while download is active."""
-        deadline = time.time() + timeout
+        Tracks .crdownload in-progress files — extends wait while download is active.
+        Pings keep_session_alive every 30s so other tabs do not get signed out."""
+        deadline   = time.time() + timeout
+        _last_ping = time.time()
         while time.time() < deadline:
             time.sleep(0.5)
+            # ── Keep-alive: ping every 30s so portal session stays alive ──
+            if time.time() - _last_ping >= 30:
+                keep_session_alive(driver, log)
+                _last_ping = time.time()
             # Extend deadline while Chrome is actively writing a .crdownload
             active_crd = [f for f in client_path.iterdir()
                           if f.name.endswith(".crdownload") and f.stat().st_size > 0]
@@ -3271,6 +3561,8 @@ def _gstr2b_multitab(driver, client_dir, log, batch_size=6):
         for tab_idx, (tab, (month_name, month_num, year, save_name)) in enumerate(tabs_in_order):
             key  = f"{month_name}_{year}_GSTR2B"
             dest = client_path / save_name
+            # ── Keep-alive ping at start of every tab so session stays active ──
+            keep_session_alive(driver, log)
             try:
                 # ── Step A: Close ALL other gstr2b tabs (isolate session) ──
                 # Only keep: main_window + current working tab.
@@ -3587,10 +3879,15 @@ def _gstr3b_multitab(driver, client_dir, log, batch_size=6):
                 and not f.name.endswith((".crdownload",".tmp",".part"))}
 
     def _wait_files(snap_before, count, timeout=90):
-        deadline = time.time() + timeout
-        found    = {}
+        deadline   = time.time() + timeout
+        found      = {}
+        _last_ping = time.time()
         while time.time() < deadline:
             time.sleep(0.5)
+            # ── Keep-alive: ping every 30s so portal session stays alive ──
+            if time.time() - _last_ping >= 30:
+                keep_session_alive(driver, log)
+                _last_ping = time.time()
             # Extend wait if .crdownload files are still in progress
             active_crd = [f for f in client_path.iterdir()
                           if f.name.endswith(".crdownload") and f.stat().st_size > 0]
@@ -3758,6 +4055,8 @@ def _gstr3b_multitab(driver, client_dir, log, batch_size=6):
             dest = client_path / save_name
             if not nav_ok.get(tab):
                 results[key] = "NAV_FAIL"; continue
+            # ── Keep-alive ping at start of every tab so session stays active ──
+            keep_session_alive(driver, log)
             try:
                 # Guard: tab may have been closed by a new-tab download
                 if tab not in driver.window_handles:
@@ -4870,7 +5169,7 @@ def verify_gstr1_zip(zip_path, expected_month_num, expected_year, log=None):
         return False   # unreadable → treat as wrong so it is retried
 
 
-def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
+def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None, skip_phase1_check=False, is_phase2_only=False):
     """
     Phase 2 — Download generated GSTR-1 and GSTR-2A links.
 
@@ -5178,43 +5477,52 @@ def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
                 log.warning(f"    [{month_name}] GET fallback error: {_dge}")
         return None
 
-    def _click_gen_and_wait(gen_xpaths, save_name, snap_before=None, max_wait=120, month_name=""):
+    def _click_gen_and_wait(gen_xpaths, save_name, snap_before=None, max_wait=1500, month_name=""):
         """
-        Click GENERATE, poll for file, then try download link. Returns file path or None.
+        Click GENERATE, then loop every 90s:
+          1. Click portal ⟳ refresh symbol (status re-poll, no timer reset)
+          2. If download link appeared → click it → download file → done
+          3. If no link → click GENERATE JSON again (re-triggers if needed)
+          4. Wait 90s → back to step 1
 
         snap_before: snapshot taken BEFORE tile click. Pass this from outside so any file
           that downloads instantly (portal already generated it) is detected as NEW.
           If None, takes snap internally (after GENERATE click — less reliable).
+
+        max_wait: 1500s (25 min) — portal says "up to 20 minutes" so we give 5 min buffer.
         """
         snap = snap_before if snap_before is not None else _snap()
 
-        # JS-first GENERATE click
-        gen_done = False
-        try:
-            driver.execute_script("""
-                var btns = document.querySelectorAll('button,a');
-                for (var i = 0; i < btns.length; i++) {
-                    var t = (btns[i].innerText || '').toUpperCase();
-                    if (t.includes('GENERATE') && (t.includes('JSON') || t.includes('EXCEL'))) {
-                        btns[i].click(); break;
+        def _try_generate():
+            """Click GENERATE JSON button. Returns True if found and clicked."""
+            try:
+                clicked = driver.execute_script("""
+                    var btns = document.querySelectorAll('button,a');
+                    for (var i = 0; i < btns.length; i++) {
+                        var t = (btns[i].innerText || '').toUpperCase();
+                        if (t.includes('GENERATE') && (t.includes('JSON') || t.includes('EXCEL'))) {
+                            btns[i].click(); return true;
+                        }
                     }
-                }
-            """)
-            gen_done = True
-        except Exception: pass
-        if not gen_done:
-            gen_done = try_click(driver, gen_xpaths, timeout=8, log=log)
-        if gen_done:
-            log.info(f"    GENERATE clicked ✓")
-        else:
-            log.warning(f"    GENERATE button not found — checking for existing link")
+                    return false;
+                """)
+                if clicked:
+                    return True
+            except Exception: pass
+            return try_click(driver, gen_xpaths, timeout=5, log=log)
 
-        # Fast poll for instant download (if already generated)
-        # ★ Only accept: portal-named zips OR correctly named GSTR1_* files
-        # Rejects zips from other projects (GSTR7, automation tools, etc.)
+        # ── Initial GENERATE click ──────────────────────────────────────────
+        gen_done = _try_generate()
+        if gen_done:
+            log.info(f"    [{month_name}] GENERATE JSON clicked ✓ — portal generating in background")
+        else:
+            log.warning(f"    [{month_name}] GENERATE button not found — checking for existing link")
+
+        # Fast poll for instant download (if already generated — portal shows link immediately)
         import re as _re_fp2
         _PORTAL_FP = _re_fp2.compile(
-            r"^returns_\d{8}_R\d_[A-Z0-9]+_offline_others_\d+\.zip$", _re_fp2.IGNORECASE
+            r"^returns_\d{8}_R\d_[A-Z0-9]+_offline_others_\d+(\s*\(\d+\))?\.zip$",
+            _re_fp2.IGNORECASE
         )
         fast_dl = time.time() + 30
         while time.time() < fast_dl:
@@ -5224,7 +5532,6 @@ def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
                 if f.name.endswith((".crdownload", ".tmp", ".part")): continue
                 if f.stat().st_size < 1000: continue
                 nm = f.name
-                # Accept portal-named zip (strict pattern) or correctly named output
                 is_portal_zip = f.suffix.lower() == ".zip" and _PORTAL_FP.match(nm)
                 is_named_file = (nm.startswith("GSTR1_") or nm.startswith("GSTR2") or
                                  nm.startswith("GSTR3") or nm.endswith(".xlsx") or
@@ -5232,35 +5539,112 @@ def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
                 if not (is_portal_zip or is_named_file): continue
                 prev = snap.get(str(f))
                 if prev is None or f.stat().st_mtime > prev + 0.1:
+                    log.info(f"    [{month_name}] File appeared instantly ✓")
                     return f
 
-        # Slower poll + link check
-        elapsed = 0
+        # ── 90s cycle loop ──────────────────────────────────────────────────
+        # Portal flow (from screenshot):
+        #   • After GENERATE click, portal may IMMEDIATELY show
+        #     "Click here to download - File 1" — do NOT wait 90s first.
+        #   • If no link shown → click ⟳ symbol → wait 90s → check again
+        #
+        # Cycle order (fixed):
+        #   Step A: Check for link RIGHT NOW (no wait) → if found, click & download
+        #   Step B: No link → click ⟳ refresh symbol
+        #   Step C: Still no link → re-click GENERATE JSON if button visible
+        #   Step D: Wait 90s (watching folder + link every 3s)
+        #   → repeat from Step A
+        elapsed = 30   # already waited 30s in fast-poll above
+        cycle   = 0
+        CYCLE_WAIT = 90  # seconds to wait when no link found
+
         while elapsed < max_wait:
+            cycle += 1
+            log.info(f"    [{month_name}] Cycle {cycle} — {elapsed}s elapsed")
+
+            # ── Step A: Check for link IMMEDIATELY — click without waiting ───
             link = _find_download_link()
             if link:
-                # ★ FIX: use new tab-aware handler instead of bare click
+                log.info(f"    [{month_name}] Step A: Link visible — clicking immediately!")
                 result = _handle_download_link_click(link, snap, month_name or save_name)
                 if result:
+                    log.info(f"    [{month_name}] ✅ Downloaded at {elapsed}s (no 90s wait needed)")
                     return result
-                return None  # tried everything — caller will retry
+                log.warning(f"    [{month_name}] Link click failed — continuing cycle")
 
+            # Check folder too — file may have auto-downloaded already
             for f in client_path.iterdir():
                 if f.suffix.lower() not in {".zip", ".json", ".xlsx"}: continue
                 if f.name.endswith((".crdownload", ".tmp", ".part")): continue
                 prev = snap.get(str(f))
                 if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 1000:
+                    log.info(f"    [{month_name}] Step A: File already in folder ✓")
                     return f
 
-            if elapsed > 0 and elapsed % 30 == 0:
-                log.info(f"    Waiting for generate link ({elapsed}s)... refreshing")
-                try:
-                    driver.refresh(); time.sleep(2)
-                except Exception: pass
-            else:
-                time.sleep(3)
-            elapsed += 3
+            # ── Step B: No link — click ⟳ refresh symbol ────────────────────
+            log.info(f"    [{month_name}] Step B: No link — clicking portal ⟳ symbol...")
+            click_portal_refresh_symbol(driver, log)
+            time.sleep(3)  # let Angular re-render
 
+            # Immediate check right after refresh symbol
+            link = _find_download_link()
+            if link:
+                log.info(f"    [{month_name}] Link appeared after ⟳ — downloading now!")
+                result = _handle_download_link_click(link, snap, month_name or save_name)
+                if result:
+                    return result
+
+            # ── Step C: Re-click GENERATE JSON if button is still visible ────
+            gen_retry = _try_generate()
+            if gen_retry:
+                log.info(f"    [{month_name}] Step C: GENERATE JSON re-clicked ✓")
+                time.sleep(3)
+                link = _find_download_link()
+                if link:
+                    log.info(f"    [{month_name}] Link appeared after GENERATE re-click!")
+                    result = _handle_download_link_click(link, snap, month_name or save_name)
+                    if result:
+                        return result
+            else:
+                # Button hidden = portal is still generating (normal behaviour)
+                try:
+                    page_lower = driver.page_source.lower()
+                    if "in progress" in page_lower or "20 minutes" in page_lower:
+                        log.info(f"    [{month_name}] Step C: Portal still generating — will wait 90s")
+                    elif "downloaded the file last on" in page_lower:
+                        log.info(f"    [{month_name}] Step C: Portal shows prior download msg — re-checking link")
+                        link = _find_download_link()
+                        if link:
+                            result = _handle_download_link_click(link, snap, month_name or save_name)
+                            if result:
+                                return result
+                except Exception: pass
+
+            # ── Step D: Wait 90s — check folder + link every 3s ─────────────
+            log.info(f"    [{month_name}] Step D: Waiting 90s...")
+            wait_start = time.time()
+            while time.time() - wait_start < CYCLE_WAIT:
+                time.sleep(3)
+                # Check folder
+                for f in client_path.iterdir():
+                    if f.suffix.lower() not in {".zip", ".json", ".xlsx"}: continue
+                    if f.name.endswith((".crdownload", ".tmp", ".part")): continue
+                    prev = snap.get(str(f))
+                    if (prev is None or f.stat().st_mtime > prev + 0.1) and f.stat().st_size > 1000:
+                        log.info(f"    [{month_name}] File arrived during 90s wait ✓")
+                        return f
+                # Check for link during wait — click immediately, don't wait the rest
+                lnk = _find_download_link()
+                if lnk:
+                    log.info(f"    [{month_name}] Link appeared during 90s wait — clicking immediately!")
+                    res = _handle_download_link_click(lnk, snap, month_name or save_name)
+                    if res:
+                        return res
+                    break  # link click failed — move to next cycle
+
+            elapsed += CYCLE_WAIT
+
+        log.warning(f"    [{month_name}] ✗ File not ready after {elapsed}s ({elapsed//60}min) — moving on")
         return None
 
     def _rename_file(src, dest, month_name):
@@ -5317,7 +5701,8 @@ def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
                 dl_results[key] = "OK"
                 log.info(f"    ✓ GSTR1 {month_name} already downloaded — skip")
                 continue
-            if p1_status not in ("TRIGGERED", "OK"):
+            # If skip_phase1_check is True (Phase 2 Only mode), allow download anyway
+            if not skip_phase1_check and p1_status not in ("TRIGGERED", "OK"):
                 dl_results[key] = p1_status
                 log.info(f"    GSTR1 {month_name}: skip (Phase1={p1_status})")
                 continue
@@ -5450,9 +5835,9 @@ def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
                     # ⑤ FIX: Check if download link ALREADY present on page
                     # (portal previously generated this file — link shown immediately,
                     #  no second GENERATE click needed).
-                    # IMPORTANT: Do NOT wait 60-90s after clicking — that kills the session.
-                    # Fast path: click → poll 15s → if no new file, scan folder for portal-named zip.
-                    existing_link = _find_download_link()
+                    # IMPORTANT: For Phase 2 Only mode (Option 19), ALWAYS click GENERATE JSON
+                    # to ensure fresh download link
+                    existing_link = None if is_phase2_only else _find_download_link()
                     if existing_link:
                         # ★ FIX 4: Use tab-aware handler — portal link opens new tab
                         log.info(f"    [{month_name}] Link already present — using tab-aware click")
@@ -5473,6 +5858,7 @@ def phase2_download_all(driver, client_dir, triggered, log, returns_todo=None):
                     else:
                         # ⑥ Click GENERATE JSON — snap was taken BEFORE, so any file that
                         #    arrives (even instantly) will be detected as newer than snap
+                        log.info(f"    [{month_name}] Clicking GENERATE JSON...")
                         new_f = _click_gen_and_wait(GENERATE_JSON_XP, save_name, snap_before, month_name=month_name)
 
                     if new_f:
@@ -7835,9 +8221,10 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
 
     log.info(f"    GSTIN→name map: {len(gstin_name_map)} entries (from GSTR-2A/2B)")
 
-    # -- Try public GST search API for any missing names ----------
-    # Collect all GSTINs from GSTR-1 invoice rows that have no name yet
-    # We do a quick offline read first to find unknown GSTINs
+    # -- Fetch missing GSTIN names from GST portal via GSTINNameCache ----------
+    # Collects every buyer GSTIN from all GSTR-1 JSONs that has no name yet,
+    # then fetches from services.gst.gov.in (free, no API key, no login).
+    # Results are cached in gstin_name_cache.json — subsequent runs are instant.
     unknown_gstins = set()
     for zp in list(cdir_path.glob("GSTR1_*.zip")):
         try:
@@ -7845,54 +8232,21 @@ def write_annual_reconciliation(client_dir, client_name, gstin, log):
             ed2 = cdir_path / (zp.stem + "_ex2")
             ed2.mkdir(exist_ok=True)
             with _zf2.ZipFile(zp) as z2: z2.extractall(ed2)
-            for jf2 in list(ed2.glob("*.json"))+list(ed2.glob("**/*.json")):
+            for jf2 in list(ed2.glob("*.json")) + list(ed2.glob("**/*.json")):
                 d2 = _j2.load(open(jf2, encoding="utf-8"))
-                for p2 in d2.get("b2b",[]):
-                    g2 = p2.get("ctin","").strip()
+                for p2 in d2.get("b2b", []):
+                    g2 = p2.get("ctin", "").strip()
                     if g2 and g2 not in gstin_name_map:
                         unknown_gstins.add(g2)
-        except Exception: pass
-    log.info(f"    Unknown GSTINs needing API lookup: {len(unknown_gstins)}")
+        except Exception:
+            pass
+    log.info(f"    GSTINs needing name lookup: {len(unknown_gstins)}")
 
     if unknown_gstins:
-        try:
-            import urllib.request, json as _j3, time as _t3
-            looked_up = 0
-            for gstin_q in list(unknown_gstins)[:50]:  # max 50 API calls
-                try:
-                    # Public GST search API (no auth needed for basic lookup)
-                    url = f"https://sheet.gstincheck.co.in/check/apikey/{gstin_q}"
-                    # Fallback to knowyourgst endpoint
-                    url2 = f"https://www.knowyourgst.com/developers/getsinglegstin/?gstin={gstin_q}&user=apitest"
-                    req = urllib.request.Request(
-                        f"https://api.knowyourgst.com/gstin/{gstin_q}",
-                        headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
-                    try:
-                        with urllib.request.urlopen(req, timeout=3) as resp:
-                            data = _j3.loads(resp.read())
-                            name = (data.get("lgnm") or data.get("tradeNam") or
-                                    data.get("tradeName") or data.get("legal_name") or "")
-                            if name and name.lower() not in ("null","none",""):
-                                gstin_name_map[gstin_q] = name
-                                looked_up += 1
-                    except Exception:
-                        # Try alternate public endpoint
-                        req2 = urllib.request.Request(
-                            f"https://sheet.gstincheck.co.in/check/39592d0c-5c45-4f20-b7d7-7a0ee92b4e38/{gstin_q}",
-                            headers={"User-Agent":"Mozilla/5.0"})
-                        try:
-                            with urllib.request.urlopen(req2, timeout=3) as resp2:
-                                data2 = _j3.loads(resp2.read())
-                                name2 = (data2.get("lgnm") or data2.get("tradeNam") or "")
-                                if name2:
-                                    gstin_name_map[gstin_q] = name2
-                                    looked_up += 1
-                        except Exception: pass
-                    _t3.sleep(0.2)  # polite delay between API calls
-                except Exception: pass
-            log.info(f"    API lookup complete: {looked_up} names fetched")
-        except Exception as e:
-            log.warning(f"    API lookup failed: {e}")
+        portal_names = _cache_get_bulk(unknown_gstins)
+        looked_up = sum(1 for v in portal_names.values() if v)
+        gstin_name_map.update({g: n for g, n in portal_names.items() if n})
+        log.info(f"    Portal lookup complete: {looked_up}/{len(unknown_gstins)} names fetched")
 
     log.info(f"    GSTIN→name map final: {len(gstin_name_map)} entries")
 
@@ -11061,7 +11415,8 @@ def write_master_report(all_results, base_dir):
 
     ws.merge_cells("A1:N1")
     c = ws["A1"]
-    c.value = f"GST DOWNLOAD MASTER REPORT — AY 2025-26 — {datetime.now().strftime('%d-%b-%Y %I:%M %p')}"
+    c.value = f"GST DOWNLOAD MASTER REPORT — AY {int(FY_LABEL[:4])+1}-{str(int(FY_LABEL[5:])+1).zfill(2)} — {datetime.now().strftime('%d-%b-%Y %I:%M %p')}"
+    # AY derived dynamically from FY_LABEL global
     c.font = Font(name="Arial",bold=True,color="FFFFFF",size=13)
     c.fill = fill(DARK_BLUE); c.alignment = aln()
     ws.row_dimensions[1].height = 38
@@ -11123,7 +11478,7 @@ def write_master_report(all_results, base_dir):
 # ==========================================================
 def load_clients(script_dir):
     # ── Try Excel files first ──────────────────────────────────────
-    for fname in ["Client_Manager_Secure_AY2025-26.xlsx","clients_manager.xlsx","clients.xlsx"]:
+    for fname in ["Client_Manager_Secure_AY2027-28.xlsx","Client_Manager_Secure_AY2026-27.xlsx","Client_Manager_Secure_AY2025-26.xlsx","clients_manager.xlsx","clients.xlsx"]:
         p = os.path.join(script_dir, fname)
         if not os.path.exists(p): continue
         try:
@@ -11210,7 +11565,7 @@ def load_clients(script_dir):
     print("  ✗  NO CLIENT FILE FOUND")
     print("  " + "-"*60)
     print("  Please place ONE of these files in the same folder as this script:")
-    print("    • Client_Manager_Secure_AY2025-26.xlsx  (sheet: 🔐 Client Credentials)")
+    print("    • Client_Manager_Secure_AY2027-28.xlsx (or AY2026-27/AY2025-26) (sheet: 🔐 Client Credentials)")
     print("    • clients_manager.xlsx                  (sheet: 🔐 Client Credentials)")
     print("    • clients.xlsx                          (sheet: 🔐 Client Credentials)")
     print("    • clients.csv  (columns: name, username, password, gstin, entity, active)")
@@ -11320,12 +11675,30 @@ def process_client(client, base_dir, log, returns_todo=None, existing_driver=Non
 
         # -- PHASE 1: Trigger/download for selected returns × all months --
         log.info(f"\n  Returns selected: {sorted(returns_todo)}")
-        triggered = phase1_trigger_all(driver, cdir, log, returns_todo)
+        
+        # ★ OPTION 19 CHECK: If GSTR1_PHASE2_ONLY, skip Phase 1A (no generate), go straight to Phase 2
+        is_phase2_only = "GSTR1_PHASE2_ONLY" in returns_todo
+        if is_phase2_only:
+            log.info("  ✅ GSTR-1 Phase 2 Only mode: Skipping Phase 1A (generate)")
+            log.info("  Going straight to Phase 2: Download existing files")
+            # Convert GSTR1_PHASE2_ONLY to GSTR1 for Phase 2 download
+            returns_todo = {"GSTR1"}
+            triggered = {}
+        else:
+            triggered = phase1_trigger_all(driver, cdir, log, returns_todo)
+
+        # ★ OPTION 20 CHECK: If ONLY GSTR1 selected (and NOT Phase 2 only), STOP after Phase 1 (no Phase 2 download)
+        if returns_todo == {"GSTR1"} and not is_phase2_only:
+            log.info("\n  ✅ Phase 1 (GENERATE ONLY) Complete")
+            log.info("  Phase 2+ skipped (GSTR-1 Phase 1 Only mode)")
+            result["months"] = []
+            return result
 
         # No fixed wait — Phase 2 polls until download link appears
 
         # -- PHASE 2: Download GSTR-1 / GSTR-1A / GSTR-2A --
-        dl_results = phase2_download_all(driver, cdir, triggered, log, returns_todo)
+        dl_results = phase2_download_all(driver, cdir, triggered, log, returns_todo, 
+                                         skip_phase1_check=is_phase2_only, is_phase2_only=is_phase2_only)
 
         # -- AUTO-RETRY: Re-attempt failed downloads (up to 2 rounds) --
         FAIL_TAGS = {"TILE_FAIL","NOT_FOUND","TILE_NOT_FOUND","GEN_FAIL","ERR","MISS","MISMATCH","LINK_NOT_FOUND"}
@@ -11475,7 +11848,7 @@ def process_client(client, base_dir, log, returns_todo=None, existing_driver=Non
                                 _deadline = time.time() + 180
                                 while time.time() < _deadline and not _got_f:
                                     time.sleep(3)
-                                    try: driver.refresh(); time.sleep(1.5)
+                                    try: click_portal_refresh_symbol(driver, log); time.sleep(1.5)  # v33 FIX: portal ⟳ not full reload
                                     except Exception: pass
                                     _got_f_check = download_ready_file(driver, cdir, save, log)
                                     if _got_f_check:
@@ -11520,7 +11893,9 @@ def process_client(client, base_dir, log, returns_todo=None, existing_driver=Non
                             while time.time() < _deadline and not _got:
                                 time.sleep(3)
                                 try:
-                                    driver.refresh()
+                                    # v33 FIX: portal ⟳ symbol instead of driver.refresh()
+                                    # GSTR-2A is on offlinedownload — full reload loses state
+                                    click_portal_refresh_symbol(driver, log)
                                     time.sleep(1)
                                 except Exception: pass
                                 _got = download_ready_file(driver, cdir, save, log)
@@ -12011,7 +12386,7 @@ def retry_from_master_excel(log=None):
             print(f"    [{i}] {os.path.basename(f)}")
         idx = input("  Select (ENTER=1): ").strip()
         try: master_path = master_files[int(idx)-1] if idx else master_files[0]
-        except: master_path = master_files[0]
+        except (ValueError, IndexError): master_path = master_files[0]
 
     # Parse the Master Excel
     try:
@@ -12084,7 +12459,7 @@ def retry_from_master_excel(log=None):
             print(f"    [{i}] {os.path.basename(d)}")
         sel = input("  Select run folder (ENTER=1): ").strip()
         try: chosen_run = run_dirs[int(sel)-1] if sel else run_dirs[0]
-        except: chosen_run = run_dirs[0]
+        except (ValueError, IndexError): chosen_run = run_dirs[0]
     else:
         chosen_run = base_dir
     print(f"  Run folder: {chosen_run}")
@@ -12278,6 +12653,10 @@ def ask_returns_menu():
                 {"GSTR2B"}),
         ("6",  "⚡ FAST — GSTR-3B only  (PDF, direct download, ~5 min)",
                 {"GSTR3B"}),
+        ("19", "⚡ GSTR-1 PHASE 2 ONLY — Download JSON (link already generated, click download only)",
+                {"GSTR1_PHASE2_ONLY"}),
+        ("20", "⚡ GSTR-1 PHASE 1 ONLY — Generate link only (no download, just trigger generation)",
+                {"GSTR1"}),
 
         # ── GENERATE-FIRST CASES ──────────────────────────────────
         ("2",  "GSTR-1  only  (JSON — generate first, then download)",
@@ -12320,12 +12699,17 @@ def ask_returns_menu():
     print("="*70)
     print("  FAST CASES (No generate needed — direct download):")
     for num, label, _ in OPTIONS:
-        if num in ("15","4","6"):
+        if num in ("15","4","6","19"):
+            print(f"  [{num}]  {label}")
+    print()
+    print("  GENERATE ONLY (Trigger generation, no download):")
+    for num, label, _ in OPTIONS:
+        if num in ("20",):
             print(f"  [{num}]  {label}")
     print()
     print("  FULL / COMBO CASES (Phased: Generate → Direct → Collect):")
     for num, label, _ in OPTIONS:
-        if num not in ("15","4","6","11","12","18","C","10"):
+        if num not in ("15","4","6","11","12","18","C","10","19","20"):
             print(f"  [{num}]  {label}")
     print()
     print("  UTILITIES:")
@@ -12434,7 +12818,7 @@ def ask_fy_range():
 # ==========================================================
 def main():
     print("\n" + "="*70)
-    print("  GST COMPLETE SUITE v34 — MULTI-YEAR EDITION")
+    print("  GST COMPLETE SUITE v35 — MULTI-YEAR EDITION  (Suite v3.5 ADVANCED PRO)")
     print("  Downloads: GSTR-1 (JSON) + GSTR-1A (JSON)")
     print("             GSTR-2B (Excel) + GSTR-2A (Excel)")
     print("             GSTR-3B (PDF) + Tax Liability & ITC")

@@ -1,6 +1,6 @@
 """
 ================================================================================
-  MASTER BRIDGE v3.0 — GST ↔ Income Tax Full Reconciliation
+  MASTER BRIDGE v3.2 — GST ↔ Income Tax Full Reconciliation
   
   KEY CONCEPT (your question answered):
   ─────────────────────────────────────
@@ -51,7 +51,7 @@ from datetime import datetime
 from collections import defaultdict
 
 # ── Config ────────────────────────────────────────────────────────────────────
-FALLBACK_FY      = "2025-26"
+FALLBACK_FY      = "2026-27"
 THRESH_OK        = 1000      # ₹ diff < this → ✓ OK
 THRESH_WARN      = 50000     # ₹ diff < this → ⚠ Minor  else → ✗ CHECK
 NUM_FMT          = "#,##0.00"
@@ -79,12 +79,12 @@ C_PURPLE = "7030A0"
 
 MISSING = []
 try:    import pandas as pd
-except: MISSING.append("pandas")
+except ImportError: MISSING.append("pandas")
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-except: MISSING.append("openpyxl")
+except ImportError: MISSING.append("openpyxl")
 
 if MISSING:
     print(f"✗ pip install {' '.join(MISSING)}")
@@ -206,7 +206,7 @@ def pan_from_gstin(gstin):
 
 def _n(v):
     try:    return round(float(str(v or 0).replace(",", "").replace("₹", "").replace(" ", "")), 2)
-    except: return 0.0
+    except (ValueError, TypeError, AttributeError): return 0.0
 
 def _clean(s):
     if s is None: return ""
@@ -309,7 +309,8 @@ def read_gst_folder(gst_folder, fy):
                         m2 = GSTIN_RE.search(combined.upper())
                         if m2: gstin = m2.group(1); break
                     if gstin: break
-                except: pass
+                except Exception:
+                    pass
 
         pan = pan_from_gstin(gstin) if gstin else ""
         if not pan:
@@ -330,7 +331,8 @@ def read_gst_folder(gst_folder, fy):
                 continue
             try:
                 df = xl.parse(sn, header=None, dtype=str).fillna("")
-            except: continue
+            except Exception as e:
+                continue  # unreadable sheet
 
             for _, row in df.iterrows():
                 vals = [_clean(str(v)) for v in row]
@@ -344,7 +346,7 @@ def read_gst_folder(gst_folder, fy):
                 nums = []
                 for v in vals[1:]:
                     try: nums.append(round(float(str(v).replace(",","")),2))
-                    except: nums.append(0.0)
+                    except (ValueError, TypeError): nums.append(0.0)
                 def g(i): return nums[i] if i < len(nums) else 0.0
 
                 # Columns (0-based from col1 onward) — matches gst_suite ANNUAL_RECONCILIATION
@@ -403,7 +405,8 @@ def read_gst_folder(gst_folder, fy):
 
         try:
             xl = pd.ExcelFile(xl_path, engine="openpyxl")
-        except: continue
+        except Exception:
+            continue
 
         igst = cgst = sgst = 0.0
 
@@ -423,7 +426,8 @@ def read_gst_folder(gst_folder, fy):
                         elif len(nums) == 1:
                             igst = nums[0]
                         break
-            except: pass
+            except Exception:
+                pass
 
         # Fallback: sum B2B sheet
         if igst == 0 and "B2B" in xl.sheet_names:
@@ -446,7 +450,8 @@ def read_gst_folder(gst_folder, fy):
                         if ci_ig is not None: igst += _n(r.iloc[ci_ig])
                         if ci_cg is not None: cgst += _n(r.iloc[ci_cg])
                         if ci_sg is not None: sgst += _n(r.iloc[ci_sg])
-            except: pass
+            except Exception:
+                pass
 
         if igst + cgst + sgst > 0:
             d = pan_data[pan_2b][mkey]
@@ -503,7 +508,8 @@ def read_gst_folder(gst_folder, fy):
                             if pan_z: break
                         _twb.close()
                         if pan_z: break
-                except: pass
+                except Exception:
+                    pass
                 if pan_z: break
         if not pan_z:
             pan_z = list(pan_meta.keys())[0] if len(pan_meta) == 1 else "UNKNOWN"
@@ -552,14 +558,14 @@ def read_gst_folder(gst_folder, fy):
             pan_tl = list(pan_meta.keys())[0] if len(pan_meta) == 1 else "UNKNOWN"
         try:
             xl = pd.ExcelFile(str(xl_path), engine="openpyxl")
-        except:
+        except Exception:
             continue
         # Read "Tax Liability Summary" or "Tax liability" sheet
         for sn in xl.sheet_names:
             if sn.lower() in ["tax liability summary", "tax liability", "tax_liability_summary"]:
                 try:
                     df = xl.parse(sn, header=None, dtype=str).fillna("")
-                except:
+                except Exception:
                     continue
                 for _, row in df.iterrows():
                     vals = [_clean(str(v)) for v in row]
@@ -575,7 +581,7 @@ def read_gst_folder(gst_folder, fy):
                     nums = []
                     for v in vals[1:]:
                         try: nums.append(round(float(str(v).replace(",","")), 2))
-                        except: nums.append(0.0)
+                        except (ValueError, TypeError): nums.append(0.0)
                     def gn(i): return nums[i] if i < len(nums) else 0.0
                     d = pan_data[pan_tl][mkey]
                     # Only fill 3B if not already set
@@ -1651,8 +1657,9 @@ def main():
                     sz = xl.stat().st_size
                     if sz > best_it_size:
                         best_it_size   = sz
-                        best_it_folder = home_dl   # keep base as home_dl
-                except: pass
+                        best_it_folder = it_dl   # FIX v3.2: point to actual IT Download folder, not home_dl
+                except Exception:
+                    pass
         it_base = best_it_folder if (best_it_folder and best_it_size >= 25_000) else it_base_raw
     elif not args.it and (home_dl/"IT_Automation").exists():
         best_it_folder = None
@@ -1665,7 +1672,8 @@ def main():
                     if sz > best_it_size:
                         best_it_size   = sz
                         best_it_folder = d
-                except: pass
+                except Exception:
+                    pass
         if best_it_folder and best_it_size >= 25_000:
             it_base = best_it_folder
         else:
@@ -1674,7 +1682,7 @@ def main():
         it_base = it_base_raw
 
     print("\n" + "="*72)
-    print("  MASTER BRIDGE v3.0 — GST ↔ Income Tax Reconciliation")
+    print("  MASTER BRIDGE v3.2 — GST ↔ Income Tax Reconciliation")
     print("  PAN Bridge: GSTIN→PAN = same PAN as AIS/TIS in IT Portal")
     print("="*72)
     print(f"  GST folder : {gst_base}")
@@ -1842,7 +1850,19 @@ def main():
                             if pan in itf.name.upper() or pan in d.name.upper():
                                 it_cdir = d; break
                         if it_cdir: break
-                # pass 6: fallback to gst_cdir (single combined folder layout)
+                # pass 6: fallback — scan it_base for any IT_RECONCILIATION file with matching PAN
+                if not it_cdir and pan:
+                    for d in it_base.iterdir():
+                        if not d.is_dir() or d.name.startswith("."): continue
+                        it_dl_cand = d / "IT Download"
+                        search_dirs = [it_dl_cand, d] if it_dl_cand.is_dir() else [d]
+                        for sd in search_dirs:
+                            for itf in sd.rglob("IT_RECONCILIATION*.xlsx"):
+                                if pan in itf.name.upper():
+                                    it_cdir = sd; break
+                            if it_cdir: break
+                        if it_cdir: break
+                # pass 7: last resort fallback to gst_cdir (single combined folder layout)
                 if not it_cdir:
                     it_cdir = gst_cdir
         it_cdir = Path(it_cdir)

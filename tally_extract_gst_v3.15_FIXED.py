@@ -69,6 +69,8 @@ TALLY_ODBC_PORTS    = [9000, 9001, 9002, 9003]
 TALLY_XML_PORTS     = [9002, 9000, 9001, 9003]
 
 CLIENT_EXCEL_NAMES = [
+    "Client_Manager_Secure_AY2027-28.xlsx",
+    "Client_Manager_Secure_AY2026-27.xlsx",
     "Client_Manager_Secure_AY2025-26.xlsx",
     "clients_manager.xlsx",
     "clients.xlsx",

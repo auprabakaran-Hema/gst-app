@@ -88,13 +88,13 @@ def _cleanup_old_jobs():
             for sub in d.iterdir():
                 if sub.is_dir() and (now - sub.stat().st_mtime) > JOB_TTL_S:
                     shutil.rmtree(str(sub), ignore_errors=True)
-    except: pass
+    except Exception: pass
 
 def _cleanup_uploads(job_id):
     try:
         up = UPLOAD_DIR / job_id
         if up.exists(): shutil.rmtree(str(up), ignore_errors=True)
-    except: pass
+    except Exception: pass
 
 def _find_engine(name):
     """Locate it_recon_engine.py in possible locations."""
@@ -639,7 +639,7 @@ def it_upload():
     cname = request.form.get("cname","").strip()
     pan   = request.form.get("pan","").strip().upper()
     gstin = request.form.get("gstin","").strip().upper()
-    fy    = request.form.get("fy","2025-26")
+    fy    = request.form.get("fy","2026-27")
 
     if not cname or not pan or len(pan) != 10:
         return jsonify(error="Client name and valid PAN are required"), 400

@@ -1,5 +1,5 @@
 """
-GST_IT_COMPARISON_BUILDER — v2.0  (FULLY AUTOMATIC)
+GST_IT_COMPARISON_BUILDER — v2.2  (FULLY AUTOMATIC)
 =====================================================
 AUTO-READS all data — no manual entry needed:
   ✅ GSTR-2B  → Reads all GSTR2B_*.xlsx monthly files automatically
@@ -16,6 +16,18 @@ Creates TWO Excel workbooks:
     Sheet 1 — TIS_vs_2B        : 2B totals vs TIS accepted values (auto-filled)
     Sheet 2 — AIS_vs_2B        : Month-wise 2B vs AIS (auto-filled)
     Sheet 3 — Summary_Dashboard: Annual reconciliation summary
+
+BUG FIXES v2.2 (Suite v3.5 app v9):
+  ✓ MONTHS_FY / MONTHS_SHORT: hardcoded to 2025-26 — now dynamically generated
+    from --fy argument. Passing --fy 2026-27 now correctly labels all sheets
+    with Apr-2026 … Mar-2027 (previously showed wrong 2025/2026 labels for all years).
+
+BUG FIXES v2.1 (Suite v3.5):
+  ✓ GSTR2B raw-file filter: now accepts portal numeric-month filenames
+    (GSTR2B_062025.xlsx, GSTR2B_06_2025.xlsx, GSTR2B_Jun2025.xlsx)
+    Original regex only matched GSTR2B_Month_YYYY.xlsx (letter-only month)
+  ✓ _month_from_filename: now resolves MM+YYYY numeric and 3-char-abbr formats
+    (covers all real portal download naming variants including 2024/2026/2027)
 
 Usage:
   python build_gst_it_comparison.py
@@ -46,11 +58,21 @@ ALT1    = "FFFFFF"; ALT2  = "F2F2F2"
 INPUT_BG= "EBF3FB"; AUTO_BG= "E2EFDA"   # green = auto-filled
 NUM_FMT = "#,##0.00"; INT_FMT = "#,##0"
 
-MONTHS_FY   = ["Apr-2025","May-2025","Jun-2025","Jul-2025","Aug-2025","Sep-2025",
-                "Oct-2025","Nov-2025","Dec-2025","Jan-2026","Feb-2026","Mar-2026"]
-MONTHS_SHORT= [("Apr","2025"),("May","2025"),("Jun","2025"),("Jul","2025"),
-               ("Aug","2025"),("Sep","2025"),("Oct","2025"),("Nov","2025"),
-               ("Dec","2025"),("Jan","2026"),("Feb","2026"),("Mar","2026")]
+# FIX v11: MONTHS_FY/SHORT dynamically derived from FY_LABEL (was hardcoded to 2025-26)
+def _build_months(fy_label):
+    """Build month lists for any FY label like '2025-26' or '2026-27'."""
+    try:
+        y1 = int(fy_label.split("-")[0])
+        y2 = y1 + 1
+    except Exception:
+        y1, y2 = 2025, 2026
+    _MO = [("Apr",str(y1)),("May",str(y1)),("Jun",str(y1)),("Jul",str(y1)),
+           ("Aug",str(y1)),("Sep",str(y1)),("Oct",str(y1)),("Nov",str(y1)),
+           ("Dec",str(y1)),("Jan",str(y2)),("Feb",str(y2)),("Mar",str(y2))]
+    _FY = [f"{m}-{y}" for m, y in _MO]
+    return _FY, _MO
+
+MONTHS_FY, MONTHS_SHORT = _build_months("2026-27")  # default; overridden by --fy arg
 
 # Month name → abbreviation map (for PDF parsing)
 MON_MAP = {
@@ -202,13 +224,40 @@ class GSTRData:
 def _safe_float(v):
     if v is None: return 0.0
     try:    return float(str(v).replace(",","").strip()) if str(v).strip() else 0.0
-    except: return 0.0
+    except Exception: return 0.0
 
 GSTIN_RE = re.compile(r'\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}\b')
 
 def _month_from_filename(fname):
-    """Guess month string like 'Apr-2025' from filename like GSTR2B_April_2025.xlsx"""
+    """Guess month string like 'Apr-2025' from filename like GSTR2B_April_2025.xlsx.
+    BUG FIX v2.1: now also handles numeric-month portal filenames:
+      GSTR2B_062025.xlsx    → Jun-2025
+      GSTR2B_06_2025.xlsx   → Jun-2025
+      GSTR2B_Jun2025.xlsx   → Jun-2025  (3-char abbr without underscore before year)
+    """
+    import re as _re_mf
     fname_low = fname.lower()
+
+    _NUM_TO_ABR = {
+        "01":"Jan","02":"Feb","03":"Mar","04":"Apr","05":"May","06":"Jun",
+        "07":"Jul","08":"Aug","09":"Sep","10":"Oct","11":"Nov","12":"Dec",
+    }
+    _ABBR_MAP = {
+        "jan":"Jan","feb":"Feb","mar":"Mar","apr":"Apr","may":"May","jun":"Jun",
+        "jul":"Jul","aug":"Aug","sep":"Sep","oct":"Oct","nov":"Nov","dec":"Dec",
+    }
+
+    # Pattern: GSTR2B_062025.xlsx  or  GSTR2B_06_2025.xlsx
+    m = _re_mf.search(r"(\d{2})_?(\d{4})", fname_low)
+    if m and m.group(1) in _NUM_TO_ABR and int(m.group(2)) in range(2020, 2035):  # FIX v12: extended to 2035
+        return f"{_NUM_TO_ABR[m.group(1)]}-{m.group(2)}"
+
+    # Pattern: GSTR2B_Jun2025.xlsx  or  GSTR2B_Jun_2025.xlsx
+    m2 = _re_mf.search(r"([a-z]{3})_?(\d{4})", fname_low)
+    if m2 and m2.group(1) in _ABBR_MAP and int(m2.group(2)) in range(2020, 2035):  # FIX v12: extended to 2035
+        return f"{_ABBR_MAP[m2.group(1)]}-{m2.group(2)}"
+
+    # Original: full month name anywhere in filename
     for full, abbr in [
         ("april","Apr"),("may","May"),("june","Jun"),("july","Jul"),
         ("august","Aug"),("september","Sep"),("october","Oct"),
@@ -216,10 +265,9 @@ def _month_from_filename(fname):
         ("february","Feb"),("march","Mar"),
     ]:
         if full in fname_low:
-            for yr in ["2025","2026"]:
+            for yr in [str(y) for y in range(2020, 2035)]:  # FIX v11: extended to 2035
                 if yr in fname:
                     return f"{abbr}-{yr}"
-            # guess year from FY
             return f"{abbr}-2025"
     return None
 
@@ -343,7 +391,7 @@ def find_and_read_gstr2b_files(search_paths, exclude_paths=None):
     if exclude_paths:
         for ep in exclude_paths:
             try: _excl_norm.add(os.path.normcase(os.path.normpath(str(ep))))
-            except: pass
+            except Exception: pass
 
     def _is_excl(fp):
         try:
@@ -351,7 +399,7 @@ def find_and_read_gstr2b_files(search_paths, exclude_paths=None):
             for ex in _excl_norm:
                 if np == ex or np.startswith(ex + os.sep):
                     return True
-        except: pass
+        except Exception: pass
         return False
 
     all_files = []
@@ -372,7 +420,7 @@ def find_and_read_gstr2b_files(search_paths, exclude_paths=None):
     deduped = []
     for f in all_files:
         try: nf = os.path.normcase(os.path.normpath(os.path.abspath(f)))
-        except: nf = f
+        except Exception: nf = f
         if nf not in seen_real:
             seen_real.add(nf)
             deduped.append(f)
@@ -389,9 +437,20 @@ def find_and_read_gstr2b_files(search_paths, exclude_paths=None):
         if bname_low in SKIP_EXACT:
             data.warnings.append(f"  ⚠ Skipping output file: {bname}")
             continue
-        # Skip consolidated analysis files — only raw GSTR2B_MonthName_YYYY.xlsx are valid
+        # Skip consolidated/output files — only raw GSTR2B monthly files are valid.
+        # BUG FIX v2.1: original regex r"gstr2b_[a-z]+_\d{4}" rejected numeric-month
+        # filenames like GSTR2B_062025.xlsx (portal download format) and
+        # GSTR2B_Jun2025.xlsx (no underscore before year).
+        # Updated to accept: GSTR2B_<alpha_or_num>_<year> OR GSTR2B_<MMYYYY>
         import re as _re2
-        if not _re2.match(r"gstr2b_[a-z]+_\d{4}\.xlsx$", bname_low):
+        _RAW_OK = (
+            _re2.match(r"gstr2b_[a-z]+_\d{4}\.xlsx$", bname_low)      # GSTR2B_April_2025.xlsx
+            or _re2.match(r"gstr2b_\d{2}\d{4}\.xlsx$", bname_low)     # GSTR2B_062025.xlsx
+            or _re2.match(r"gstr2b_\d{2}_\d{4}\.xlsx$", bname_low)    # GSTR2B_06_2025.xlsx
+            or _re2.match(r"gstr2b_[a-z]{3}\d{4}\.xlsx$", bname_low)  # GSTR2B_Jun2025.xlsx
+            or _re2.match(r"gstr2b_[a-z]{3}_\d{4}\.xlsx$", bname_low) # GSTR2B_Jun_2025.xlsx
+        )
+        if not _RAW_OK:
             data.warnings.append(f"  ⚠ Skipping non-raw file (not GSTR2B_Month_YYYY): {bname}")
             continue
         # Keep only one file per basename — prefer the file in the most recently modified folder
@@ -404,7 +463,7 @@ def find_and_read_gstr2b_files(search_paths, exclude_paths=None):
                 this_folder_mtime = os.path.getmtime(os.path.dirname(f))
                 if this_folder_mtime > existing_folder_mtime:
                     seen_names[bname_low] = f
-            except: pass
+            except Exception: pass
     all_files = sorted(seen_names.values())
 
     if not all_files:
@@ -491,7 +550,7 @@ def read_tis_pdf(pdf_path):
                         v = float(n.replace(",", ""))
                         if v > 0 and not (v < 10000 and v == int(v) and len(str(int(v))) == 4):
                             nums.append(v)
-                    except: pass
+                    except Exception: pass
                 if not nums:
                     continue
                 accepted = nums[-1]
@@ -516,7 +575,7 @@ def read_tis_pdf(pdf_path):
                         v = float(n.replace(",", ""))
                         if v > 0 and not (v < 10000 and v == int(v) and len(str(int(v))) == 4):
                             nums.append(v)
-                    except: pass
+                    except Exception: pass
                 if not nums:
                     continue
                 before_pan = line[:line.upper().find(pan)].strip()
@@ -551,7 +610,7 @@ def read_tis_pdf(pdf_path):
                         v = float(n.replace(",", ""))
                         if v > 0 and not (v < 10000 and v == int(v) and len(str(int(v))) <= 4):
                             nums.append(v)
-                    except: pass
+                    except Exception: pass
                 if nums:
                     accepted = nums[-1]
                     if pan not in result or accepted > 0:
@@ -684,7 +743,7 @@ def read_ais_pdf(pdf_path):
                     v = float(n.replace(",", ""))
                     if v > 0 and not (v < 100 and v == int(v)) and v not in (2024.0, 2025.0, 2026.0):
                         nums.append(v)
-                except:
+                except Exception:  # FIX v11
                     pass
             if nums:
                 amt = nums[-1]
@@ -757,7 +816,7 @@ def read_ais_pdf(pdf_path):
                         v = float(n.replace(",", ""))
                         if v > 0 and not (v < 100 and v == int(v)) and v not in (2024.0, 2025.0, 2026.0):
                             nums_tbl.append(v)
-                    except: pass
+                    except Exception: pass
                 if nums_tbl:
                     result[sup_g]["name"]  = tbl_name or sup_g
                     result[sup_g]["pan"]   = tbl_pan
@@ -826,7 +885,7 @@ def find_files(extra_gst_folder=None, exclude_dirs=None):
     if exclude_dirs:
         for d in exclude_dirs:
             try: _excl.add(os.path.normcase(os.path.normpath(str(d))))
-            except: pass
+            except Exception: pass
 
     def _is_excluded(p):
         try:
@@ -834,7 +893,7 @@ def find_files(extra_gst_folder=None, exclude_dirs=None):
             for ex in _excl:
                 if np == ex or np.startswith(ex + os.sep):
                     return True
-        except: pass
+        except Exception: pass
         return False
 
     # Common search roots
@@ -842,7 +901,7 @@ def find_files(extra_gst_folder=None, exclude_dirs=None):
     try:
         search_roots += list(home.glob("OneDrive*"))
         search_roots += [home / "Desktop", home / "Documents"]
-    except: pass
+    except Exception: pass
     if extra_gst_folder:
         search_roots.insert(0, pathlib.Path(extra_gst_folder))
 
@@ -893,13 +952,13 @@ def find_files(extra_gst_folder=None, exclude_dirs=None):
                 mt = p.stat().st_mtime
                 if mt > tis_mtime:
                     tis_pdf = str(p); tis_mtime = mt
-            except: pass
+            except Exception: pass
         for p in root.rglob("AIS*.pdf"):
             try:
                 mt = p.stat().st_mtime
                 if mt > ais_mtime:
                     ais_pdf = str(p); ais_mtime = mt
-            except: pass
+            except Exception: pass
 
     return gstr2b_dirs, tis_pdf, ais_pdf
 
@@ -968,7 +1027,7 @@ def build_2b_extract(out_dir, gdata: GSTRData):
         ("Remarks",           28),
     ]
     NC2 = len(COLS2)
-    _title(ws2, "TRADE NAME TOTALS — ALL MONTHS  |  TIS COMPARISON  |  AY 2026-27", NC2)
+    _title(ws2, f"TRADE NAME TOTALS — ALL MONTHS  |  TIS COMPARISON  |  AY {AY_LABEL}", NC2)
     _info(ws2, 2, NC2,
           "✅ AUTO-COMPUTED from 2B_Raw_Input.  "
           "TIS Accepted (col H) is auto-filled from TIS PDF if available.  "
@@ -1039,7 +1098,7 @@ def build_2b_extract(out_dir, gdata: GSTRData):
         ("Remarks",           28),
     ]
     NC3 = len(COLS3)
-    _title(ws3, "TRADE NAME TOTALS — MONTH-WISE  |  AIS COMPARISON  |  AY 2026-27", NC3)
+    _title(ws3, f"TRADE NAME TOTALS — MONTH-WISE  |  AIS COMPARISON  |  AY {AY_LABEL}", NC3)
     _info(ws3, 2, NC3,
           "✅ AUTO-COMPUTED from 2B_Raw_Input.  "
           "AIS Reported (col I) is auto-filled from AIS PDF if available.  "
@@ -1138,7 +1197,7 @@ def build_tis_ais_comparison(out_dir, gdata: GSTRData):
         ("Status",                14), ("Action Needed",         32),
     ]
     NC1 = len(COLS1)
-    _title(ws1, "TIS vs GSTR-2B COMPARISON  |  All Months  |  AY 2026-27", NC1)
+    _title(ws1, f"TIS vs GSTR-2B COMPARISON  |  All Months  |  AY {AY_LABEL}", NC1)
 
     tis_count = len([g for g in all_suppliers if gdata.get_tis(g[0]).get("accepted",0) > 0])
     _info(ws1, 2, NC1,
@@ -1212,7 +1271,7 @@ def build_tis_ais_comparison(out_dir, gdata: GSTRData):
         ("Match Status",          16), ("Remarks",               32),
     ]
     NC2 = len(COLS2)
-    _title(ws2, "AIS vs GSTR-2B COMPARISON  |  Month-Wise  |  AY 2026-27", NC2)
+    _title(ws2, f"AIS vs GSTR-2B COMPARISON  |  Month-Wise  |  AY {AY_LABEL}", NC2)
 
     ais_count = len(gdata.ais_data)
     _info(ws2, 2, NC2,
@@ -1282,7 +1341,7 @@ def build_tis_ais_comparison(out_dir, gdata: GSTRData):
     ws3.sheet_view.showGridLines = False
 
     NC3 = 8
-    _title(ws3, "RECONCILIATION DASHBOARD  —  GSTR-2B vs TIS / AIS  |  AY 2026-27", NC3)
+    _title(ws3, f"RECONCILIATION DASHBOARD  —  GSTR-2B vs TIS / AIS  |  AY {AY_LABEL}", NC3)
 
     ws3.column_dimensions["A"].width = 46
     ws3.column_dimensions["B"].width = 24
@@ -1406,12 +1465,30 @@ def build_tis_ais_comparison(out_dir, gdata: GSTRData):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="GST-IT Comparison Builder v2.0 — FULLY AUTOMATIC")
-    parser.add_argument("--fy",         default="2025-26", help="Financial Year e.g. 2025-26")
+    parser.add_argument("--fy",         default="2026-27", help="Financial Year e.g. 2026-27")
     parser.add_argument("--out",        default=None,      help="Output folder")
     parser.add_argument("--gst-folder", default=None,      help="Extra folder to search for GSTR-2B files")
     parser.add_argument("--tis-pdf",    default=None,      help="Direct path to TIS PDF")
     parser.add_argument("--ais-pdf",    default=None,      help="Direct path to AIS PDF")
     args = parser.parse_args()
+
+    # ── Dynamically set FY months from --fy argument ─────────────
+    # BUG FIX v2.2: MONTHS_FY and MONTHS_SHORT were hardcoded to 2025-26.
+    # Passing --fy 2026-27 had no effect — comparison sheets showed wrong year labels.
+    global MONTHS_FY, MONTHS_SHORT, AY_LABEL
+    try:
+        _fy_start = int(args.fy.split("-")[0])
+        _fy_end   = _fy_start + 1
+    except Exception:
+        _fy_start, _fy_end = 2025, 2026
+    _S, _E = str(_fy_start), str(_fy_end)
+    MONTHS_FY    = [f"Apr-{_S}", f"May-{_S}", f"Jun-{_S}", f"Jul-{_S}",
+                    f"Aug-{_S}", f"Sep-{_S}", f"Oct-{_S}", f"Nov-{_S}",
+                    f"Dec-{_S}", f"Jan-{_E}", f"Feb-{_E}", f"Mar-{_E}"]
+    MONTHS_SHORT = [("Apr", _S), ("May", _S), ("Jun", _S), ("Jul", _S),
+                    ("Aug", _S), ("Sep", _S), ("Oct", _S), ("Nov", _S),
+                    ("Dec", _S), ("Jan", _E), ("Feb", _E), ("Mar", _E)]
+    AY_LABEL  = _fy_to_ay(args.fy)          # FIX v12: derive AY from --fy
 
     # ── Find output folder ────────────────────────────────────────
     def _find_output_base():
@@ -1431,7 +1508,7 @@ if __name__ == "__main__":
         try:
             candidates[2:2] = [p / "Desktop" / "OUTPUT"
                                 for p in home.glob("OneDrive*") if p.is_dir()]
-        except: pass
+        except Exception: pass
         for c in candidates:
             if c.exists():
                 return str(c)

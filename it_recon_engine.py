@@ -28,14 +28,14 @@ from datetime import datetime
 
 MISSING = []
 try:    import pdfplumber
-except: MISSING.append("pdfplumber")
+except ImportError: MISSING.append("pdfplumber")
 try:    import pandas as pd
-except: MISSING.append("pandas")
+except ImportError: MISSING.append("pandas")
 try:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-except: MISSING.append("openpyxl")
+except ImportError: MISSING.append("openpyxl")
 
 if MISSING:
     print(f"Missing: pip install {' '.join(MISSING)}"); sys.exit(1)
@@ -125,7 +125,7 @@ def _note(ws,ri,txt,nc,bg=YELLOW_BG,fg=YELLOW_FG):
 
 def _n(v):
     try: return round(float(str(v or 0).replace(",","")),2)
-    except: return 0.0
+    except (ValueError, TypeError): return 0.0
 
 def _clean(s):
     if s is None: return ""
@@ -375,7 +375,7 @@ def parse_tis_pdf(pdf_path, log=None):
                         v = float(n.replace(",",""))
                         if v > 100:   # skip serial numbers
                             nums.append(v)
-                    except: pass
+                    except Exception: pass
                 return nums
 
             # Pass 1: look for summary category lines (no "purchase from" needed)
@@ -768,7 +768,7 @@ def parse_ais_pdf(pdf_path, log=None):
                 v = float(n.replace(",",""))
                 if v > 100:
                     out.append(v)
-            except: pass
+            except Exception: pass
         return out
 
     # Build a set of (supplier_gstin, period) already captured by table parser
@@ -1046,7 +1046,7 @@ def _read_gst_turnover(job_dir, gst_folder=None, log=None):
             candidates = [f for f in
                           list(search_dir.glob("*.xlsx")) + list(search_dir.glob("*.xls"))
                           if "IT_RECONCILIATION" not in f.name]
-        except: continue
+        except Exception: continue
 
         for xl in sorted(candidates, key=_pri):
             try:
@@ -1077,8 +1077,8 @@ def _read_gst_turnover(job_dir, gst_folder=None, log=None):
                                         v=float(cv.sum())
                                         _log(f"GST Turnover ₹{v:,.2f} col-scan {xl.name}→{sn}")
                                         return v, f"{xl.name}→{sn}"
-                    except: continue
-            except: continue
+                    except Exception: continue
+            except Exception: continue
 
     _log("GST turnover not found in Excel — enter manually or use --gst")
     return 0.0, "Not found"
@@ -1144,7 +1144,7 @@ def _read_gst_monthly_data(job_dir, log=None):
                     try:
                         n = float(str(v).replace(",",""))
                         if n > 0: nums.append(n)
-                    except: pass
+                    except Exception: pass
                 if not nums: continue
                 if any(k in label for k in GSTR1_KEYS) and not mdata["r1_taxable"]:
                     mdata["r1_taxable"] = nums[0]
@@ -2006,7 +2006,7 @@ def _empty_tis():
 
 def _fy_to_ay(fy):
     try: y=int(fy.split("-")[0]); return f"{y+1}-{str(y+2)[2:]}"
-    except: return ""
+    except (ValueError, IndexError, AttributeError): return ""
 
 
 # ── Standalone ─────────────────────────────────────────────────────────────
@@ -2015,14 +2015,14 @@ if __name__=="__main__":
     name  =sys.argv[2] if len(sys.argv)>2 else "Test Company"
     pan   =sys.argv[3] if len(sys.argv)>3 else "AAAAA0000A"
     gstin =sys.argv[4] if len(sys.argv)>4 else "33AAAAA0000A1ZX"
-    fy    =sys.argv[5] if len(sys.argv)>5 else "2024-25"
+    fy    =sys.argv[5] if len(sys.argv)>5 else "2026-27"  # FIX v12: default updated to current FY 2026-27
     gst_ov=None
     gst_folder_arg=None
     if "--gst" in sys.argv:
         idx=sys.argv.index("--gst")
         if idx+1<len(sys.argv):
             try: gst_ov=float(sys.argv[idx+1].replace(",",""))
-            except: pass
+            except Exception: pass
     if "--gst-excel" in sys.argv:
         idx=sys.argv.index("--gst-excel")
         if idx+1<len(sys.argv):

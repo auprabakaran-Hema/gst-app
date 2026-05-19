@@ -1,7 +1,9 @@
 """
 ================================================================================
-  RUN ALL — Unified GST + Income Tax Automation Pipeline  v10.12
+  RUN ALL — Unified GST + Income Tax Automation Pipeline  v10.20 (Suite v3.5)
 ================================================================================
+
+  SUITE: RPR GST + IT Suite  v3.5 ADVANCED PRO
 
   PIPELINE ORDER (enforced):
   ─────────────────────────────────────────────────────────────────────────────
@@ -14,6 +16,7 @@
   Step 6b   GST-IT Comparison Excel (TIS / AIS template)
   Step 6c   GSTR-2B Consolidated Extractor per GSTIN
   Step 6d   GSTR-1 vs 26AS Comparison per client
+  Step 6e   GST Comparison Report (Tax Liability vs ITC + RC Month-wise)
   Step 7    Final Consolidated 7-Sheet Report
   ─────────────────────────────────────────────────────────────────────────────
 
@@ -27,7 +30,79 @@
     python run_all.py --fy 2024-25     ← override FY
     python run_all.py --client "RAVI"  ← one client only
 
-  KEY FIXES v10.12:
+  KEY FIXES v10.20 (Suite v3.5 ADVANCED PRO, app.py v12):
+    ✓ FY_LABEL default updated "2025-26" → "2026-27" (current FY as of May 2026)
+
+  KEY FIXES v10.19 (Suite v3.5 ADVANCED PRO, app.py v11):
+    ✓ run_all.py: 6 remaining bare except: fully typed:
+        stat() → except OSError; Excel open → except Exception; float cast →
+        except (ValueError,TypeError); relative_to GST/IT → except ValueError;
+        annual sheet parse → except Exception
+    ✓ it_suite_v6.py: all 27 bare except: → except Exception:/except ImportError:
+    ✓ app.py v11: 3 remaining bare except: in portal automation → except Exception:
+    ✓ app_version bumped "10" → "11" in /api/version endpoint
+
+  KEY FIXES v10.18 (Suite v3.5 ADVANCED PRO):
+    ✓ run_all.py: bare except: → except ImportError in deps check (pandas/openpyxl)
+      prevents masking unrelated exceptions that could cause silent failures
+    ✓ run_all.py: _pick_folder bare except → except ValueError (relative_to contract)
+    ✓ app.py v10: serve_gst_suite_v32 error msg + download_name fixed (still said v32
+      even when _GST_PY_NAMES resolved to v33/v34/v35 — now serves actual filename found)
+    ✓ app.py v10: upgrade-banner download label updated to "gst_suite (latest)"
+    ✓ it_recon_engine.py: bare except: → typed except in all 3 locations
+    ✓ gstr1_fy_v5.py: bare except: → except (ValueError, TypeError) in cell formatter
+    ✓ gstr1_26as_comparison_v2.py: bare except: → except ImportError
+
+  KEY FIXES v10.17 (Suite v3.5 ADVANCED PRO):
+    ✓ load_clients: Client_Manager_Secure_AY2026-27.xlsx NOW actually in search path
+      (v10.16 changelog claimed it was added — code never was; fixed)
+    ✓ _iter_gst_run_dirs: option_b_roots scanned child/"Raw Data" — should be "GST Automation"
+      Steps 6c (2B extractor) + 6d (26AS compare) silently skipped all reorganised data
+    ✓ _cleanup_old_jobs: never purged in-memory jobs dict — added eviction of stale entries
+      (only disk dirs were cleaned; dict grew unboundedly in long server sessions)
+    ✓ _cleanup_old_jobs: iterdir() now guarded against missing dirs (crash on cold start)
+    ✓ run_gst_step: GST_MENU_CHOICE=1 + GST_MENU_FY=FY env vars added — gst_suite was
+      blocking on interactive input() prompts when launched non-interactively from run_all
+    ✓ run_it_step: IT_MENU_CHOICE=YES added — it_suite blocked on input("Type YES to start")
+      when launched from pipeline (subprocess hangs on stdin that never arrives)
+    ✓ app.py: /gst_suite_v32.py route removed (block_scripts always 403-ed it)
+    ✓ app.py: _find_engine now finds gst_suite v33/v34 (only v31/v32 were listed)
+    ✓ app.py: _check_rate purges stale IPs to prevent unbounded memory growth
+    ✓ app.py: api_job returns elapsed_seconds for UI timing display
+    ✓ app.py: /api/version and /api/pipeline-health endpoints added
+    ✓ app.py: startup banner updated to v3.5 ADVANCED PRO (was showing v7/v3.1)
+
+  KEY FIXES v10.16 (Suite v3.4 ADVANCED PRO):
+    - Launcher version unified to v3.4 ADVANCED PRO (was v3.2/v3.3 mismatch)
+    - Keyboard shortcuts added: Ctrl+R=Run, Ctrl+L=Clear, Ctrl+S=Save log
+    - Status bar now shows Python version detected
+    - Log timestamps added (HH:MM:SS prefix on each run header)
+    - Run counter tracks session runs in status bar
+    - Tally poll interval reduced 4000ms → 2500ms for faster status
+    - AY2026-27 client manager file added to search path
+    - Error log tags now use red background highlight for critical errors
+    - Hero button label includes keyboard shortcut reminder
+    - Theme palette deepened for better contrast on high-DPI displays
+    - Window default size bumped to 1160×860 for modern screens
+
+  KEY FIXES v10.15:
+    - master_bridge: best_it_folder now points to actual IT Download folder (not home_dl)
+    - master_bridge: IT folder fallback improved to scan for IT_RECONCILIATION by PAN before using gst_cdir
+    - gst_suite: username input wait timeout increased 15s→25s with extra sleep on failure
+    - launcher: version string updated to v3.2
+
+  KEY FIXES v10.14:
+  ✓ RC_Summary sheet in Final Consolidated Report now populated correctly:
+    - gst_comparison_report_v2: diff cols 25-28 and shortfall cols 21-22 now
+      written as Python-computed float values instead of Excel formula strings.
+      load_workbook(data_only=True) returns None for unresolved formula strings,
+      causing all RC_Summary data to read as zero in build_final_consolidated.
+    - build_final_consolidated: _sfv() now treats formula strings (=...) as 0.0
+      as a defensive fallback, preventing zeroed data from any residual formulas.
+
+  KEY FIXES v10.13:
+  ✓ gst_suite updated to v35: GSTR-1 generate wait now clicks portal ⟳ symbol
+    instead of driver.refresh() — prevents resetting the 20-min generation timer
   ✓ run_bridge_step: override paths VALIDATED before use — if staging was cleaned
     up the path no longer exists, so we fall through to Option B automatically
   ✓ run_bridge_step: _resolve_gst() / _resolve_it() scan ClientName/GST Automation
@@ -57,6 +132,41 @@ import os, sys, re, subprocess, argparse, logging, shutil, threading, time
 from pathlib import Path
 from datetime import datetime
 
+# ─── PyInstaller frozen-EXE fix ───────────────────────────────────────────────
+# When run as a PyInstaller one-file EXE, sys.executable is run_all.exe itself,
+# NOT python.exe.  Calling [sys.executable, "some_script.py"] therefore re-runs
+# run_all.exe with unrecognised arguments, which exits with code 2.
+#
+# _get_python() returns the real python.exe in every environment:
+#   • Dev / source run  → sys.executable  (already the interpreter)
+#   • PyInstaller EXE   → python.exe next to the EXE, or python.exe on PATH
+#
+# Usage — replace every:
+#     subprocess.run([sys.executable, str(some_script), ...])
+# with:
+#     subprocess.run([_get_python(), str(some_script), ...])
+# ──────────────────────────────────────────────────────────────────────────────
+def _get_python() -> str:
+    """Return the path to the Python interpreter that should run sub-scripts."""
+    if not getattr(sys, "frozen", False):
+        # Normal source run — sys.executable IS the interpreter.
+        return sys.executable
+
+    # Inside a PyInstaller bundle.
+    # Look for python.exe next to the EXE first (portable distribution), then
+    # try a 'python' sub-folder, and finally fall back to whatever is on PATH.
+    exe_dir = Path(sys.executable).parent
+    candidates = [
+        exe_dir / "python.exe",           # portable python beside the EXE
+        exe_dir / "python" / "python.exe",# python in a sub-folder
+        exe_dir / "Python" / "python.exe",
+    ]
+    for p in candidates:
+        if p.is_file():
+            return str(p)
+    # Fall back to PATH — requires Python to be installed on the customer machine.
+    return "python"
+
 # Option B folder structure helper
 try:
     from folder_structure import (
@@ -85,7 +195,7 @@ _GST_STAGING = None   # set dynamically after gst_suite runs
 _IT_STAGING  = None   # set dynamically after it_suite runs
 
 # ─── Change only ONE line each year ──────────────────────────────────────────
-FY_LABEL   = "2025-26"
+FY_LABEL   = "2026-27"
 _fy_yr     = int(FY_LABEL.split("-")[0])
 AY_LABEL   = f"{_fy_yr + 1}-{str(_fy_yr + 2)[2:]}"   # "2026-27"
 
@@ -163,14 +273,80 @@ IT_RUN     = IT_BASE  / f"AY{AY_LABEL}_{RUN_TS}"
 VARIANCE_THRESHOLD = 5000
 LOG_FILE   = BASE_DIR / f"run_all_{RUN_TS}.log"
 
+
+def _remove_from_windows_recent(folder_path, log=None):
+    """
+    After deleting a staging folder, remove it from Windows Recent/Quick Access
+    so Explorer doesn't show a "Location is not available" error when users
+    click the now-deleted path that Windows pinned during the run.
+
+    Uses PowerShell to remove the path from:
+      - Shell Recent items  (%APPDATA%\\Microsoft\\Windows\\Recent)
+      - Quick Access pins   (shell:::{679f85cb-0220-4080-b29b-5540cc05aab6})
+
+    Safe no-op on non-Windows or if PowerShell fails.
+    """
+    if os.name != "nt":
+        return
+    try:
+        folder_str = str(folder_path).replace("'", "''")   # escape single quotes
+        ps_script = f"""
+$path = '{folder_str}'
+# 1. Remove from Recent folders (AutomaticDestinations jumplist entries)
+$recentDir = [System.IO.Path]::Combine(
+    $env:APPDATA, 'Microsoft', 'Windows', 'Recent')
+Get-ChildItem -Path $recentDir -Filter '*.lnk' -ErrorAction SilentlyContinue | ForEach-Object {{
+    try {{
+        $sh = New-Object -ComObject WScript.Shell
+        $lnk = $sh.CreateShortcut($_.FullName)
+        if ($lnk.TargetPath -like "$path*") {{
+            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+        }}
+    }} catch {{}}
+}}
+# 2. Remove from Quick Access pinned folders via Shell.Application
+try {{
+    $shell = New-Object -ComObject Shell.Application
+    $qa = $shell.Namespace('shell:::{{679f85cb-0220-4080-b29b-5540cc05aab6}}')
+    if ($qa) {{
+        $qa.Items() | Where-Object {{ $_.Path -like "$path*" }} | ForEach-Object {{
+            $_.InvokeVerb('unpinfromhome')
+        }}
+    }}
+}} catch {{}}
+# 3. Remove from AutomaticDestinations (jumplist for File Explorer)
+$autoDir = [System.IO.Path]::Combine(
+    $env:APPDATA, 'Microsoft', 'Windows',
+    'Recent', 'AutomaticDestinations')
+Get-ChildItem -Path $autoDir -ErrorAction SilentlyContinue | ForEach-Object {{
+    # These are binary files; we can only delete the ones that are small
+    # and were recently modified (heuristic for our staging folders)
+    if ($_.LastWriteTime -gt (Get-Date).AddHours(-24)) {{
+        try {{ Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }} catch {{}}
+    }}
+}}
+"""
+        result = subprocess.run(
+            ["powershell", "-NonInteractive", "-NoProfile",
+             "-WindowStyle", "Hidden", "-Command", ps_script],
+            capture_output=True, timeout=15
+        )
+        if log:
+            if result.returncode == 0:
+                log(f"  ✓ Removed staging path from Windows Recent: {folder_path.name}")
+            else:
+                log(f"  ℹ  Windows Recent cleanup note: {result.stderr.decode(errors='ignore')[:120]}")
+    except Exception as _e:
+        if log: log(f"  ℹ  Windows Recent cleanup skipped: {_e}")
+
 MISSING = []
 try:    import pandas as pd
-except: MISSING.append("pandas")
+except ImportError: MISSING.append("pandas")
 try:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-except: MISSING.append("openpyxl")
+except ImportError: MISSING.append("openpyxl")
 
 if MISSING:
     print(f"✗ Missing: pip install {' '.join(MISSING)}")
@@ -368,6 +544,8 @@ def _clean(s):
 
 def load_clients(fy_override=None, name_filter=None):
     candidates = [
+        "Client_Manager_Secure_AY2027-28.xlsx",   # FIX v11: added AY2027-28 (FY 2026-27, current year)
+        "Client_Manager_Secure_AY2026-27.xlsx",   # FIX v10.16: was missing despite changelog claim
         "Client_Manager_Secure_AY2025-26.xlsx",
         "clients_manager.xlsx",
         "clients.xlsx",
@@ -458,12 +636,18 @@ def _iter_gst_run_dirs():
     """
     # All candidate base folders to search
     # Option B: scan each client's GST Automation subfolder first
+    # BUG FIX v10.17: was only checking child/"Raw Data" — primary Option B folder is
+    # "GST Automation". Steps 6c and 6d (which call this iterator) were therefore
+    # silently skipping all correctly-reorganized client data.
     option_b_roots = []
     try:
         for child in BASE_DIR.iterdir():
-            gst_sub = child / "Raw Data"
-            if child.is_dir() and gst_sub.exists():
-                option_b_roots.append(gst_sub)
+            if not child.is_dir(): continue
+            for _ob_name in ("GST Automation", "Raw Data"):   # GST Automation is primary
+                gst_sub = child / _ob_name
+                if gst_sub.exists():
+                    option_b_roots.append(gst_sub)
+                    break   # one per client — don't add both
     except PermissionError:
         pass
 
@@ -505,17 +689,65 @@ def _discover_real_gst_run(fy=None):
     """
     After gst_suite finishes, find the folder that actually has output.
     Priority:
-      0. Option B: any ClientName/GST Automation/ that has real xlsx files
       1. ~/.gst_suite_last_run marker file (written by gst_suite after each run)
       2. Current GST_RUN if it has real files
       3. Newest MultiYear_*/AY{fy_tag}/ with ANNUAL_RECONCILIATION files
       4. Newest MultiYear_*/AY* with GSTR2B files
-      5. Fallback to GST_RUN stub
+      5. Newest AY* sub of any MultiYear_* (last resort staging)
+      6. Option B: any ClientName/GST Automation/ that has real xlsx files
+         (checked LAST so staging always takes precedence over previously
+          reorganized client folders from an earlier run — prevents the
+          reorganize step from receiving an already-reorganized path as
+          GST_RUN, which caused "no files found in staging" and data loss)
     """
     fy_tag = (fy or FY_LABEL).replace("-","_")
 
-    # Priority 0: Option B — ClientName/GST Automation/ with real xlsx
-    # FIX v10.12: was looking for "Raw Data" subfolder but actual folder is "GST Automation"
+    # Priority 1: exact path written by gst_suite to marker file
+    _marker = Path.home() / ".gst_suite_last_run"
+    if _marker.exists():
+        try:
+            _path = Path(_marker.read_text(encoding="utf-8").strip())
+            if _path.exists() and _path.is_dir():
+                _log(f"  GST folder (marker): {_path}")
+                return _path
+        except Exception:
+            pass
+
+    # Priority 2: current GST_RUN if it has real files
+    if GST_RUN.exists() and any(GST_RUN.rglob("ANNUAL_RECONCILIATION*.xlsx")):
+        return GST_RUN
+
+    # Priority 3: newest staging MultiYear_*/AY*/ with ANNUAL_RECONCILIATION
+    for myd in sorted(GST_BASE.glob("MultiYear_*"), key=lambda d: d.stat().st_mtime, reverse=True):
+        if not myd.is_dir(): continue
+        for sub in sorted(myd.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if sub.is_dir() and any(sub.rglob("ANNUAL_RECONCILIATION*.xlsx")):
+                return sub
+
+    for d in sorted(GST_BASE.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if d.is_dir() and any(d.rglob("ANNUAL_RECONCILIATION*.xlsx")):
+            return d
+
+    # Priority 4: newest staging MultiYear_*/AY* with GSTR2B files
+    for myd in sorted(GST_BASE.glob("MultiYear_*"), key=lambda d: d.stat().st_mtime, reverse=True):
+        if not myd.is_dir(): continue
+        for sub in sorted(myd.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if sub.is_dir() and any(sub.rglob("GSTR2B*.xlsx")):
+                return sub
+
+    # Priority 5: newest AY* sub of any MultiYear_* regardless of content
+    for myd in sorted(GST_BASE.glob("MultiYear_*"), key=lambda d: d.stat().st_mtime, reverse=True):
+        if not myd.is_dir(): continue
+        for sub in sorted(myd.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if sub.is_dir():
+                return sub
+
+    # Priority 6 (last resort): Option B — ClientName/GST Automation/ with real xlsx
+    # Only reached when staging is empty/absent (e.g. offline mode or already cleaned up).
+    # Deliberately placed LAST to prevent a previously-reorganized client folder from
+    # being returned as GST_RUN before staging data is reorganized (would cause the
+    # reorganize step to look for client subfolders inside the client folder itself,
+    # find nothing, and then delete the staging data that was never copied).
     try:
         for child in sorted(BASE_DIR.iterdir(),
                             key=lambda d: d.stat().st_mtime, reverse=True):
@@ -529,44 +761,6 @@ def _discover_real_gst_run(fy=None):
                     return gst_sub
     except Exception:
         pass
-
-    # Priority 1: exact path written by gst_suite to marker file
-    _marker = Path.home() / ".gst_suite_last_run"
-    if _marker.exists():
-        try:
-            _path = Path(_marker.read_text(encoding="utf-8").strip())
-            if _path.exists() and _path.is_dir():
-                _log(f"  GST folder (marker): {_path}")
-                return _path
-        except Exception:
-            pass
-
-    if GST_RUN.exists() and any(GST_RUN.rglob("ANNUAL_RECONCILIATION*.xlsx")):
-        return GST_RUN
-
-    for myd in sorted(GST_BASE.glob("MultiYear_*"), key=lambda d: d.stat().st_mtime, reverse=True):
-        if not myd.is_dir(): continue
-        for sub in sorted(myd.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-            if sub.is_dir() and any(sub.rglob("ANNUAL_RECONCILIATION*.xlsx")):
-                return sub
-
-    for d in sorted(GST_BASE.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-        if d.is_dir() and any(d.rglob("ANNUAL_RECONCILIATION*.xlsx")):
-            return d
-
-    # Fallback 2: newest MultiYear_*/AY* with GSTR2B files
-    for myd in sorted(GST_BASE.glob("MultiYear_*"), key=lambda d: d.stat().st_mtime, reverse=True):
-        if not myd.is_dir(): continue
-        for sub in sorted(myd.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-            if sub.is_dir() and any(sub.rglob("GSTR2B*.xlsx")):
-                return sub
-
-    # Last resort: newest AY* sub of any MultiYear_* regardless of content
-    for myd in sorted(GST_BASE.glob("MultiYear_*"), key=lambda d: d.stat().st_mtime, reverse=True):
-        if not myd.is_dir(): continue
-        for sub in sorted(myd.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-            if sub.is_dir():
-                return sub
 
     return GST_RUN
 
@@ -615,7 +809,7 @@ def _discover_real_it_run():
                 if sz > best_size:
                     best_size   = sz
                     best_folder = d
-            except: pass
+            except OSError: pass  # FIX v11: bare except → except OSError (file vanished between glob and stat)
 
     if best_folder and best_size >= 25_000:
         return best_folder
@@ -656,6 +850,10 @@ def _folder_candidates(name, gstin=""):
     Return ALL folder name variants to try when searching for a client's data.
     Ordered: most-specific first (v10.12 format) → legacy formats last.
     This lets run_all find folders created by older AND newer suite versions.
+
+    Also covers OS-numbered duplicates: when a folder already exists, Windows
+    appends a digit (e.g. ELANTHALIR_NURSERY_GARDEN1) instead of overwriting.
+    We include Name+1..5 variants so those folders are always found.
     """
     safe_name = name.replace(" ", "_").replace("/", "_")
     gstin_up  = (gstin or "").strip().upper()
@@ -667,6 +865,15 @@ def _folder_candidates(name, gstin=""):
     cands.append(name)                                     # legacy: exact name
     if gstin_up:
         cands.append(gstin_up)                             # legacy: GSTIN only
+
+    # ── OS duplicate-folder suffixes (Windows appends 1,2,3… on collision) ──
+    # e.g. Downloads already had ELANTHALIR_NURSERY_GARDEN so gst_suite got
+    # ELANTHALIR_NURSERY_GARDEN1 — we must search that folder too.
+    _base_cands = list(cands)   # snapshot before extending
+    for _suffix in range(1, 6):
+        for _base in _base_cands:
+            cands.append(f"{_base}{_suffix}")
+
     return cands
 
 
@@ -738,7 +945,7 @@ def run_tally_extract_step():
     try:
         # Run interactively — the script has interactive prompts (F3 company picker)
         r = subprocess.run(
-            [sys.executable, str(tally_script)],
+            [_get_python(), str(tally_script)],
             timeout=600,          # 10-min cap; Tally company load can be slow
             capture_output=False, # show all output so user sees prompts
         )
@@ -785,9 +992,16 @@ def run_gst_step(clients):
     _log("  ► Browser will open. Enter CAPTCHA ONCE — all clients processed.")
     _log(f"  ► Output: {GST_BASE}/MultiYear_*/AY{FY_LABEL.replace('-','_')}/")
 
-    gst_script = SCRIPT_DIR / "gst_suite_v32.py"
-    if not gst_script.exists():
-        _log("  ✗ gst_suite_v32.py not found — skipping", "warning"); return
+    # Find the highest-versioned gst_suite_vNN.py present (v32, v33, v35, ...)
+    _gst_online_cands = sorted(
+        SCRIPT_DIR.glob("gst_suite_v*.py"),
+        key=lambda p: int(re.search(r'v(\d+)', p.stem).group(1))
+                      if re.search(r'v(\d+)', p.stem) else 0
+    )
+    gst_script = _gst_online_cands[-1] if _gst_online_cands else None
+    if not gst_script or not gst_script.exists():
+        _log("  ✗ No gst_suite_v*.py found in script dir — skipping", "warning"); return
+    _log(f"  Using GST suite: {gst_script.name}")
 
     # Hidden staging dir inside SCRIPT_DIR — never touches Downloads directly
     GST_BASE.mkdir(parents=True, exist_ok=True)
@@ -797,13 +1011,18 @@ def run_gst_step(clients):
     fy_tag     = FY_LABEL.replace("-","_")
     gst_out    = GST_BASE / f"MultiYear_{RUN_TS}" / f"AY{fy_tag}"
     gst_out.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "GST_OUT_DIR": str(gst_out)}
+    env = {
+        **os.environ,
+        "GST_OUT_DIR":     str(gst_out),
+        "GST_MENU_CHOICE": "1",   # BUG FIX v10.17: gst_suite blocked on interactive menu — auto-select option 1 (full download)
+        "GST_MENU_FY":     FY_LABEL,  # BUG FIX v10.17: gst_suite also blocked on FY selection input
+    }
 
     try:
         _log("  ► Live download monitor started — you will see files arrive below:")
         _watcher = _start_gst_watcher()
         result = subprocess.run(
-            [sys.executable, str(gst_script)],
+            [_get_python(), str(gst_script)],
             timeout=7200,
             capture_output=False,
             env=env,
@@ -840,6 +1059,7 @@ def run_gst_step(clients):
         # Clean up hidden staging dir so it never appears in Downloads
         try:
             if GST_BASE.exists():
+                _remove_from_windows_recent(GST_RUN, _log)
                 shutil.rmtree(str(GST_BASE), ignore_errors=True)
                 _log("  ✓ Staging folder cleaned up")
         except Exception as _e:
@@ -868,9 +1088,10 @@ def run_it_step(clients):
     # Create tracked folder and pass it to it_suite via env var
     IT_RUN.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env["IT_OUT_DIR"] = str(IT_RUN)
-    env["FY_LABEL"]   = FY_LABEL
-    env["AY_LABEL"]   = AY_LABEL
+    env["IT_OUT_DIR"]      = str(IT_RUN)
+    env["FY_LABEL"]        = FY_LABEL
+    env["AY_LABEL"]        = AY_LABEL
+    env["IT_MENU_CHOICE"]  = "YES"   # BUG FIX v10.17: it_suite hangs on input("Type YES") — must pre-set
 
     _log(f"  ► IT_OUT_DIR = {IT_RUN}")
     _log(f"  ► Browser(s) will open. Enter OTP once per client.")
@@ -879,7 +1100,7 @@ def run_it_step(clients):
         _log("  ► Live download monitor started — you will see files arrive below:")
         _watcher = _start_it_watcher()
         result = subprocess.run(
-            [sys.executable, str(it_script)],
+            [_get_python(), str(it_script)],
             env=env,
             timeout=5400,
             capture_output=False,
@@ -916,6 +1137,7 @@ def run_it_step(clients):
         # Clean up hidden staging dir
         try:
             if IT_BASE.exists():
+                _remove_from_windows_recent(IT_RUN, _log)
                 shutil.rmtree(str(IT_BASE), ignore_errors=True)
                 _log("  ✓ IT staging folder cleaned up")
         except Exception as _e:
@@ -935,6 +1157,15 @@ def run_it_step(clients):
 
         # Find client subfolder under DISCOVERED IT_RUN
         it_dir = IT_RUN / name.replace(" ", "_")
+        if not it_dir.exists():
+            # Try all candidates: Name_GSTIN, Name_GSTIN1, Name1, etc.
+            _gstin_val = client.get("gstin", [""])
+            _gstin_str = _gstin_val[0] if isinstance(_gstin_val, list) and _gstin_val else str(_gstin_val or "")
+            for _cand in _folder_candidates(name, _gstin_str):
+                _try = IT_RUN / _cand
+                if _try.exists():
+                    it_dir = _try
+                    break
         if not it_dir.exists():
             # fuzzy match: first 6 chars of name
             if IT_RUN.exists():
@@ -968,7 +1199,7 @@ def run_it_step(clients):
         # Pass GST folder (parent of Excel) so engine can read turnover
         gst_folder_arg = str(Path(gst_xl).parent) if gst_xl else None
         recon_args = [
-            sys.executable, str(recon_script),
+            _get_python(), str(recon_script),
             str(it_dir), name, pan,
             ",".join(client["gstin"]) if client["gstin"] else "",
             fy,
@@ -996,19 +1227,28 @@ def run_bridge_step(clients, gst_folder_override=None, it_folder_override=None):
     #   2. Option B: ClientName/GST Automation/ (always present after reorganize)
     #   3. Discovery fallback
     def _resolve_gst():
-        # Override only accepted if path exists (staging cleanup may have deleted it)
+        # ── Priority 1: explicit override from GUI --gst-folder arg ─────────
+        # Use it directly if it exists and contains xlsx files.
+        # We do NOT fall through to client_gst(BASE_DIR) because BASE_DIR may
+        # have resolved to the client folder itself, producing a wrong nested path.
         if gst_folder_override:
             _p = Path(gst_folder_override)
             if _p.exists():
-                return _p
+                # If the override is a client root, try to find GST Automation inside it
+                _sub = _p / "GST Automation"
+                if _sub.is_dir() and any(_sub.glob("*.xlsx")):
+                    _log(f"  ℹ  GST override → using subfolder: {_sub}")
+                    return _sub
+                # Already the right folder (or contains xlsx directly)
+                if any(_p.rglob("*.xlsx")):
+                    return _p
             _log(f"  ℹ  GST override path gone (staging cleaned) — using Option B", "warning")
-        # Option B: scan per-client GST Automation folders
+        # ── Priority 2: Option B — scan BASE_DIR children ───────────────────
         if clients:
             for cl in clients:
                 _g = client_gst(BASE_DIR, cl["name"])
                 if _g.exists() and any(_g.glob("*.xlsx")):
                     return _g
-        # Also scan BASE_DIR children for any GST Automation with xlsx files
         try:
             for child in sorted(BASE_DIR.iterdir(),
                                  key=lambda d: d.stat().st_mtime, reverse=True):
@@ -1020,11 +1260,18 @@ def run_bridge_step(clients, gst_folder_override=None, it_folder_override=None):
         return _discover_real_gst_run()
 
     def _resolve_it():
+        # ── Priority 1: explicit override from GUI --it-folder arg ──────────
         if it_folder_override:
             _p = Path(it_folder_override)
             if _p.exists():
-                return _p
+                _sub = _p / "IT Download"
+                if _sub.is_dir() and (any(_sub.glob("*.xlsx")) or any(_sub.glob("*.pdf"))):
+                    _log(f"  ℹ  IT override → using subfolder: {_sub}")
+                    return _sub
+                if any(_p.rglob("*.xlsx")) or any(_p.rglob("*.pdf")):
+                    return _p
             _log(f"  ℹ  IT override path gone (staging cleaned) — using Option B", "warning")
+        # ── Priority 2: Option B — scan BASE_DIR children ───────────────────
         if clients:
             for cl in clients:
                 _i = client_it(BASE_DIR, cl["name"])
@@ -1056,7 +1303,7 @@ def run_bridge_step(clients, gst_folder_override=None, it_folder_override=None):
     if bridge_script.exists():
         try:
             r = subprocess.run(
-                [sys.executable, str(bridge_script),
+                [_get_python(), str(bridge_script),
                  "--gst", gst_arg, "--it", it_arg, "--fy", FY_LABEL],
                 timeout=600, capture_output=False,
             )
@@ -1181,7 +1428,7 @@ def run_gst_it_comparison_step():
             continue
         out_dir = child / "GST IT Comparison"
         out_dir.mkdir(parents=True, exist_ok=True)
-        cmd = [sys.executable, str(comp_script), "--out", str(out_dir), "--fy", FY_LABEL]
+        cmd = [_get_python(), str(comp_script), "--out", str(out_dir), "--fy", FY_LABEL]
         if gst_folder: cmd += ["--gst-folder", gst_folder]
         if tis_path:   cmd += ["--tis-pdf",    str(tis_path)]
         if ais_path:   cmd += ["--ais-pdf",    str(ais_path)]
@@ -1197,7 +1444,7 @@ def run_gst_it_comparison_step():
     if not _did_any:
         # Fallback: single output at BASE_DIR level
         out_dir = BASE_DIR
-        cmd = [sys.executable, str(comp_script), "--out", str(out_dir), "--fy", FY_LABEL]
+        cmd = [_get_python(), str(comp_script), "--out", str(out_dir), "--fy", FY_LABEL]
         if gst_folder: cmd += ["--gst-folder", gst_folder]
         if tis_path:   cmd += ["--tis-pdf",    str(tis_path)]
         if ais_path:   cmd += ["--ais-pdf",    str(ais_path)]
@@ -1233,28 +1480,46 @@ def run_gstr2b_extractor_step(clients):
             # Locate GSTR-2B files for this GSTIN
             gstin_dir = None
 
+            # Raw monthly GSTR2B files match GSTR2B_Month_YYYY.xlsx pattern.
+            # Exclude aggregated output files (Consolidated_Analysis, EXTRACT, etc.)
+            # so we never accidentally treat a step-6b output as a source folder.
+            _RAW_2B_EXCL = ("Consolidated", "EXTRACT", "SUPPLIERWISE", "MONTHWISE")
+            def _is_raw_gstr2b(path):
+                return (path.name.upper().startswith("GSTR2B_")
+                        and not any(kw.upper() in path.name.upper() for kw in _RAW_2B_EXCL))
+
+            # Output subfolders that should never be searched for raw GSTR2B files
+            _OUTPUT_SUBFOLDERS = {
+                "GST IT Comparison", "IT Bridge", "IT Download",
+                "26AS vs GSTR1", "Raw Data", "26AS vs GSTR1",
+            }
+
             # Option B: ClientName/GST Automation/ first
             _gst_b = client_gst(BASE_DIR, name)
-            if _gst_b.exists() and list(_gst_b.glob("GSTR2B_*.xlsx")):
+            if _gst_b.exists() and any(_is_raw_gstr2b(f) for f in _gst_b.glob("GSTR2B_*.xlsx")):
                 gstin_dir = _gst_b
 
             if not gstin_dir:
                 # Legacy: GST_RUN/GSTIN/
                 for _cand in _folder_candidates(name, gstin):
                     _d = GST_RUN / _cand
-                    if _d.exists() and list(_d.glob("GSTR2B_*.xlsx")):
+                    if _d.exists() and any(_is_raw_gstr2b(f) for f in _d.glob("GSTR2B_*.xlsx")):
                         gstin_dir = _d; break
 
             if not gstin_dir:
                 for run_dir in _iter_gst_run_dirs():
                     for _cand in _folder_candidates(name, gstin):
                         d = run_dir / _cand
-                        if d.exists() and list(d.glob("GSTR2B_*.xlsx")):
+                        if d.exists() and any(_is_raw_gstr2b(f) for f in d.glob("GSTR2B_*.xlsx")):
                             gstin_dir = d; break
                     if not gstin_dir:
                         try:
                             for sub in run_dir.iterdir():
-                                if sub.is_dir() and list(sub.glob("GSTR2B_*.xlsx")):
+                                # Skip known output subfolders to avoid picking up
+                                # GSTR2B_EXTRACT.xlsx or Consolidated files as source
+                                if not sub.is_dir(): continue
+                                if sub.name in _OUTPUT_SUBFOLDERS: continue
+                                if any(_is_raw_gstr2b(f) for f in sub.glob("GSTR2B_*.xlsx")):
                                     gstin_dir = sub; break
                         except PermissionError:
                             pass
@@ -1279,7 +1544,7 @@ def run_gstr2b_extractor_step(clients):
             out_xl = out_dir / f"GSTR2B_Consolidated_Analysis_{safe_client}.xlsx"
             try:
                 r = subprocess.run(
-                    [sys.executable, str(extractor),
+                    [_get_python(), str(extractor),
                      "--input", str(gstin_dir), "--output", str(out_xl)],
                     timeout=300, capture_output=False,
                 )
@@ -1412,7 +1677,7 @@ def run_gstr1_26as_step(clients):
             out_path = _26as_dir / f"26AS_GSTR1_Compare_{fy.replace('/', '-')}.xlsx"
             try:
                 cmd = [
-                    sys.executable, str(comp_script),
+                    _get_python(), str(comp_script),
                     "--folder", str(client_dir),
                     "--name",   name,
                     "--gstin",  gstin,
@@ -1433,6 +1698,143 @@ def run_gstr1_26as_step(clients):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# STEP 6e — GST COMPARISON REPORT (Tax Liability vs ITC + RC Month-wise)
+# ═══════════════════════════════════════════════════════════════════════════════
+def run_gst_comparison_report_step(clients):
+    _banner("STEP 6e — GST Comparison Report (Tax Liability vs ITC + RC Month-wise)")
+
+    comp_script = SCRIPT_DIR / "gst_comparison_report_v2.py"
+    if not comp_script.exists():
+        _log("  ⚠  gst_comparison_report_v2.py not found — skipping", "warning")
+        return
+
+    processed = 0
+
+    for client in clients:
+        name   = client["name"]
+        gstins = client.get("gstin", [])
+        fy     = client.get("fy", FY_LABEL)
+
+        # ── Multi-priority GST folder search ────────────────────────────────
+        # Priority 1: Option B per-client GST Automation folder
+        gst_dir = client_gst(BASE_DIR, name)
+
+        # Priority 2: Option B folder exists but files may be in a GSTIN subfolder
+        if not gst_dir.exists() or not any(gst_dir.glob("GSTR2B*.xlsx")):
+            # Look for GSTR2B files in any subfolder of the client GST folder
+            if gst_dir.exists():
+                for sub in sorted(gst_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                    if sub.is_dir() and any(sub.glob("GSTR2B*.xlsx")):
+                        gst_dir = sub; break
+
+        # Priority 3: Search GST_RUN staging using folder candidates
+        if not gst_dir.exists():
+            for gstin in (gstins or [""]):
+                if not gstin: continue
+                for cand in _folder_candidates(name, gstin):
+                    d = GST_RUN / cand
+                    if d.exists():
+                        gst_dir = d; break
+                if gst_dir.exists(): break
+
+        # Priority 4: Search all known staging run dirs
+        if not gst_dir.exists():
+            for run_dir in _iter_gst_run_dirs():
+                for gstin in (gstins or [""]):
+                    for cand in _folder_candidates(name, gstin):
+                        d = run_dir / cand
+                        if d.exists() and any(d.glob("GSTR2B*.xlsx")):
+                            gst_dir = d; break
+                    if gst_dir.exists(): break
+                if not gst_dir.exists():
+                    # Any subdir of this run_dir with GSTR2B files
+                    try:
+                        for sub in run_dir.iterdir():
+                            if sub.is_dir() and any(sub.glob("GSTR2B*.xlsx")):
+                                gst_dir = sub; break
+                    except PermissionError:
+                        pass
+                if gst_dir.exists(): break
+
+        # Priority 5: Scan BASE_DIR for any ClientName-matching folder with GSTR2B files
+        if not gst_dir.exists():
+            name_lower = name.lower().replace(" ", "")
+            for child in BASE_DIR.iterdir():
+                if not child.is_dir(): continue
+                child_lower = child.name.lower().replace(" ", "")
+                if name_lower in child_lower or child_lower in name_lower:
+                    # Check GST Automation subfolder
+                    gst_auto = child / "GST Automation"
+                    if gst_auto.exists() and any(gst_auto.glob("GSTR2B*.xlsx")):
+                        gst_dir = gst_auto; break
+                    # Check direct GSTR2B files
+                    if any(child.glob("GSTR2B*.xlsx")):
+                        gst_dir = child; break
+
+        # Priority 6: Most recent folder anywhere under BASE_DIR with GSTR2B files
+        if not gst_dir.exists():
+            all_2b = sorted(
+                BASE_DIR.rglob("GSTR2B*.xlsx"),
+                key=lambda p: p.stat().st_mtime, reverse=True
+            )
+            if all_2b:
+                gst_dir = all_2b[0].parent
+                _log(f"    ℹ  Fallback: using folder with most recent GSTR2B file: {gst_dir}")
+
+        if not gst_dir.exists():
+            _log(f"    ⚠  No GST folder found for {name} — skipping GST Comparison Report")
+            continue
+
+        # ── Route output to client's GST IT Comparison folder ────────────────
+        out_dir = client_comparison(BASE_DIR, name)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        ts       = datetime.now().strftime("%Y%m%d_%H%M")
+        fy_tag   = fy.replace("-", "_")
+        out_name = f"GST_Comparison_Report_{name.replace(' ','_')}_{fy_tag}_{ts}.xlsx"
+        out_path = out_dir / out_name
+
+        _log(f"    → {name}  |  source: {gst_dir}  |  out: {out_path.name}")
+
+        # ── Call script with CLI args (no stdin piping needed) ───────────────
+        cmd = [
+            _get_python(), str(comp_script),
+            "--folder", str(gst_dir),
+            "--fy",     str(fy),
+            "--client", name,
+            "--out",    str(out_path),
+        ]
+
+        try:
+            result = subprocess.run(cmd, timeout=300, capture_output=False)
+            if result.returncode == 0:
+                if out_path.exists():
+                    _log(f"    ✓ GST Comparison Report: {name} → {out_path.name}")
+                else:
+                    # Script may have written to gst_dir — find and move it
+                    written = sorted(
+                        gst_dir.glob("GST_Comparison_Report_*.xlsx"),
+                        key=lambda p: p.stat().st_mtime, reverse=True,
+                    )
+                    if written:
+                        dest = out_dir / written[0].name
+                        shutil.move(str(written[0]), str(dest))
+                        _log(f"    ✓ GST Comparison Report: {name} → {dest.name}")
+                    else:
+                        _log(f"    ✓ GST Comparison Report completed for {name}")
+                processed += 1
+            else:
+                _log(f"    ✗ GST Comparison Report failed for {name} (exit {result.returncode})",
+                     "warning")
+        except subprocess.TimeoutExpired:
+            _log(f"    ✗ GST Comparison Report timed out for {name}", "warning")
+        except Exception as e:
+            _log(f"    ✗ GST Comparison Report error for {name}: {e}", "error")
+
+    _log(f"  Step 6e done — {processed} file(s) built")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # STEP 7 — FINAL CONSOLIDATED REPORT
 # ═══════════════════════════════════════════════════════════════════════════════
 def _run_final_consolidated():
@@ -1446,7 +1848,7 @@ def _run_final_consolidated():
     out_path = BASE_DIR / f"FINAL_CONSOLIDATED_REPORT_{RUN_TS}.xlsx"
     try:
         r = subprocess.run(
-            [sys.executable, str(cons_script),
+            [_get_python(), str(cons_script),
              "--base", str(BASE_DIR),
              "--out",  str(out_path)],
             timeout=300, capture_output=False,
@@ -1510,7 +1912,7 @@ def _merge_gst_data(gstins, fy):
         for xl in gstin_dir.glob("*.xlsx"):
             if "IT_RECONCILIATION" in xl.name.upper(): continue
             try: xf = pd.ExcelFile(xl, engine="openpyxl")
-            except: continue
+            except Exception: continue  # FIX v11: bare except → except Exception (corrupt/locked xlsx)
 
             for sn in xf.sheet_names:
                 sn_up = sn.strip().upper()
@@ -1518,14 +1920,14 @@ def _merge_gst_data(gstins, fy):
                                  if full in sn_up or sn_up.startswith(abbr)), None)
                 if not mon_abbr: continue
                 try: df = xf.parse(sn, header=None, dtype=str).fillna("")
-                except: continue
+                except Exception: continue  # FIX v11: bare except → except Exception (parse error on sheet)
 
                 for _, row in df.iterrows():
                     label = str(row.iloc[0]).lower().strip()
                     nums = []
                     for v in row.iloc[1:]:
                         try: nums.append(float(str(v).replace(",","")))
-                        except: pass
+                        except (ValueError, TypeError): pass  # FIX v11: bare except → typed (non-numeric cell)
                     if not nums: continue
                     m = merged["monthly"].setdefault(mon_abbr, {"r1":0.0,"r1a":0.0,"r3b":0.0})
                     if any(k in label for k in ["gstr-1 + gstr-1a","tot_r1_incl","grand total r1"]):
@@ -1549,7 +1951,7 @@ def _merge_gst_data(gstins, fy):
                                 pass
                         if nums and any(k in label for k in ["total taxable","grand total","tot_r1"]):
                             merged["annual_turnover"] += abs(nums[0]); break
-                except: pass
+                except Exception: pass  # FIX v11: bare except → except Exception (annual sheet unreadable)
     return merged
 
 
@@ -1761,20 +2163,24 @@ def _pick_existing_folder(base_path, label, expand_inner=False):
     for i, f in enumerate(all_folders, 1):
         mtime = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
         try:    display = str(f.relative_to(base))
-        except: display = f.name
+        except ValueError: display = f.name
         print(f"    {i:2d}.  {display}   [{mtime}]")
     try:    recent = str(all_folders[0].relative_to(base))
-    except: recent = all_folders[0].name
+    except ValueError: recent = all_folders[0].name
     print(f"     0.  Use most recent ({recent})")
 
-    while True:
-        raw_in = input("  Enter number (or 0 for most recent): ").strip()
-        if raw_in == "0": return all_folders[0]
-        try:
-            idx = int(raw_in) - 1
-            if 0 <= idx < len(all_folders): return all_folders[idx]
-        except ValueError: pass
-        print("  Invalid choice. Try again.")
+    try:
+        while True:
+            raw_in = input("  Enter number (or 0 for most recent): ").strip()
+            if raw_in == "0": return all_folders[0]
+            try:
+                idx = int(raw_in) - 1
+                if 0 <= idx < len(all_folders): return all_folders[idx]
+            except ValueError: pass
+            print("  Invalid choice. Try again.")
+    except EOFError:
+        print("  [AUTO] No terminal — using most recent folder.")
+        return all_folders[0]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1783,7 +2189,20 @@ def _pick_existing_folder(base_path, label, expand_inner=False):
 def main():
     global log, GST_RUN, IT_RUN, FY_LABEL, AY_LABEL, _fy_yr
 
-    parser = argparse.ArgumentParser(description="Run ALL — GST + IT full pipeline v10.12")
+    # ── Startup: clean up any dead staging paths from previous runs ───────────
+    # Prevents Windows "Location is not available" errors from Explorer trying
+    # to re-open a timestamped staging folder that was already deleted.
+    if os.name == "nt":
+        try:
+            for _base in [GST_BASE, IT_BASE]:
+                if _base.exists():
+                    for _dead in list(_base.iterdir()):
+                        if _dead.is_dir():
+                            _remove_from_windows_recent(_dead)
+        except Exception:
+            pass
+
+    parser = argparse.ArgumentParser(description="Run ALL — GST + IT full pipeline v10.17")
     parser.add_argument("--show-structure", action="store_true",
                         help="Print Option B folder layout and exit")
     parser.add_argument("--skip-tally",  action="store_true",
@@ -1793,6 +2212,9 @@ def main():
     parser.add_argument("--only-bridge", action="store_true", help="Bridge steps 6-7 only")
     parser.add_argument("--offline",     action="store_true",
                         help="Pick existing folders, run bridge (no portal downloads)")
+    parser.add_argument("--offline-choice", type=int, default=None, metavar="N",
+                        help="Skip the offline menu and run choice N directly (1-13). "
+                             "GUI uses this to pass the pre-selected step without input().")
     parser.add_argument("--gst-folder",  default=None, help="Explicit GST run folder")
     parser.add_argument("--it-folder",   default=None, help="Explicit IT run folder")
     parser.add_argument("--fy",          default=None, help="Override FY (e.g. 2024-25)")
@@ -1819,7 +2241,7 @@ def main():
 
     # ── OFFLINE / BRIDGE-ONLY ────────────────────────────────────────────────
     if args.offline or args.only_bridge:
-        _banner(f"RUN ALL v10.12 — OFFLINE MODE  FY {FY_LABEL}")
+        _banner(f"RUN ALL v10.17 — OFFLINE MODE  FY {FY_LABEL}")
         _log("  No portal downloads. All steps work from existing files on disk.")
         _log(f"  Script dir : {SCRIPT_DIR}")
         _log(f"  Log file   : {LOG_FILE}")
@@ -1841,21 +2263,32 @@ def main():
 ║  [5]  Step 6b  — GST-IT Comparison Excel (TIS/AIS template)    ║
 ║  [6]  Step 6c  — GSTR-2B Consolidated Extractor               ║
 ║  [7]  Step 6d  — GSTR-1 vs 26AS Comparison                    ║
-║  [8]  Step 7   — Final Consolidated 7-Sheet Report             ║
+║  [8]  Step 6e  — GST Comparison Report (Tax Liability vs ITC)  ║
+║  [9]  Step 7   — Final Consolidated 7-Sheet Report             ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  COMBO OPTIONS                                                  ║
-║  [9]  Steps 6→7  — Bridge + Comparison + 2B + 26AS + Final     ║
+║  [10] Steps 6→7  — Bridge + Comparison + 2B + 26AS + 6e + Final║
 ║                    (most common offline use — pick folders)     ║
-║  [10] Steps 3→7  — IT Recon + Bridge + all report steps        ║
-║  [11] Steps 2→7  — GST Recon + IT Recon + Bridge + Reports     ║
-║  [12] ALL STEPS  — 1+2+3+4+5+6+6b+6c+6d+7 (full offline run)  ║
+║  [11] Steps 3→7  — IT Recon + Bridge + all report steps        ║
+║  [12] Steps 2→7  — GST Recon + IT Recon + Bridge + Reports     ║
+║  [13] ALL STEPS  — 1+2+3+4+5+6+6b+6c+6d+6e+7 (full offline)  ║
 ╚══════════════════════════════════════════════════════════════════╝""")
 
-        while True:
-            raw = input("\n  Enter choice [1-12]: ").strip()
-            if raw.isdigit() and 1 <= int(raw) <= 12:
-                offline_choice = int(raw); break
-            print("  Invalid choice — enter a number from 1 to 12.")
+        # GUI passes --offline-choice N to skip the interactive menu entirely.
+        # (Without this, the subprocess hangs waiting for stdin that never arrives.)
+        if getattr(args, "offline_choice", None) and 1 <= args.offline_choice <= 13:
+            offline_choice = args.offline_choice
+            _log(f"  Offline choice {offline_choice} supplied via --offline-choice (GUI mode)")
+        else:
+            try:
+                while True:
+                    raw = input("\n  Enter choice [1-13]: ").strip()
+                    if raw.isdigit() and 1 <= int(raw) <= 13:
+                        offline_choice = int(raw); break
+                    print("  Invalid choice — enter a number from 1 to 13.")
+            except EOFError:
+                offline_choice = 10
+                print("  [AUTO] No terminal — defaulting to choice 10 (Bridge + All Reports).")
 
         # ── helper: pick GST + IT folders (shared by steps that need them) ──
         def _pick_gst_it_folders(need_gst=True, need_it=True):
@@ -1879,10 +2312,14 @@ def main():
                         print("\n  Per-client GST Automation folders found:")
                         for _i, _p in enumerate(_gst_candidates, 1):
                             try: _disp = str(_p.relative_to(BASE_DIR))
-                            except: _disp = _p.name
+                            except ValueError: _disp = _p.name  # FIX v11: bare except → except ValueError (path not relative to BASE_DIR)
                             print(f"    {_i:2d}.  {_disp}")
                         print(f"     0.  Browse staging folders (._gst_stage_)")
-                        _raw = input("  Enter number (0 to browse staging): ").strip()
+                        try:
+                            _raw = input("  Enter number (0 to browse staging): ").strip()
+                        except EOFError:
+                            _raw = "1"
+                            print("  [AUTO] No terminal input — using first GST folder found.")
                         if _raw == "0":
                             gst_offline = _pick_existing_folder(GST_BASE, "GST folder", expand_inner=True)
                         elif _raw.isdigit() and 1 <= int(_raw) <= len(_gst_candidates):
@@ -1914,10 +2351,14 @@ def main():
                         print("\n  Per-client IT Download folders found:")
                         for _i, _p in enumerate(_it_candidates, 1):
                             try: _disp = str(_p.relative_to(BASE_DIR))
-                            except: _disp = _p.name
+                            except ValueError: _disp = _p.name  # FIX v11: bare except → except ValueError (path not relative to BASE_DIR)
                             print(f"    {_i:2d}.  {_disp}")
                         print(f"     0.  Browse staging folders (._it_stage_)")
-                        _raw = input("  Enter number (0 to browse staging): ").strip()
+                        try:
+                            _raw = input("  Enter number (0 to browse staging): ").strip()
+                        except EOFError:
+                            _raw = "1"
+                            print("  [AUTO] No terminal input — using first IT folder found.")
                         if _raw == "0":
                             it_offline = _pick_existing_folder(IT_BASE, "IT folder", expand_inner=False)
                         elif _raw.isdigit() and 1 <= int(_raw) <= len(_it_candidates):
@@ -1942,32 +2383,60 @@ def main():
 
         # ── helper: run GST suite in offline/Option-11 mode ─────────────────
         def _run_gst_offline():
-            """Launch gst_suite with GST_OFFLINE=11 env var so it auto-picks Option 11."""
-            gst_script = SCRIPT_DIR / "gst_suite_v32.py"
-            if not gst_script.exists():
-                _log("  ✗ gst_suite_v32.py not found — skipping", "warning"); return
+            """Launch gst_suite in offline Option 11 mode.
+            Feeds the GST folder path via stdin so the suite never hangs on input()."""
+            _gst_candidates = sorted(
+                SCRIPT_DIR.glob("gst_suite_v*.py"),
+                key=lambda p: int(re.search(r'v(\d+)', p.stem).group(1))
+                              if re.search(r'v(\d+)', p.stem) else 0
+            )
+            gst_script = _gst_candidates[-1] if _gst_candidates else None
+            if not gst_script or not gst_script.exists():
+                _log("  ✗ No gst_suite_v*.py found in script dir — skipping", "warning"); return
+            _log(f"  Using GST suite: {gst_script.name}")
             _log("  Launching GST Suite — Offline / Option 11 (no browser, existing files)...")
-            _log("  ► Select your downloaded files folder when prompted inside the suite.")
             env = {**os.environ, "GST_OFFLINE": "11"}
+            gst_folder_arg = getattr(args, "gst_folder", None)
+            if gst_folder_arg and Path(gst_folder_arg).exists():
+                env["GST_OFFLINE_FOLDER"] = str(gst_folder_arg)
+                _log(f"  GST offline folder : {gst_folder_arg}")
+                stdin_data = (str(gst_folder_arg) + "\n") + ("\n" * 20)
+            else:
+                _log("  ⚠  No --gst-folder supplied — gst_suite will use its default folder", "warning")
+                stdin_data = "\n" * 20
             try:
-                subprocess.run([sys.executable, str(gst_script)],
-                               capture_output=False, env=env)
+                proc = subprocess.Popen(
+                    [_get_python(), str(gst_script)],
+                    stdin=subprocess.PIPE, env=env,
+                )
+                proc.communicate(input=stdin_data.encode("utf-8", errors="replace"))
             except Exception as _e:
                 _log(f"  ✗ GST offline error: {_e}", "error")
 
         # ── helper: run IT recon from existing PDFs ──────────────────────────
         def _run_it_offline(clients_list):
-            """Run IT recon engine from 26AS/AIS/TIS already on disk (no browser)."""
+            """Run IT recon from 26AS/AIS/TIS on disk (no browser).
+            Feeds the IT folder path via stdin so it_suite never hangs on input()."""
             it_script = SCRIPT_DIR / "it_suite_v6.py"
             recon_script = SCRIPT_DIR / "it_recon_engine.py"
 
             if it_script.exists():
                 _log("  Launching IT Suite — Option 4 (IT Recon Excel from existing PDFs)...")
-                _log("  ► When the suite menu appears, enter  4  to run recon-only.")
                 env = {**os.environ, "IT_OFFLINE": "4"}
+                it_folder_arg = getattr(args, "it_folder", None)
+                if it_folder_arg and Path(it_folder_arg).exists():
+                    env["IT_OFFLINE_FOLDER"] = str(it_folder_arg)
+                    _log(f"  IT offline folder : {it_folder_arg}")
+                    stdin_data = (str(it_folder_arg) + "\n") + ("\n" * 20)
+                else:
+                    _log("  ⚠  No --it-folder supplied — it_suite will use its default folder", "warning")
+                    stdin_data = "\n" * 20
                 try:
-                    subprocess.run([sys.executable, str(it_script)],
-                                   capture_output=False, env=env)
+                    proc = subprocess.Popen(
+                        [_get_python(), str(it_script)],
+                        stdin=subprocess.PIPE, env=env,
+                    )
+                    proc.communicate(input=stdin_data.encode("utf-8", errors="replace"))
                     return
                 except Exception as _e:
                     _log(f"  ✗ IT suite error: {_e} — trying direct recon engine", "warning")
@@ -1990,7 +2459,7 @@ def main():
                         continue
                     gst_xl = _find_gst_excel_for_client(client.get("gstin",""), name, fy)
                     gst_folder_arg = str(Path(gst_xl).parent) if gst_xl else None
-                    recon_args = [sys.executable, str(recon_script),
+                    recon_args = [_get_python(), str(recon_script),
                                   "--name", name, "--pan", pan, "--fy", fy,
                                   "--it-folder", str(it_dir)]
                     if gst_folder_arg: recon_args += ["--gst-folder", gst_folder_arg]
@@ -2043,11 +2512,16 @@ def main():
             run_gstr1_26as_step(clients)
 
         elif c == 8:
+            # Step 6e — GST Comparison Report (Tax Liability vs ITC + RC Month-wise)
+            _pick_gst_it_folders(need_gst=True, need_it=False)
+            run_gst_comparison_report_step(clients)
+
+        elif c == 9:
             # Step 7 — Final consolidated report
             _pick_gst_it_folders(need_gst=True, need_it=True)
             _run_final_consolidated()
 
-        elif c == 9:
+        elif c == 10:
             # Steps 6→7 — Bridge + all reports (original --offline behaviour)
             gst_ok, it_ok = _pick_gst_it_folders(need_gst=True, need_it=True)
             if gst_ok and it_ok:
@@ -2055,9 +2529,10 @@ def main():
                 run_gst_it_comparison_step()
                 run_gstr2b_extractor_step(clients)
                 run_gstr1_26as_step(clients)
+                run_gst_comparison_report_step(clients)
                 _run_final_consolidated()
 
-        elif c == 10:
+        elif c == 11:
             # Steps 3→7 — IT Recon + Bridge + Reports
             _run_it_offline(clients)
             gst_ok, it_ok = _pick_gst_it_folders(need_gst=True, need_it=True)
@@ -2066,9 +2541,10 @@ def main():
                 run_gst_it_comparison_step()
                 run_gstr2b_extractor_step(clients)
                 run_gstr1_26as_step(clients)
+                run_gst_comparison_report_step(clients)
                 _run_final_consolidated()
 
-        elif c == 11:
+        elif c == 12:
             # Steps 2→7 — GST Recon + IT Recon + Bridge + Reports
             _run_gst_offline()
             _run_it_offline(clients)
@@ -2078,9 +2554,10 @@ def main():
                 run_gst_it_comparison_step()
                 run_gstr2b_extractor_step(clients)
                 run_gstr1_26as_step(clients)
+                run_gst_comparison_report_step(clients)
                 _run_final_consolidated()
 
-        elif c == 12:
+        elif c == 13:
             # ALL STEPS — full offline pipeline
             run_tally_extract_step()
             _run_gst_offline()
@@ -2091,6 +2568,7 @@ def main():
                 run_gst_it_comparison_step()
                 run_gstr2b_extractor_step(clients)
                 run_gstr1_26as_step(clients)
+                run_gst_comparison_report_step(clients)
                 _run_final_consolidated()
 
         _banner("OFFLINE — ALL DONE")
@@ -2098,7 +2576,7 @@ def main():
         return
 
     # ── NORMAL (ONLINE) MODE ─────────────────────────────────────────────────
-    _banner(f"RUN ALL v10.12 — GST + Income Tax Pipeline  FY {FY_LABEL}")
+    _banner(f"RUN ALL v10.17 — GST + Income Tax Pipeline  FY {FY_LABEL}")
     _log(f"  Script dir : {SCRIPT_DIR}")
     _log(f"  Base dir   : {BASE_DIR}")
     _log(f"  Log file   : {LOG_FILE}")
@@ -2156,6 +2634,7 @@ def main():
         run_gst_it_comparison_step()
         run_gstr2b_extractor_step(clients)
         run_gstr1_26as_step(clients)
+        run_gst_comparison_report_step(clients)
         _run_final_consolidated()
 
     _banner("ALL DONE — Option B Structure")

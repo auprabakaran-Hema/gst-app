@@ -1,14 +1,115 @@
 """
-GST Reconciliation Web App — v7 FULL UPDATED
-==============================================
+GST + IT Automation Suite — v3.5 ADVANCED PRO  (app.py v13)
+=============================================================
 • Fully free — no license, no restrictions
 • Scripts (gst_suite_final.py, gstr1_extract.py) never exposed to users
-• 4 tabs: Reconciliation | GSTR-1 Detail | Download Status | Auto Download
-• NEW: Download directly from GST portal using PC browser bridge
+• Tabs: Reconciliation | GSTR-1 | Download Status | Auto Download |
+        Bulk Download | IT Bulk | Income Tax | GSTR-2B | Master Bridge |
+        GST-IT Comparison | Tally vs JSON
+• Download directly from GST portal using PC browser bridge
 • Render.com ready — binds to $PORT
 • UPDATED: Demo EXE Folder Link (Working)
   → https://drive.google.com/drive/folders/1hW3iNVQC-BtRWVBS4ZCEHCvvg2XNZW89?usp=sharing
 • Full Suite link → https://drive.google.com/drive/folders/1EjM1iyO5E4BxPXiYEs8jgAM0DSxhbb14?usp=sharing
+
+FIXES v14 / Suite v3.5 ADVANCED PRO (May 19, 2026):
+  ✓ STARTUP BANNER: app.py was printing "app v12" at launch — fixed to v14.
+  ✓ RPR_Suite_Launcher.py: FY StringVar defaults updated 2025-26 → 2026-27 (both IT & GST fields).
+  ✓ RPR_Suite_Launcher.py: All GST_MENU_FY env var fallbacks updated 2025-26 → 2026-27.
+  ✓ RPR_Suite_Launcher.py: Conditional FY guard (fy != 2025-26) updated to 2026-27.
+  ✓ RPR_Suite_Launcher.py: Tooltip default year hint updated 2025-26 → 2026-27.
+  ✓ RPR_Suite_Launcher.py: Multi-FY label updated: 2026-27 + 2025-26 (was 2025-26 + 2024-25).
+  ✓ RPR_Suite_Launcher.py: Footer label trimmed to FY 2026-27 / 2027-28 (removed stale 2025-26 entry).
+  ✓ RPR_Suite_Launcher.py: view_clients() search order now includes AY2027-28 as first priority.
+  ✓ gst_suite_v32.py: load_clients() now includes AY2027-28 and AY2026-27 (was only AY2025-26).
+  ✓ gst_suite_v32.py: write_master_report() title AY label now derived dynamically from FY_LABEL.
+  ✓ tally_extract_gst.py + tally_extract_gst_v3.15_FIXED.py: client file search updated to
+    include AY2027-28 and AY2026-27 (was only AY2025-26).
+  ✓ online_demo.py: default selected FY dropdown + API fallback updated 2025-26 → 2026-27.
+  ✓ demo_app.py: API FY fallback updated 2025-26 → 2026-27.
+  ✓ online_it_demo.py: API FY fallback updated 2025-26 → 2026-27.
+  ✓ app_version updated "13" → "14".
+
+FIXES v13 / Suite v3.5 ADVANCED PRO (May 19, 2026):
+  ✓ DEFAULT FY updated: all API endpoint fallbacks changed from "2025-26" → "2026-27"
+    (16 .get() defaults, 2 JS fallbacks, 10 dropdown <select> defaults, 1 KPI display)
+    Now matches the current financial year — no manual FY selection needed for new runs.
+  ✓ UI: FY 2025-26 sidebar logo-sub → FY 2026-27; kpi-fy display → 2026-27
+  ✓ FY 2025-26 span label in comparison tab → 2026-27
+  ✓ app_version updated "12" → "13"; startup banner updated to app v13.
+
+FIXES v12 / Suite v3.5 ADVANCED PRO (May 19, 2026):
+  ✓ SYNTAX FIX: build_gst_it_comparison.py — 2 bare `if` conditions had comment
+    placed before the `:` (e.g. `if cond  # comment:`) — Python syntax error.
+    Fixed: colon moved before comment on both affected lines.
+  ✓ SYNTAX FIX: RPR_Offline_Wrapper.py — triple-quoted docstring contained Windows
+    paths with \\U, \\R escape sequences causing SyntaxError on Python 3.12+.
+    Fixed: opening triple-quote changed to raw string literal.
+  ✓ FY_LABEL defaults updated from "2025-26" → "2026-27" across all modules:
+    gst_suite_v32.py, run_all.py, it_suite_v6.py, it_recon_engine.py,
+    master_bridge.py, build_gst_it_comparison.py  (current FY as of May 2026)
+  ✓ it_suite_v6.py: _select_ais_fy_tab() FY_LABELS list now built dynamically
+    from FY_LABEL/AY_LABEL globals — no hardcoded "2025-26" / "AY 2026-27".
+    JS execute_script labels also updated to use the dynamic list.
+    log.info messages updated to use FY_LABEL f-string (no more hardcoded years).
+    TRACES FY dropdown condition made dynamic (uses FY_LABEL/AY_LABEL).
+  ✓ build_gst_it_comparison.py: sheet titles (TIS/AIS Comparison, Recon Dashboard)
+    now use dynamic AY_LABEL derived from --fy argument — was hardcoded "AY 2026-27".
+    AY_LABEL global + _fy_to_ay() helper added; main() updates AY_LABEL from --fy.
+  ✓ it_suite_v6.py header: AY 2026-27 → AY 2027-28, FY 2025-26 → FY 2026-27.
+  ✓ RPR_Suite_Launcher.py: client detail label updated from FY 2025-26 → 2026-27.
+  ✓ verify_installation.py: version string updated (was still showing v3.1).
+  ✓ app_version updated "11" → "12"; startup banner updated to app v12.
+
+FIXES v11 / Suite v3.5 ADVANCED PRO (this build):
+  ✓ app.py: 3 remaining bare except: → except Exception: in Selenium nav steps
+    (Services click, Returns click, ChromeDriverManager fallback) — prevents
+    masking KeyboardInterrupt and SystemExit during portal automation
+  ✓ run_all.py: 6 remaining bare except: → typed exceptions throughout
+    (OSError for stat(), Exception for Excel parse, ValueError for float conversion,
+     ValueError for relative_to, Exception for annual sheet parse)
+  ✓ it_suite_v6.py: all 27 bare except: → except Exception: / except ImportError:
+    — complete elimination of bare excepts from IT portal automation module
+  ✓ app_version in /api/version updated "10" → "11"; startup banner updated to app v11
+
+FIXES v10 / Suite v3.5 ADVANCED PRO (this build):
+  ✓ serve_gst_suite_v32: error message and download_name were hardcoded to "gst_suite_v32.py"
+    even though _GST_PY_NAMES now finds v33/v34/v35 — function now serves p.name (actual file found)
+    and error message updated to mention v32-v35 alternatives.
+  ✓ Upgrade-banner download label updated from "gst_suite_v32.py" to "gst_suite (latest)"
+  ✓ api_client_manager comments / docstring updated to mention AY2026-27 alongside AY2025-26
+  ✓ it_recon_engine.py: bare except: → except ImportError / except (ValueError,TypeError) /
+    except (ValueError,IndexError,AttributeError) — prevents masking unrelated exceptions
+  ✓ gstr1_fy_v5.py: bare except: → except (ValueError, TypeError) in cell formatter
+  ✓ gstr1_26as_comparison_v2.py: bare except: → except ImportError in deps check block
+  ✓ run_all.py: bare except: → except ImportError in deps check block;
+    bare except in _pick_folder → except ValueError (relative_to only raises ValueError)
+  ✓ app_version in /api/version updated "9" → "10"; startup banner updated to app v10
+
+FIXES v9 / Suite v3.5 ADVANCED PRO:
+  ✓ api_upload: duplicate "created_at" key removed from job dict (Python dict silently drops
+    the first key when duplicated — TTL eviction used wrong timestamp in long sessions)
+  ✓ _find_engine: gst_suite_v35.py added to fallback list (v35 was referenced in comments
+    but never actually tried — only v31-v34 were searched)
+  ✓ _GST_PY_NAMES: updated to include v33/v34/v35 so download + health routes find latest engine
+  ✓ global-dl-bar: duplicate display property fixed (display:none then display:flex in same
+    style attr — the second always won, so bar could never be hidden on load)
+  ✓ Navbar / footer / upgrade-banner version strings updated from "v32" to "v3.5 ADVANCED PRO"
+  ✓ run_gstr1_only: missing inspect check for extract_gstr1_to_excel added
+  ✓ renderDlStatus: hardcoded rok===5 replaced with rok===RETS.length
+  ✓ _run_gst_it_comparison: MONTHS_SHORT not patched when calling via importlib fixed
+  ✓ build_gst_it_comparison._month_from_filename: year whitelist widened to 2020-2030
+
+FIXES v8 / Suite v3.5:
+  ✓ load_clients: Client_Manager_Secure_AY2026-27.xlsx added (was missing despite changelog claim)
+  ✓ block_scripts: /gst_suite_v32.py route alias removed (was always 403-blocked by before_request)
+  ✓ _find_engine: v33/v34/v35 fallbacks added for gst_suite (only v31/v32 were listed)
+  ✓ version string updated to v3.5 ADVANCED PRO (was still showing v7 / v3.1 mismatch)
+  ✓ _rate dict cleanup in _check_rate to prevent unbounded memory growth
+  ✓ api_job: elapsed_seconds field added for UI timing display
+  ✓ /api/version endpoint added (engine health + suite version)
+  ✓ /api/pipeline-health endpoint added (checks all engines + client file)
+  ✓ run_all.py: AY2026-27 added to load_clients search path
 """
 
 import os, sys, json, zipfile, re, time, shutil, uuid, threading, asyncio
@@ -96,6 +197,10 @@ def _check_rate(ip, limit=30, window=60):
         hits = [t for t in _rate.get(ip, []) if now - t < window]
         if len(hits) >= limit: return False
         hits.append(now); _rate[ip] = hits
+        # FIX: purge stale IPs periodically so _rate dict doesn't grow forever
+        if len(_rate) > 5000:
+            stale = [k for k, v in _rate.items() if not any(now - t < window for t in v)]
+            for k in stale: del _rate[k]
     return True
 
 def rate_limit(limit=30, window=60):
@@ -117,35 +222,54 @@ def _load_feedback():
     try:
         if FEEDBACK_FILE.exists():
             return json.loads(FEEDBACK_FILE.read_text(encoding="utf-8"))
-    except: pass
+    except Exception: pass
     return []
 
 def _save_feedback(fb_list):
     try:
         FEEDBACK_FILE.write_text(json.dumps(fb_list, ensure_ascii=False, indent=2), encoding="utf-8")
-    except: pass
+    except Exception: pass
 
 # ── Helpers ───────────────────────────────────────────────────────
 def _cleanup_old_jobs():
+    """Remove old job dirs from disk AND purge stale entries from the jobs dict.
+    BUG FIX v8: only disk cleanup was done; jobs dict grew unboundedly forever."""
     try:
         now = time.time()
+        stale_ids = []
         for d in [UPLOAD_DIR, OUTPUT_DIR]:
+            if not d.exists():
+                continue
             for sub in d.iterdir():
                 if sub.is_dir() and (now - sub.stat().st_mtime) > JOB_TTL_S:
                     shutil.rmtree(str(sub), ignore_errors=True)
-    except: pass
+                    stale_ids.append(sub.name)
+        # Also evict in-memory job records whose created_at is past TTL
+        with jobs_lock:
+            to_del = [
+                jid for jid, j in jobs.items()
+                if (now - j.get("created_at", now)) > JOB_TTL_S
+                and j.get("status") in ("done", "error", "queued")
+            ]
+            for jid in to_del:
+                del jobs[jid]
+    except Exception:
+        pass
 
 def _cleanup_uploads(job_id):
     try:
         up = UPLOAD_DIR / job_id
         if up.exists(): shutil.rmtree(str(up), ignore_errors=True)
-    except: pass
+    except Exception: pass
 
 def _find_engine(name):
     """Locate a script by name. Supports version-aliased filenames."""
     # Alias map: canonical name → list of versioned filenames to try
     _ALIASES = {
-        "gst_suite_final.py":         ["gst_suite_v32.py", "gst_suite_v31.py", "gst_suite_final.py"],
+        "gst_suite_final.py":         [
+            "gst_suite_v35.py", "gst_suite_v34.py", "gst_suite_v33.py",
+            "gst_suite_v32.py", "gst_suite_v31.py", "gst_suite_final.py",
+        ],  # FIX: v33/v34 were missing — only v31/v32 listed (no v35 shim — pipeline uses glob)
         "gstr1_extract.py":            ["gstr1_fy_v5.py", "gstr1_extract.py"],
         "it_suite.py":                 ["it_suite_v6.py", "it_suite.py"],
         "gstr2b_extractor.py":         ["gstr2b_extractor_v2.py", "gstr2b_extractor.py"],
@@ -202,7 +326,7 @@ def _detect_month(fpath, FY_MONTHS):
                         if len(fp) == 6:
                             mon = MONTHS_MAP.get(fp[:2])
                             if mon: return mon, fp[2:]
-    except: pass
+    except Exception: pass
     return None, None
 
 # ── Block script access ───────────────────────────────────────────
@@ -227,267 +351,392 @@ HTML = r"""<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0a0e1a;--surf:#111827;--surf2:#1a2235;--bdr:#1e3050;
-  --accent:#00e5ff;--accent2:#7c3aed;--grn:#00e676;--org:#ff6d00;
-  --red:#ff1744;--txt:#e8edf5;--muted:#6b7fa3;
+  --bg:#060b14;--surf:#0d1526;--surf2:#111e33;--surf3:#162240;--bdr:#1a2f50;
+  --accent:#00e5ff;--accent2:#7c3aed;--accent3:#06b6d4;
+  --grn:#00e676;--org:#ff6d00;--red:#ff1744;
+  --txt:#e2eaf5;--muted:#5a7099;--dim:#3a507a;
   --mono:'IBM Plex Mono',monospace;--sans:'Syne',sans-serif;
+  --glow-c:rgba(0,229,255,.18);--glow-p:rgba(124,58,237,.18);
+  --shadow:0 4px 24px rgba(0,0,0,.5);
+  --radius:14px;--radius-sm:8px;
 }
-body{background:var(--bg);color:var(--txt);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
-body::before{content:'';position:fixed;inset:0;
-  background-image:linear-gradient(rgba(0,229,255,.04) 1px,transparent 1px),
-  linear-gradient(90deg,rgba(0,229,255,.04) 1px,transparent 1px);
-  background-size:40px 40px;pointer-events:none;z-index:0}
-.wrap{max-width:1000px;margin:0 auto;padding:2rem 1.5rem;position:relative;z-index:1}
 
-/* Header */
-header{text-align:center;padding:2rem 0 1.25rem}
-.logo{display:inline-flex;align-items:center;gap:.7rem;margin-bottom:.8rem}
-.logo-icon{width:46px;height:46px;background:linear-gradient(135deg,var(--accent),var(--accent2));
-  border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.4rem}
-.logo-text{font-size:1rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+/* ── Global ── */
+body{background:var(--bg);color:var(--txt);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
+
+/* Ambient grid bg */
+body::before{content:'';position:fixed;inset:0;
+  background-image:
+    linear-gradient(rgba(0,229,255,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,229,255,.025) 1px,transparent 1px);
+  background-size:44px 44px;pointer-events:none;z-index:0}
+
+/* Ambient radial glows */
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 700px 400px at 15% 10%, rgba(0,229,255,.04) 0%, transparent 70%),
+    radial-gradient(ellipse 600px 500px at 85% 90%, rgba(124,58,237,.05) 0%, transparent 70%)}
+
+.wrap{max-width:1040px;margin:0 auto;padding:2rem 1.5rem;position:relative;z-index:1}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:10px}
+::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+
+/* ── Header ── */
+header{text-align:center;padding:2rem 0 1.5rem}
+.hdr-top{display:flex;align-items:center;justify-content:space-between;
+  background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);
+  padding:.75rem 1.2rem;margin-bottom:1.5rem;
+  box-shadow:0 0 0 1px rgba(0,229,255,.06),var(--shadow)}
+.hdr-brand{display:flex;align-items:center;gap:.8rem}
+.logo-icon{width:40px;height:40px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border-radius:10px;display:flex;align-items:center;justify-content:center;
+  font-size:1.3rem;box-shadow:0 0 16px rgba(0,229,255,.3);flex-shrink:0}
+.logo-title{font-size:.95rem;font-weight:800;letter-spacing:.04em;
   background:linear-gradient(135deg,var(--accent),var(--accent2));
   -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-h1{font-size:clamp(1.5rem,3.2vw,2.2rem);font-weight:800;letter-spacing:-.02em;line-height:1.1}
+.logo-sub{font-size:.65rem;color:var(--muted);font-family:var(--mono);margin-top:1px}
+.hdr-meta{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;justify-content:flex-end}
+.hdr-clock{font-family:var(--mono);font-size:.72rem;color:var(--accent);
+  background:rgba(0,229,255,.07);border:1px solid rgba(0,229,255,.18);
+  border-radius:6px;padding:.22rem .65rem;letter-spacing:.05em}
+.hdr-fy{font-size:.68rem;font-weight:700;color:var(--muted);
+  background:var(--surf2);border:1px solid var(--bdr);
+  border-radius:6px;padding:.22rem .65rem;font-family:var(--mono)}
+
+h1{font-size:clamp(1.4rem,3vw,2.1rem);font-weight:800;letter-spacing:-.025em;line-height:1.1}
 h1 span{background:linear-gradient(135deg,var(--accent),var(--accent2));
   -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-.sub{color:var(--muted);font-size:.82rem;margin-top:.35rem;font-family:var(--mono)}
-.badges{display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin-top:.6rem}
-.badge{display:inline-flex;align-items:center;gap:.3rem;padding:.28rem .8rem;border-radius:100px;
-  font-size:.7rem;font-weight:700;font-family:var(--mono)}
-.badge-grn{background:rgba(0,230,118,.15);color:var(--grn);border:1px solid rgba(0,230,118,.4)}
-.badge-blue{background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.3)}
-.badge-purple{background:rgba(124,58,237,.15);color:#a78bfa;border:1px solid rgba(124,58,237,.3)}
-.badge-orange{background:rgba(255,109,0,.15);color:var(--org);border:1px solid rgba(255,109,0,.4)}
+.sub{color:var(--muted);font-size:.8rem;margin-top:.4rem;font-family:var(--mono)}
+.badges{display:flex;gap:.45rem;justify-content:center;flex-wrap:wrap;margin-top:.65rem}
+.badge{display:inline-flex;align-items:center;gap:.3rem;padding:.25rem .75rem;
+  border-radius:100px;font-size:.68rem;font-weight:700;font-family:var(--mono);
+  letter-spacing:.04em;transition:transform .15s}
+.badge:hover{transform:translateY(-1px)}
+.badge-grn{background:rgba(0,230,118,.12);color:var(--grn);border:1px solid rgba(0,230,118,.35)}
+.badge-blue{background:rgba(0,229,255,.08);color:var(--accent);border:1px solid rgba(0,229,255,.25)}
+.badge-purple{background:rgba(124,58,237,.12);color:#a78bfa;border:1px solid rgba(124,58,237,.28)}
+.badge-orange{background:rgba(255,109,0,.12);color:var(--org);border:1px solid rgba(255,109,0,.35)}
 
-/* Tabs */
+/* ── KPI Strip ── */
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem;margin:1rem 0 1.2rem}
+@media(max-width:640px){.kpi-strip{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius-sm);
+  padding:.85rem 1rem;position:relative;overflow:hidden;transition:border-color .2s,transform .15s}
+.kpi:hover{border-color:rgba(0,229,255,.2);transform:translateY(-2px)}
+.kpi::before{content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(0,229,255,.04),transparent);
+  pointer-events:none}
+.kpi-val{font-size:1.45rem;font-weight:800;color:var(--txt);font-family:var(--mono);
+  line-height:1;margin-bottom:.3rem}
+.kpi-lbl{font-size:.62rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.07em;color:var(--muted)}
+.kpi-ico{position:absolute;right:.9rem;top:.8rem;font-size:1.4rem;opacity:.3}
+.kpi-accent{color:var(--accent)}
+.kpi-grn{color:var(--grn)}
+.kpi-purple{color:#a78bfa}
+.kpi-org{color:var(--org)}
+
+/* ── Tabs ── */
 .tabs-wrap{position:sticky;top:0;z-index:500;background:var(--bg);
-  padding-top:.4rem;margin-bottom:0;box-shadow:0 2px 12px rgba(0,0,0,.35)}
-.tabs{display:flex;gap:.25rem;border-bottom:2px solid var(--bdr);
+  padding-top:.5rem;margin-bottom:0;
+  box-shadow:0 4px 20px rgba(0,0,0,.5),0 0 0 1px rgba(0,229,255,.04)}
+.tabs-wrap::before{content:'';position:absolute;bottom:0;left:0;right:0;
+  height:1px;background:linear-gradient(90deg,transparent,var(--bdr),transparent)}
+.tabs{display:flex;gap:.15rem;border-bottom:2px solid var(--bdr);
   overflow-x:auto;overflow-y:visible;
-  scroll-behavior:smooth;scrollbar-width:thin;
-  scrollbar-color:var(--accent) transparent;
+  scroll-behavior:smooth;scrollbar-width:none;
   -webkit-overflow-scrolling:touch;
   position:relative;z-index:501;pointer-events:auto;
-  padding-bottom:1px}/* 1px so bottom border isn't clipped */
-.tabs::-webkit-scrollbar{height:3px}
-.tabs::-webkit-scrollbar-track{background:transparent}
-.tabs::-webkit-scrollbar-thumb{background:var(--accent);border-radius:2px}
-.tb{padding:.55rem 1.1rem;background:none;border:none;color:var(--muted);
-  font-family:var(--sans);font-size:.78rem;font-weight:700;cursor:pointer;
-  border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s;
+  padding-bottom:1px;padding:0 .25rem 1px}
+.tabs::-webkit-scrollbar{display:none}
+.tb{padding:.58rem 1.05rem;background:none;border:none;color:var(--muted);
+  font-family:var(--sans);font-size:.74rem;font-weight:700;cursor:pointer;
+  border-bottom:2px solid transparent;margin-bottom:-2px;
+  transition:color .2s,border-color .2s,background .2s;
   text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;
-  position:relative;z-index:502;pointer-events:auto;flex-shrink:0}
-.tb:hover{color:var(--txt)}.tb.active{color:var(--accent);border-bottom-color:var(--accent)}
-.tp{display:none}.tp.active{display:block}
+  position:relative;z-index:502;pointer-events:auto;flex-shrink:0;
+  border-radius:var(--radius-sm) var(--radius-sm) 0 0}
+.tb:hover{color:var(--txt);background:rgba(255,255,255,.03)}
+.tb.active{color:var(--accent);border-bottom-color:var(--accent);
+  background:rgba(0,229,255,.05)}
+.tp{display:none;animation:fadeSlideIn .22s ease}.tp.active{display:block}
+@keyframes fadeSlideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
-/* Cards */
-.card{background:var(--surf);border:1px solid var(--bdr);border-radius:13px;
-  padding:1.4rem;margin-bottom:1rem;transition:border-color .2s}
-.card:hover{border-color:rgba(0,229,255,.15)}
-.ct{font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--accent);margin-bottom:.9rem;display:flex;align-items:center;gap:.45rem}
-.ct::before{content:'';width:3px;height:1em;background:var(--accent);border-radius:2px}
+/* ── Cards ── */
+.card{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);
+  padding:1.4rem;margin-bottom:1rem;
+  transition:border-color .25s,box-shadow .25s;position:relative}
+.card:hover{border-color:rgba(0,229,255,.12);
+  box-shadow:0 0 0 1px rgba(0,229,255,.04),0 8px 32px rgba(0,0,0,.35)}
+.card-glow{box-shadow:0 0 0 1px rgba(0,229,255,.1),0 0 20px rgba(0,229,255,.05)}
+.ct{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--accent);margin-bottom:.9rem;display:flex;align-items:center;gap:.5rem}
+.ct::before{content:'';width:3px;height:1em;
+  background:linear-gradient(180deg,var(--accent),var(--accent2));border-radius:2px}
 
-/* Form */
+/* ── Form elements ── */
 .fg2{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
 @media(max-width:600px){.fg2{grid-template-columns:1fr}}
 .fg{display:flex;flex-direction:column;gap:.3rem}
-label{font-size:.68rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+label{font-size:.66rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
 input[type=text],input[type=password],textarea,select{
-  background:var(--surf2);border:1px solid var(--bdr);border-radius:7px;
-  padding:.52rem .78rem;color:var(--txt);font-family:var(--mono);font-size:.82rem;
-  transition:border-color .2s;width:100%}
+  background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--radius-sm);
+  padding:.55rem .82rem;color:var(--txt);font-family:var(--mono);font-size:.82rem;
+  transition:border-color .2s,box-shadow .2s;width:100%}
 textarea{resize:vertical;min-height:90px;line-height:1.55}
-input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
-input::placeholder,textarea::placeholder{color:var(--muted)}
+input:focus,textarea:focus,select:focus{
+  outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(0,229,255,.1)}
+input::placeholder,textarea::placeholder{color:var(--dim)}
 select option{background:var(--surf)}
 
-/* Drop zones */
+/* ── Drop zones ── */
 .dg{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.65rem;margin-top:.45rem}
 .dz{background:var(--surf2);border:2px dashed var(--bdr);border-radius:10px;
   padding:1rem .65rem;text-align:center;cursor:pointer;transition:all .2s;
-  position:relative;min-height:100px;display:flex;flex-direction:column;
+  position:relative;min-height:105px;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:.3rem}
-.dz:hover,.dz.drag-over{border-color:var(--accent);background:rgba(0,229,255,.04)}
-.dz.has-files{border-color:var(--grn);border-style:solid;background:rgba(0,230,118,.04)}
+.dz:hover,.dz.drag-over{border-color:var(--accent);background:rgba(0,229,255,.05);
+  box-shadow:0 0 16px rgba(0,229,255,.08)}
+.dz.has-files{border-color:var(--grn);border-style:solid;background:rgba(0,230,118,.05)}
 .dz-ic{font-size:1.6rem;line-height:1}
-.dz-lb{font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-.dz-ht{font-size:.6rem;color:var(--muted);font-family:var(--mono)}
-.dz-cn{font-size:.64rem;color:var(--grn);font-weight:600;font-family:var(--mono)}
+.dz-lb{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.dz-ht{font-size:.58rem;color:var(--dim);font-family:var(--mono)}
+.dz-cn{font-size:.62rem;color:var(--grn);font-weight:600;font-family:var(--mono)}
 .dz input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
 
-/* Buttons */
-.btn{width:100%;padding:.8rem;background:linear-gradient(135deg,var(--accent),var(--accent2));
-  border:none;border-radius:10px;color:#000;font-family:var(--sans);font-size:.88rem;
+/* ── Buttons ── */
+.btn{width:100%;padding:.82rem;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border:none;border-radius:10px;color:#000;font-family:var(--sans);font-size:.86rem;
   font-weight:800;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;
-  transition:transform .15s,box-shadow .15s;margin-top:.3rem}
-.btn:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,229,255,.25)}
-.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  transition:transform .15s,box-shadow .2s;margin-top:.3rem;
+  position:relative;overflow:hidden}
+.btn::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(255,255,255,.15),transparent);
+  pointer-events:none}
+.btn:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(0,229,255,.3),0 0 0 1px rgba(0,229,255,.4)}
+.btn:active{transform:translateY(0)}
+.btn:disabled{opacity:.38;cursor:not-allowed;transform:none;box-shadow:none}
 .btn-sec{width:100%;padding:.65rem;background:var(--surf2);border:1px solid var(--accent);
   border-radius:9px;color:var(--accent);font-family:var(--sans);font-size:.82rem;
-  font-weight:700;cursor:pointer;transition:all .15s;margin-top:.4rem}
-.btn-sec:hover{background:rgba(0,229,255,.08)}
-.btn-orange{width:100%;padding:.8rem;background:linear-gradient(135deg,var(--org),#ff9100);
-  border:none;border-radius:10px;color:#000;font-family:var(--sans);font-size:.88rem;
+  font-weight:700;cursor:pointer;transition:all .18s;margin-top:.4rem}
+.btn-sec:hover{background:rgba(0,229,255,.1);box-shadow:0 0 16px rgba(0,229,255,.12)}
+.btn-orange{width:100%;padding:.82rem;
+  background:linear-gradient(135deg,var(--org),#ff9100);
+  border:none;border-radius:10px;color:#000;font-family:var(--sans);font-size:.86rem;
   font-weight:800;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;
-  transition:transform .15s,box-shadow .15s;margin-top:.3rem}
-.btn-orange:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,109,0,.25)}
-.btn-orange:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  transition:transform .15s,box-shadow .2s;margin-top:.3rem}
+.btn-orange:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(255,109,0,.3)}
+.btn-orange:disabled{opacity:.38;cursor:not-allowed;transform:none}
 
-/* Progress */
+/* ── Progress ── */
 .pw{display:none}
-.pb-w{background:var(--surf2);border-radius:100px;height:5px;overflow:hidden;margin:.65rem 0}
-.pb{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));
-  border-radius:100px;transition:width .4s;width:0%}
-.lb{background:#000;border:1px solid var(--bdr);border-radius:7px;
-  padding:.75rem;font-family:var(--mono);font-size:.7rem;height:160px;overflow-y:auto;
-  color:#aaffcc;line-height:1.7}
-.lb .err{color:#ff6b6b}.lb .info{color:var(--accent)}
-.lb .ok{color:var(--grn)}.lb .warn{color:var(--org)}
+.pb-w{background:var(--surf2);border-radius:100px;height:5px;overflow:hidden;margin:.65rem 0;
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.4)}
+.pb{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2),var(--grn));
+  background-size:200% 100%;animation:shimmer 2s linear infinite;
+  border-radius:100px;transition:width .4s cubic-bezier(.4,0,.2,1);width:0%}
+@keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
+.lb{background:#020812;border:1px solid var(--bdr);border-radius:var(--radius-sm);
+  padding:.8rem;font-family:var(--mono);font-size:.7rem;height:170px;overflow-y:auto;
+  color:#9ab8d0;line-height:1.75;letter-spacing:.01em}
+.lb .err{color:#ff6b6b;font-weight:600}
+.lb .info{color:var(--accent)}
+.lb .ok{color:var(--grn);font-weight:600}
+.lb .warn{color:var(--org)}
+.lb .head{color:#a78bfa;font-weight:700}
+.lb .prompt{color:#ffd700}
 
-/* Downloads */
+/* ── Downloads ── */
 .dw{display:none}
 .dl-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:.65rem;margin-top:.65rem}
 .dlc{background:var(--surf2);border:1px solid var(--bdr);border-radius:10px;
-  padding:.9rem;display:flex;flex-direction:column;gap:.5rem}
+  padding:.9rem;display:flex;flex-direction:column;gap:.5rem;
+  transition:border-color .2s;position:relative;overflow:hidden}
+.dlc:hover{border-color:rgba(0,229,255,.18)}
 .dl-n{font-size:.72rem;font-weight:600;color:var(--txt)}
-.dl-s{font-size:.64rem;color:var(--muted);font-family:var(--mono)}
+.dl-s{font-size:.62rem;color:var(--muted);font-family:var(--mono)}
 .btn-dl{padding:.38rem .8rem;background:var(--surf);border:1px solid var(--accent);
-  border-radius:5px;color:var(--accent);font-family:var(--mono);font-size:.72rem;
-  cursor:pointer;text-decoration:none;display:inline-block;transition:background .15s}
-.btn-dl:hover{background:rgba(0,229,255,.1)}
+  border-radius:5px;color:var(--accent);font-family:var(--mono);font-size:.7rem;
+  cursor:pointer;text-decoration:none;display:inline-block;transition:all .15s;font-weight:700}
+.btn-dl:hover{background:rgba(0,229,255,.1);box-shadow:0 0 8px rgba(0,229,255,.15)}
 
-/* Status badge */
+/* ── Status badge ── */
 .sbg{display:inline-flex;align-items:center;gap:.25rem;padding:.2rem .55rem;
-  border-radius:100px;font-size:.64rem;font-weight:700;font-family:var(--mono)}
-.s-p{background:rgba(255,109,0,.15);color:var(--org);border:1px solid rgba(255,109,0,.4)}
-.s-d{background:rgba(0,230,118,.15);color:var(--grn);border:1px solid rgba(0,230,118,.4)}
-.s-e{background:rgba(255,23,68,.15);color:var(--red);border:1px solid rgba(255,23,68,.4)}
-.s-w{background:rgba(0,229,255,.15);color:var(--accent);border:1px solid rgba(0,229,255,.4)}
-.pulse{animation:pulse 1.2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  border-radius:100px;font-size:.64rem;font-weight:700;font-family:var(--mono);letter-spacing:.04em}
+.s-p{background:rgba(255,109,0,.12);color:var(--org);border:1px solid rgba(255,109,0,.35)}
+.s-d{background:rgba(0,230,118,.12);color:var(--grn);border:1px solid rgba(0,230,118,.35)}
+.s-e{background:rgba(255,23,68,.12);color:var(--red);border:1px solid rgba(255,23,68,.35)}
+.s-w{background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.25)}
+.pulse{animation:pulse 1.4s cubic-bezier(.4,0,.6,1) infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeSlideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 
-/* Status table */
+/* ── Status table ── */
 .dst{width:100%;border-collapse:collapse;font-size:.69rem;font-family:var(--mono);margin-top:.55rem}
 .dst th{background:var(--surf2);color:var(--muted);font-size:.6rem;font-weight:700;
   text-transform:uppercase;letter-spacing:.05em;padding:.4rem .5rem;
   border:1px solid var(--bdr);text-align:center}
 .dst th:first-child{text-align:left}
-.dst td{padding:.36rem .5rem;border:1px solid var(--bdr);text-align:center}
-.dst tr:nth-child(even) td{background:rgba(255,255,255,.016)}
+.dst td{padding:.38rem .5rem;border:1px solid var(--bdr);text-align:center;transition:background .15s}
+.dst tr:hover td{background:rgba(0,229,255,.03)}
+.dst tr:nth-child(even) td{background:rgba(255,255,255,.015)}
 .dst td:first-child{text-align:left;color:var(--txt);font-weight:600}
 .c-ok{color:var(--grn);font-weight:700}.c-fl{color:var(--red);font-weight:700}
-.c-pd{color:var(--org)}.c-sk{color:var(--muted)}
+.c-pd{color:var(--org)}.c-sk{color:var(--dim)}
 
-/* Pills */
+/* ── Pills ── */
 .pills{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.75rem}
 .pill{padding:.22rem .6rem;background:var(--surf2);border:1px solid var(--bdr);
-  border-radius:100px;font-size:.64rem;color:var(--muted);font-family:var(--mono)}
+  border-radius:100px;font-size:.63rem;color:var(--muted);font-family:var(--mono)}
 
-/* Info box */
-.info-box{background:rgba(0,229,255,.05);border:1px solid rgba(0,229,255,.18);
-  border-radius:9px;padding:.85rem 1rem;margin-bottom:.9rem;
+/* ── Info box ── */
+.info-box{background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.15);
+  border-radius:var(--radius-sm);padding:.85rem 1rem;margin-bottom:.9rem;
   font-size:.78rem;color:var(--muted);line-height:1.65}
 .info-box strong{color:var(--txt)}
-.info-box.warn{background:rgba(255,109,0,.05);border-color:rgba(255,109,0,.18)}
-.info-box.success{background:rgba(0,230,118,.05);border-color:rgba(0,230,118,.18)}
+.info-box.warn{background:rgba(255,109,0,.04);border-color:rgba(255,109,0,.15)}
+.info-box.success{background:rgba(0,230,118,.04);border-color:rgba(0,230,118,.15)}
 
-/* Connection status */
+/* ── Connection status ── */
 .conn-status{display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;
-  background:var(--surf2);border:1px solid var(--bdr);border-radius:8px;
+  background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--radius-sm);
   font-size:.72rem;font-family:var(--mono);margin-bottom:1rem}
-.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--red)}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0}
 .conn-dot.online{background:var(--grn);box-shadow:0 0 8px var(--grn)}
 .conn-dot.connecting{background:var(--org);animation:pulse 1s infinite}
 
-/* Feedback section */
-.fb-card{background:var(--surf);border:1px solid var(--bdr);border-radius:13px;
+/* ── Feedback section ── */
+.fb-card{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);
   padding:1.4rem;margin-top:2rem;margin-bottom:2rem}
 .fb-list{margin-top:1rem;display:flex;flex-direction:column;gap:.65rem;max-height:380px;overflow-y:auto}
-.fb-item{background:var(--surf2);border:1px solid var(--bdr);border-radius:9px;padding:.85rem}
+.fb-item{background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:.85rem;
+  transition:border-color .2s}
+.fb-item:hover{border-color:rgba(0,229,255,.12)}
 .fb-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem;flex-wrap:wrap;gap:.3rem}
 .fb-name{font-size:.8rem;font-weight:700;color:var(--txt)}
 .fb-type{font-size:.65rem;font-family:var(--mono);padding:.2rem .55rem;border-radius:100px}
-.fb-bug{background:rgba(255,23,68,.12);color:var(--red);border:1px solid rgba(255,23,68,.3)}
-.fb-sugg{background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.25)}
-.fb-praise{background:rgba(0,230,118,.1);color:var(--grn);border:1px solid rgba(0,230,118,.25)}
-.fb-other{background:rgba(255,109,0,.1);color:var(--org);border:1px solid rgba(255,109,0,.25)}
+.fb-bug{background:rgba(255,23,68,.1);color:var(--red);border:1px solid rgba(255,23,68,.25)}
+.fb-sugg{background:rgba(0,229,255,.08);color:var(--accent);border:1px solid rgba(0,229,255,.2)}
+.fb-praise{background:rgba(0,230,118,.08);color:var(--grn);border:1px solid rgba(0,230,118,.2)}
+.fb-other{background:rgba(255,109,0,.08);color:var(--org);border:1px solid rgba(255,109,0,.2)}
 .fb-time{font-size:.62rem;color:var(--muted);font-family:var(--mono)}
 .fb-msg{font-size:.8rem;color:var(--muted);line-height:1.6;margin-top:.25rem}
 .stars{color:#ffd700;font-size:.85rem;letter-spacing:.05rem}
 .no-fb{text-align:center;color:var(--muted);font-size:.8rem;padding:1.5rem;font-family:var(--mono)}
 
-/* Footer */
-footer{text-align:center;padding:1.5rem 0 2rem;color:var(--muted);font-size:.72rem;font-family:var(--mono)}
-footer a{color:var(--accent);text-decoration:none}
+/* ── Footer ── */
+footer{text-align:center;padding:2rem 0 2.5rem;color:var(--dim);font-size:.7rem;font-family:var(--mono);
+  border-top:1px solid rgba(255,255,255,.04);margin-top:1.5rem}
+footer a{color:var(--accent);text-decoration:none;transition:color .15s}
+footer a:hover{color:var(--txt)}
+.footer-brand{font-size:.82rem;font-weight:700;color:var(--muted);margin-bottom:.6rem}
+.footer-brand span{background:linear-gradient(135deg,var(--accent),var(--accent2));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.footer-row{display:flex;justify-content:center;gap:1.5rem;flex-wrap:wrap;margin:.4rem 0;color:var(--dim)}
+.footer-divider{color:rgba(255,255,255,.1)}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<!-- ── Upgrade / Share Banner ───────────────────────────────────── -->
-<div id="upgradeBanner" style="background:linear-gradient(135deg,rgba(124,58,237,.15),rgba(0,229,255,.08));
-  border:1.5px solid rgba(124,58,237,.45);border-radius:14px;padding:1rem 1.3rem;
-  margin-bottom:1.4rem;display:flex;align-items:center;justify-content:space-between;
-  flex-wrap:wrap;gap:.75rem">
-  <div>
-    <div style="font-size:.82rem;font-weight:800;color:#a78bfa;margin-bottom:.25rem">
-      🚀 Full Suite v32 — Latest Build
-    </div>
-    <div style="font-size:.73rem;color:var(--muted);line-height:1.55">
-      <strong style="color:var(--grn)">NEW v32</strong> — GSTR-3B tile fix, faster online downloads.
-      Share the <strong style="color:var(--txt)">Free Demo EXE</strong> with clients before buying.
-      Full suite adds IT recon, auto-download, bulk processing &amp; more.
+<!-- ── Top Navbar ─────────────────────────────────────── -->
+<div class="hdr-top">
+  <div class="hdr-brand">
+    <div class="logo-icon">₹</div>
+    <div>
+      <div class="logo-title">RPR GST + IT Suite</div>
+      <div class="logo-sub">FY 2026-27 · Tamil Nadu CA Automation</div>
     </div>
   </div>
-  <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+  <div class="hdr-meta">
+    <span class="hdr-fy">v3.5 · ADVANCED PRO</span>
+    <span class="hdr-clock" id="live-clock">--:--:--</span>
+    <div id="global-dl-bar" style="display:none;padding:.3rem .7rem;
+         background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.3);border-radius:6px;
+         align-items:center;gap:.5rem">
+      <button onclick="globalDownloadAll()"
+              style="padding:.3rem .8rem;background:linear-gradient(135deg,var(--grn),#00c853);
+                     border:none;border-radius:5px;color:#000;font-family:var(--sans);font-size:.72rem;
+                     font-weight:800;cursor:pointer;white-space:nowrap">
+        ⬇ Download All
+      </button>
+      <span id="global-dl-count" style="font-size:.65rem;color:var(--muted);font-family:var(--mono)"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ── KPI Strip ─────────────────────────────────────── -->
+<div class="kpi-strip">
+  <div class="kpi">
+    <div class="kpi-ico">📊</div>
+    <div class="kpi-val kpi-accent" id="kpi-tabs">11</div>
+    <div class="kpi-lbl">Active Modules</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-ico">🏛️</div>
+    <div class="kpi-val kpi-grn" id="kpi-fy">2026-27</div>
+    <div class="kpi-lbl">Assessment Year</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-ico">⚡</div>
+    <div class="kpi-val kpi-purple" id="kpi-jobs">0</div>
+    <div class="kpi-lbl">Jobs Processed</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-ico">🔒</div>
+    <div class="kpi-val kpi-org" style="font-size:.95rem;margin-top:.1rem">SECURE</div>
+    <div class="kpi-lbl">Files Stay Local</div>
+  </div>
+</div>
+
+<!-- ── Upgrade / Share Banner ───────────────────────────────────── -->
+<div id="upgradeBanner" style="background:linear-gradient(135deg,rgba(124,58,237,.1),rgba(0,229,255,.05));
+  border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:.9rem 1.2rem;
+  margin-bottom:1.2rem;display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:.65rem">
+  <div>
+    <div style="font-size:.8rem;font-weight:800;color:#a78bfa;margin-bottom:.2rem">
+      🚀 RPR Full Suite v3.5 ADVANCED PRO — GSTR-3B Fix + Faster Downloads
+    </div>
+    <div style="font-size:.72rem;color:var(--muted);line-height:1.5">
+      Share the <strong style="color:var(--grn)">Free Demo EXE</strong> with clients.
+      Full suite: IT recon · auto-download · bulk processing · multi-client.
+    </div>
+  </div>
+  <div style="display:flex;gap:.45rem;flex-wrap:wrap;align-items:center">
     <a href="https://drive.google.com/drive/folders/1hW3iNVQC-BtRWVBS4ZCEHCvvg2XNZW89?usp=sharing"
       target="_blank"
-      style="padding:.38rem 1rem;background:linear-gradient(135deg,#7c3aed,#4f46e5);
-      border-radius:8px;font-size:.7rem;font-weight:800;color:#fff;font-family:var(--sans);
-      text-decoration:none;white-space:nowrap;cursor:pointer;letter-spacing:.03em">
-      ⬇ Demo EXE</a>
+      style="padding:.35rem .9rem;background:linear-gradient(135deg,#7c3aed,#4f46e5);
+      border-radius:7px;font-size:.7rem;font-weight:800;color:#fff;font-family:var(--sans);
+      text-decoration:none;white-space:nowrap;letter-spacing:.03em">⬇ Demo EXE</a>
     <a href="https://drive.google.com/drive/folders/1EjM1iyO5E4BxPXiYEs8jgAM0DSxhbb14?usp=sharing"
       target="_blank"
-      style="padding:.38rem 1rem;background:linear-gradient(135deg,var(--grn),#00c853);
-      border-radius:8px;font-size:.7rem;font-weight:800;color:#000;font-family:var(--sans);
-      text-decoration:none;white-space:nowrap;cursor:pointer;letter-spacing:.03em">
-      ⬇ Full Suite</a>
+      style="padding:.35rem .9rem;background:linear-gradient(135deg,var(--grn),#00c853);
+      border-radius:7px;font-size:.7rem;font-weight:800;color:#000;font-family:var(--sans);
+      text-decoration:none;white-space:nowrap">⬇ Full Suite</a>
     <a href="/download/gst-suite-v32"
-      style="padding:.38rem 1rem;background:rgba(0,229,255,.12);border:1px solid rgba(0,229,255,.4);
-      border-radius:8px;font-size:.7rem;font-weight:800;color:var(--accent);font-family:var(--mono);
-      text-decoration:none;white-space:nowrap;cursor:pointer">
-      ⬇ gst_suite_v32.py</a>
+      style="padding:.35rem .9rem;background:rgba(0,229,255,.1);border:1px solid rgba(0,229,255,.35);
+      border-radius:7px;font-size:.7rem;font-weight:800;color:var(--accent);font-family:var(--mono);
+      text-decoration:none;white-space:nowrap">⬇ gst_suite (latest)</a>
   </div>
 </div>
 
 <header>
-  <div class="logo">
-    <div class="logo-icon">₹</div>
-    <div class="logo-text">GST Recon</div>
-  </div>
   <h1>Annual GST <span>Reconciliation Portal</span></h1>
   <p class="sub">Upload your returns → Get reconciliation Excel in seconds</p>
   <div class="badges">
     <span class="badge badge-grn">⭐ 100% Free</span>
     <span class="badge badge-blue">📊 Full Reconciliation</span>
     <span class="badge badge-purple">🔒 Your files stay private</span>
-    <span class="badge badge-orange">🌐 Auto Download NEW</span>
-  </div>
-  <div id="global-dl-bar" style="display:none;margin-top:.8rem;padding:.55rem 1rem;
-       background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.35);border-radius:9px;
-       align-items:center;gap:.75rem;flex-wrap:wrap;justify-content:center">
-    <span style="font-size:.74rem;font-weight:700;color:var(--grn);font-family:var(--mono)">
-      ✅ Files ready across tabs
-    </span>
-    <button onclick="globalDownloadAll()"
-            style="padding:.42rem 1.1rem;background:linear-gradient(135deg,var(--grn),#00c853);
-                   border:none;border-radius:7px;color:#000;font-family:var(--sans);font-size:.78rem;
-                   font-weight:800;cursor:pointer;letter-spacing:.04em;white-space:nowrap">
-      ⬇ Download All Files (All Tabs)
-    </button>
-    <span id="global-dl-count" style="font-size:.68rem;color:var(--muted);font-family:var(--mono)"></span>
+    <span class="badge badge-orange">🌐 Auto Download</span>
   </div>
 </header>
 
@@ -719,8 +968,9 @@ function glCopyTable(e){
       <input type="text" id="r-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="r-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -793,7 +1043,9 @@ function glCopyTable(e){
 </form>
 
 <div class="card pw" id="r-pw">
-  <div class="ct">Processing <span class="sbg s-p pulse" id="r-badge">Running</span></div>
+  <div class="ct">Processing <span class="sbg s-p pulse" id="r-badge">Running</span>
+    <span id="r-elapsed" style="font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-left:.5rem"></span>
+  </div>
   <div class="pb-w"><div class="pb" id="r-pb"></div></div>
   <div class="lb" id="r-lb"></div>
 </div>
@@ -840,8 +1092,9 @@ function glCopyTable(e){
       <input type="text" id="g1-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="g1-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -992,8 +1245,9 @@ function glCopyTable(e){
       <input type="password" id="ad-password" placeholder="Your GST portal password" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="ad-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -1198,8 +1452,9 @@ function glCopyTable(e){
     <div class="fg">
       <label>Financial Year</label>
       <select id="bulk-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -1329,8 +1584,9 @@ function glCopyTable(e){
     <div class="fg">
       <label>Financial Year</label>
       <select id="itbulk-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
       </select>
@@ -1443,8 +1699,9 @@ function glCopyTable(e){
              style="text-transform:uppercase"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="it-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -1617,7 +1874,9 @@ function glCopyTable(e){
 
 
 <div class="card pw" id="it-pw" style="display:none">
-  <div class="ct">Processing <span class="sbg s-p pulse" id="it-badge">Running</span></div>
+  <div class="ct">Processing <span class="sbg s-p pulse" id="it-badge">Running</span>
+    <span id="it-elapsed" style="font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-left:.5rem"></span>
+  </div>
   <div class="pb-w"><div class="pb" id="it-pb"></div></div>
   <div class="lb" id="it-lb"></div>
 </div>
@@ -1659,8 +1918,9 @@ function glCopyTable(e){
       <input type="text" id="g2bext-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="g2bext-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -1741,8 +2001,9 @@ function glCopyTable(e){
              style="text-transform:uppercase"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="mb-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -1847,8 +2108,9 @@ function glCopyTable(e){
              style="text-transform:uppercase"></div>
     <div class="fg"><label>Financial Year</label>
       <select id="gic-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -1948,8 +2210,9 @@ function glCopyTable(e){
       <input type="text" id="tvj-name" placeholder="ABC Traders" required></div>
     <div class="fg"><label>Financial Year</label>
       <select id="tvj-fy">
-        <option value="2026-27">2026-27</option>
-        <option value="2025-26" selected>2025-26</option>
+        <option value="2026-27" selected>2026-27</option>
+        <option value="2027-28">2027-28</option>
+        <option value="2025-26">2025-26</option>
         <option value="2024-25">2024-25</option>
         <option value="2023-24">2023-24</option>
         <option value="2022-23">2022-23</option>
@@ -2065,16 +2328,60 @@ function glCopyTable(e){
 </div>
 
 <footer>
-  GST Reconciliation Portal — Public Beta &nbsp;|&nbsp;
-  Built for Indian CA firms &nbsp;|&nbsp;
-  100% Free · No data stored permanently<br>
-  <span style="color:rgba(107,127,163,.5)">Scripts run on server only — your code is never shared</span>
+  <div class="footer-brand">RPR <span>GST + IT Suite</span> v3.5 ADVANCED PRO</div>
+  <div class="footer-row">
+    <span>Built for Indian CA Firms</span>
+    <span class="footer-divider">|</span>
+    <span>FY 2026-27</span>
+    <span class="footer-divider">|</span>
+    <span>Tamil Nadu GST Automation</span>
+  </div>
+  <div class="footer-row" style="font-size:.64rem;margin-top:.2rem">
+    <span>100% Free · No data stored permanently</span>
+    <span class="footer-divider">|</span>
+    <span>Scripts run on server · Your files never shared</span>
+    <span class="footer-divider">|</span>
+    <a href="mailto:auprabakaran@gmail.com">Contact Developer</a>
+  </div>
+  <div style="margin-top:.7rem;font-size:.62rem;color:rgba(90,112,153,.4)">
+    © 2025 RPR Suite · Designed &amp; Developed by Prabha · All rights reserved
+  </div>
 </footer>
 
 </div><!-- /wrap -->
 
 <script>
 // ── Tab switching ─────────────────────────────────────────────────
+// ── Live Clock ────────────────────────────────────────────────────
+(function _liveClock(){
+  function _tick(){
+    const d=new Date();
+    const t=d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+    const el=document.getElementById('live-clock');
+    if(el) el.textContent=t;
+  }
+  _tick(); setInterval(_tick, 1000);
+})();
+
+// ── Job counter (increments on successful reconciliation) ──────────
+let _jobsDone=0;
+function _incrJobs(){
+  _jobsDone++;
+  const el=document.getElementById('kpi-jobs');
+  if(el){ el.textContent=_jobsDone; _animKpi(el); }
+}
+function _animKpi(el){
+  el.style.transform='scale(1.3)';
+  setTimeout(()=>{ el.style.transform='scale(1)'; el.style.transition='transform .3s cubic-bezier(.34,1.56,.64,1)'; },50);
+}
+
+// ── Tab counter update ─────────────────────────────────────────────
+(function _updateTabCount(){
+  const n=document.querySelectorAll('.tb').length;
+  const el=document.getElementById('kpi-tabs');
+  if(el) el.textContent=n;
+})();
+
 function switchTab(name, e){
   if(e) e.preventDefault();
   document.querySelectorAll('.tb').forEach(b=>b.classList.remove('active'));
@@ -2119,7 +2426,7 @@ document.getElementById('recon-form').addEventListener('submit', async e=>{
   e.preventDefault();
   const gstin=document.getElementById('r-gstin').value.trim().toUpperCase();
   const cname=document.getElementById('r-name').value.trim();
-  const fy=document.getElementById('r-fy').value.trim()||'2025-26';
+  const fy=document.getElementById('r-fy').value.trim()||'2026-27';
   if(!gstin||gstin.length!==15){alert('Enter a valid 15-character GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
   const hasFiles=['r1','r1a','r2b','r2a','r3b','cust','taxlib'].some(z=>(zoneFiles[z]||[]).length>0);
@@ -2178,7 +2485,7 @@ document.getElementById('g1-form').addEventListener('submit', async e=>{
   e.preventDefault();
   const gstin=document.getElementById('g1-gstin').value.trim().toUpperCase();
   const cname=document.getElementById('g1-name').value.trim();
-  const fy=document.getElementById('g1-fy').value.trim()||'2025-26';
+  const fy=document.getElementById('g1-fy').value.trim()||'2026-27';
   if(!gstin||gstin.length!==15){alert('Enter a valid 15-character GSTIN');return;}
   if(!cname){alert('Enter company name');return;}
   if(!(zoneFiles['g1r1']||[]).length){alert('Upload at least one GSTR-1 ZIP');return;}
@@ -2222,6 +2529,12 @@ async function pollJob(jid,pfx,btnLbl){
     if(d.progress!==undefined)
       document.getElementById(pfx+'-pb').style.width=d.progress+'%';
     if(d.dl_status&&Object.keys(d.dl_status).length) renderDlStatus(d.dl_status,jid);
+    // Show elapsed time in badge if available
+    if(d.elapsed_seconds!==undefined){
+      const el=document.getElementById(pfx+'-elapsed');
+      if(el){const m=Math.floor(d.elapsed_seconds/60),s=d.elapsed_seconds%60;
+        el.textContent=`⏱ ${m}m ${s}s`;}
+    }
     if(d.status==='done'){
       setBadge(pfx,'d','Complete');
       document.getElementById(pfx+'-pb').style.width='100%';
@@ -2776,7 +3089,7 @@ function renderDlStatus(st,jid){
       td+=`<td class="${cls}">${txt}</td>`;
     });
     const rs=rfl>0?`<span style="color:var(--red)">${rfl} failed</span>`:
-              rok===5?`<span style="color:var(--grn)">All OK</span>`:
+              rok===RETS.length?`<span style="color:var(--grn)">All OK</span>`:
               rok>0?`<span style="color:var(--org)">${rok}/5 OK</span>`:
               `<span style="color:var(--muted)">—</span>`;
     td+=`<td>${rs}</td>`;tr.innerHTML=td;tb.appendChild(tr);
@@ -3224,6 +3537,13 @@ async function _itPoll(jid){
 
     // Update progress bar
     document.getElementById('it-pb').style.width = (d.progress||0)+'%';
+
+    // Show elapsed time
+    if(d.elapsed_seconds !== undefined){
+      const el = document.getElementById('it-elapsed');
+      if(el){ const m=Math.floor(d.elapsed_seconds/60),s=d.elapsed_seconds%60;
+        el.textContent=`⏱ ${m}m ${s}s`; }
+    }
 
     // Stream logs
     if(d.logs && d.logs.length){
@@ -4024,7 +4344,7 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-1: {mon} {yr}"); set_dl(f"{mon}_GSTR1", "OK")
             else:
                 log(f"  ⚠ Month not detected: {Path(fpath).name}", "warn")
@@ -4036,7 +4356,7 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR1A_{mon}_{yr}.zip"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-1A: {mon} {yr}"); set_dl(f"{mon}_GSTR1A", "OK")
             else:
                 log(f"  ⚠ GSTR-1A month not detected: {Path(fpath).name}", "warn")
@@ -4048,7 +4368,7 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR2B_{mon}_{yr}.xlsx"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-2B: {mon} {yr}"); set_dl(f"{mon}_GSTR2B", "OK")
 
         # GSTR-2A
@@ -4059,7 +4379,7 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR2A_{mon}_{yr}{ext}"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-2A: {mon} {yr}"); set_dl(f"{mon}_GSTR2A", "OK")
 
         # GSTR-3B
@@ -4069,7 +4389,7 @@ def run_reconciliation(job_id):
                 dest = job_dir / f"GSTR3B_{mon}_{yr}.pdf"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-3B: {mon} {yr}"); set_dl(f"{mon}_GSTR3B", "OK")
 
         # Customer names
@@ -4077,7 +4397,7 @@ def run_reconciliation(job_id):
             dest = job_dir / "customer_names.xlsx"
             if not dest.exists():
                 try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
+                except Exception: shutil.copy2(fpath, str(dest))
             log("  Customer names loaded"); break
 
         # Tax liability
@@ -4085,7 +4405,7 @@ def run_reconciliation(job_id):
             dest = job_dir / f"TAX_LIABILITY_{Path(fpath).name}"
             if not dest.exists():
                 try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
+                except Exception: shutil.copy2(fpath, str(dest))
             log(f"  Tax Liability: {Path(dest).name}"); break
 
         prog(25)
@@ -4121,10 +4441,14 @@ def run_reconciliation(job_id):
 
         prog(30)
         log("Running annual reconciliation (1-2 minutes)...")
-        # Try with_formulas=True first; fall back gracefully
-        try:
+        # BUG FIX v8: write_annual_reconciliation takes (client_dir, client_name, gstin, log)
+        # — no with_formulas param exists; was always hitting TypeError fallback on every run.
+        # Check actual signature first to be forward-compatible if param is added later.
+        import inspect as _insp
+        _war_params = set(_insp.signature(gst.write_annual_reconciliation).parameters)
+        if "with_formulas" in _war_params:
             gst.write_annual_reconciliation(str(job_dir), client_name, gstin, _log, with_formulas=True)
-        except TypeError:
+        else:
             gst.write_annual_reconciliation(str(job_dir), client_name, gstin, _log)
         prog(65)
         log("  ✓ Annual reconciliation complete", "ok")
@@ -4139,9 +4463,10 @@ def run_reconciliation(job_id):
                 gstr1 = _ilu.module_from_spec(spec2)
                 spec2.loader.exec_module(gstr1)
                 out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
-                try:
+                _g1_params = set(_insp.signature(gstr1.extract_gstr1_to_excel).parameters)
+                if "with_formulas" in _g1_params:
                     gstr1.extract_gstr1_to_excel(str(job_dir), str(out_xl), with_formulas=True)
-                except TypeError:
+                else:
                     gstr1.extract_gstr1_to_excel(str(job_dir), str(out_xl))
                 log(f"  ✓ GSTR-1 detail: {out_xl.name}", "ok")
             except Exception as ex:
@@ -4203,7 +4528,7 @@ def run_gstr1_only(job_id):
                 dest = job_dir / f"GSTR1_{mon}_{yr}.zip"
                 if not dest.exists():
                     try: Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  GSTR-1: {mon} {yr}")
             else:
                 log(f"  ⚠ Month not detected: {Path(fpath).name}", "warn")
@@ -4212,13 +4537,13 @@ def run_gstr1_only(job_id):
             dest = job_dir / Path(fpath).name
             if not dest.exists():
                 try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
+                except Exception: shutil.copy2(fpath, str(dest))
 
         for fpath in saved.get("cust", []):
             dest = job_dir / "customer_names.xlsx"
             if not dest.exists():
                 try: Path(fpath).rename(dest)
-                except: shutil.copy2(fpath, str(dest))
+                except Exception: shutil.copy2(fpath, str(dest))
             break
 
         prog(20)
@@ -4241,7 +4566,14 @@ def run_gstr1_only(job_id):
 
         prog(30)
         out_xl = job_dir / f"GSTR1_FULL_DETAIL_{client_name.replace(' ','_')}.xlsx"
-        gstr1_mod.extract_gstr1_to_excel(str(job_dir), str(out_xl))
+        # FIX v9: use inspect to check signature before calling — mirrors run_reconciliation's
+        # pattern so adding with_formulas to gstr1_fy_v5 doesn't cause a TypeError here.
+        import inspect as _insp
+        _g1_params = set(_insp.signature(gstr1_mod.extract_gstr1_to_excel).parameters)
+        if "with_formulas" in _g1_params:
+            gstr1_mod.extract_gstr1_to_excel(str(job_dir), str(out_xl), with_formulas=True)
+        else:
+            gstr1_mod.extract_gstr1_to_excel(str(job_dir), str(out_xl))
         prog(90)
 
         output_files = []
@@ -4310,7 +4642,7 @@ def _find_any_ext(ext):
             pass
     return None
 
-_GST_PY_NAMES = ["gst_suite_v32.py", "gst_suite_v31.py", "gst_suite_final.py"]
+_GST_PY_NAMES = ["gst_suite_v35.py", "gst_suite_v34.py", "gst_suite_v33.py", "gst_suite_v32.py", "gst_suite_v31.py", "gst_suite_final.py"]
 
 @app.route("/api/available-downloads")
 def api_available_downloads():
@@ -4344,17 +4676,17 @@ def download_full_suite():
     return send_file(str(p), as_attachment=True, download_name=p.name)
 
 @app.route("/download/gst-suite-v32")
-@app.route("/gst_suite_v32.py")
+@app.route("/download/gst_suite_v32")   # FIX: .py alias was blocked by block_scripts; use path-safe alias
 def serve_gst_suite_v32():
-    """Serve gst_suite_v32.py as a direct download."""
+    """Serve latest available gst_suite engine as a direct download (v32–v35)."""
     p = _find_local_file(_GST_PY_NAMES)
     if not p:
         return (
-            "<h2 style='font-family:sans-serif;color:#c00'>gst_suite_v32.py not found.</h2>"
-            "<p style='font-family:monospace'>Place <b>gst_suite_v32.py</b> "
+            "<h2 style='font-family:sans-serif;color:#c00'>gst_suite engine not found.</h2>"
+            "<p style='font-family:monospace'>Place <b>gst_suite_v32.py</b> (or v33/v34/v35) "
             "in the same folder as app.py.</p>", 404
         )
-    return send_file(str(p), as_attachment=True, download_name="gst_suite_v32.py")
+    return send_file(str(p), as_attachment=True, download_name=p.name)
 
 @app.route("/")
 def index():
@@ -4366,7 +4698,7 @@ def api_upload():
     _cleanup_old_jobs()
     gstin       = request.form.get("gstin","").strip().upper()
     client_name = request.form.get("client_name","").strip()
-    fy          = request.form.get("fy","2025-26").strip() or "2025-26"
+    fy          = request.form.get("fy","2026-27").strip() or "2025-26"
     mode        = request.form.get("mode","recon")
 
     if not gstin or len(gstin) != 15:
@@ -4394,6 +4726,7 @@ def api_upload():
     with jobs_lock:
         jobs[job_id] = {
             "status":"queued","progress":0,"logs":[],"files":[],
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "error":None,"gstin":gstin,"client_name":client_name,
             "fy":fy,"job_dir":str(job_dir),"out_dir":str(out_dir),
             "saved":saved,"mode":mode,"dl_status":{},
@@ -4412,6 +4745,8 @@ def api_job(job_id):
             return jsonify(error="Job not found"), 404
         new_logs = job["logs"][:]
         job["logs"] = []
+        # elapsed time — job stores created_at when queued
+        elapsed = int(time.time() - job.get("created_at", time.time()))
         # Return failure screenshots (without img data in poll — just label+ts for count)
         # Full images are fetched via /api/failure-screenshots/<job_id>
         fail_shots = job.get("failure_screenshots", [])
@@ -4425,6 +4760,7 @@ def api_job(job_id):
             captcha_company=job.get("captcha_company", None),
             counter=job.get("counter",""),
             failure_screenshots=fail_shots_light,
+            elapsed_seconds=elapsed,   # FIX: added for UI timing display
         )
 
 @app.route("/api/download/<job_id>/<filename>")
@@ -4479,14 +4815,14 @@ def api_parse_master():
                 dl_status[f"{mon}_GSTR2B"] = _st(R2B)
                 dl_status[f"{mon}_GSTR2A"] = _st(R2A)
                 dl_status[f"{mon}_GSTR3B"] = _st(R3B)
-            except: continue
+            except Exception: continue
         wb.close()
         return jsonify(dl_status=dl_status)
     except Exception as e:
         return jsonify(error=str(e)), 500
     finally:
         try: tmp.unlink(missing_ok=True)
-        except: pass
+        except Exception: pass
 
 # ── Feedback API ──────────────────────────────────────────────────
 @app.route("/api/feedback", methods=["GET","POST"])
@@ -4534,6 +4870,98 @@ _sess_lock = threading.Lock()
 @app.route("/health")
 def health():
     return jsonify(status="ok")
+
+@app.route("/api/version")
+def api_version():
+    """Return suite version info and engine availability."""
+    engine_status = {}
+    for key, (canonical, versioned) in {
+        "gst_suite":         ("gst_suite_final.py",         "gst_suite_v32.py"),
+        "gstr1_extract":     ("gstr1_extract.py",           "gstr1_fy_v5.py"),
+        "it_recon_engine":   ("it_recon_engine.py",         "it_recon_engine.py"),
+        "it_suite":          ("it_suite.py",                "it_suite_v6.py"),
+        "master_bridge":     ("master_bridge.py",           "master_bridge.py"),
+        "gst_it_comparison": ("build_gst_it_comparison.py","build_gst_it_comparison.py"),
+        "gstr2b_extractor":  ("gstr2b_extractor.py",       "gstr2b_extractor_v2.py"),
+        "gstr1_tally":       ("gstr1_tally_vs_json.py",    "gstr1_tally_vs_json.py"),
+        "run_all":           ("run_all.py",                 "run_all.py"),
+    }.items():
+        found = _find_engine(canonical)
+        engine_status[key] = {"ok": found is not None, "file": found.name if found else None}
+    engines_ok = sum(1 for v in engine_status.values() if v["ok"])
+    return jsonify(
+        suite_version   = "3.5 ADVANCED PRO",
+        app_version     = "14",
+        gst_suite_ver   = "v35",
+        pipeline_ver    = "run_all v10.18",
+        engines_found   = engines_ok,
+        engines_total   = len(engine_status),
+        engines         = engine_status,
+        python          = f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
+        built           = "2026-05-18",
+    )
+
+@app.route("/api/pipeline-health")
+def api_pipeline_health():
+    """Deep health check: engines + client manager + output dirs."""
+    import sys as _sys
+    issues = []
+    ok_count = 0
+
+    engines_needed = [
+        ("gst_suite_final.py",        "GST Suite (v32+)"),
+        ("it_suite.py",               "IT Suite (v6)"),
+        ("it_recon_engine.py",        "IT Recon Engine"),
+        ("master_bridge.py",          "Master Bridge"),
+        ("build_gst_it_comparison.py","GST-IT Comparison"),
+        ("run_all.py",                "Run All Pipeline"),
+    ]
+    engine_results = []
+    for cname, label in engines_needed:
+        p = _find_engine(cname)
+        if p:
+            ok_count += 1
+            engine_results.append({"label": label, "ok": True, "file": p.name})
+        else:
+            issues.append(f"Missing engine: {label} ({cname})")
+            engine_results.append({"label": label, "ok": False, "file": None})
+
+    # Check client manager
+    client_files = [
+        "Client_Manager_Secure_AY2027-28.xlsx",
+        "Client_Manager_Secure_AY2026-27.xlsx",
+        "Client_Manager_Secure_AY2025-26.xlsx",
+        "clients.xlsx",
+    ]
+    client_found = None
+    for cf in client_files:
+        p = Path(__file__).parent / cf
+        if p.exists():
+            client_found = cf
+            ok_count += 1
+            break
+    if not client_found:
+        issues.append("No client manager file found (clients.xlsx / Client_Manager_Secure_AY*.xlsx)")
+
+    # Check dirs writable
+    for label, d in [("uploads", UPLOAD_DIR), ("outputs", OUTPUT_DIR)]:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            test = d / ".write_test"
+            test.write_text("ok"); test.unlink()
+            ok_count += 1
+        except Exception as e:
+            issues.append(f"{label} dir not writable: {e}")
+
+    overall = "healthy" if not issues else ("degraded" if ok_count > 3 else "critical")
+    return jsonify(
+        status         = overall,
+        issues         = issues,
+        engines        = engine_results,
+        client_manager = client_found,
+        active_jobs    = len(jobs),
+        python         = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}",
+    )
 
 # ── Browser status — always ready (server runs browser) ───────────
 @app.route("/api/browser-status")
@@ -4645,7 +5073,7 @@ def receive_token(job_id):
         # Clear stale tokens first, then add new one
         while not s["captcha_q"].empty():
             try: s["captcha_q"].get_nowait()
-            except: pass
+            except Exception: pass
         s["captcha_q"].put(token)
         # Update job state so UI knows token arrived
         with jobs_lock:
@@ -4683,7 +5111,7 @@ def api_auto_download():
     username    = d.get("username","").strip()
     password    = d.get("password","")
     token       = d.get("token","").strip()
-    fy          = d.get("fy","2025-26")
+    fy          = d.get("fy","2026-27")
     returns     = d.get("returns","all")
 
     if not gstin or len(gstin) != 15:
@@ -4702,6 +5130,7 @@ def api_auto_download():
     with jobs_lock:
         jobs[job_id] = {
             "status": "running", "progress": 0,
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "logs": [{"type":"info","msg":"Starting..."}],
             "files": [], "error": None,
             "captcha_needed": False, "captcha_img": None,
@@ -4801,7 +5230,7 @@ def _auto_download(job_id, gstin, client_name,
         """Block until user submits CAPTCHA text from web UI. Returns the text."""
         while not sess["captcha_q"].empty():
             try: sess["captcha_q"].get_nowait()
-            except: pass
+            except Exception: pass
         log("⏳ CAPTCHA screenshot shown — please type the CAPTCHA in the box above and click Submit")
         try:
             return sess["captcha_q"].get(timeout=600)
@@ -4862,9 +5291,9 @@ def _auto_download(job_id, gstin, client_name,
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
                 time.sleep(0.3)
                 try: el.click()
-                except: driver.execute_script("arguments[0].click();", el)
+                except Exception: driver.execute_script("arguments[0].click();", el)
                 return True
-            except: continue
+            except Exception: continue
         return False
 
     def _human_type(by, val, text):
@@ -4888,12 +5317,12 @@ def _auto_download(job_id, gstin, client_name,
             body = driver.find_element(By.TAG_NAME, "body").text.lower()
             for phrase in ["session expired","you are not logged in","please login again","access denied"]:
                 if phrase in body: return True
-        except: pass
+        except Exception: pass
         return False
 
     def _screenshot_b64():
         try: return base64.b64encode(driver.get_screenshot_as_png()).decode()
-        except: return None
+        except Exception: return None
 
     def _do_login():
         """Navigate to GST portal, fill creds, show CAPTCHA screenshot, wait for user input."""
@@ -4963,7 +5392,7 @@ def _auto_download(job_id, gstin, client_name,
             try:
                 if _human_type(by, val, captcha_text):
                     captcha_filled = True; break
-            except: continue
+            except Exception: continue
 
         if not captcha_filled:
             log("  ⚠ Could not auto-fill CAPTCHA field — please type it manually in the browser", "warn")
@@ -4999,10 +5428,10 @@ def _auto_download(job_id, gstin, client_name,
                 ]:
                     try:
                         if _human_type(by, val, otp): break
-                    except: continue
+                    except Exception: continue
                 _try_click(["//button[contains(text(),'VERIFY')]","//button[contains(text(),'Submit')]","//button[@type='submit']"])
                 time.sleep(8)
-        except: pass
+        except Exception: pass
 
         cur = driver.current_url.lower()
         log(f"  Post-login URL: {driver.current_url}")
@@ -5034,7 +5463,7 @@ def _auto_download(job_id, gstin, client_name,
                     EC.element_to_be_clickable((By.XPATH, "//a[normalize-space(text())='Services']")))
                 ActionChains(driver).move_to_element(svc_el).click(svc_el).perform()
                 log("  Services clicked ✓")
-            except:
+            except Exception:  # FIX v11: bare except → except Exception (Selenium/timeout errors)
                 _try_click([
                     "//a[normalize-space(text())='Services']",
                     "//nav//a[normalize-space()='Services']",
@@ -5047,7 +5476,7 @@ def _auto_download(job_id, gstin, client_name,
                     EC.element_to_be_clickable((By.XPATH, "//a[normalize-space(text())='Returns']")))
                 ActionChains(driver).move_to_element(ret_el).click(ret_el).perform()
                 log("  Returns clicked ✓")
-            except:
+            except Exception:  # FIX v11: bare except → except Exception (Selenium/timeout errors)
                 _try_click([
                     "//a[normalize-space(text())='Returns']",
                     "//*[contains(@class,'dropdown-menu')]//a[normalize-space()='Returns']",
@@ -5068,7 +5497,7 @@ def _auto_download(job_id, gstin, client_name,
                             log("  Returns Dashboard clicked via scan ✓")
                             clicked = True
                             break
-                    except: continue
+                    except Exception: continue
             time.sleep(10)
 
             final = driver.current_url
@@ -5089,7 +5518,7 @@ def _auto_download(job_id, gstin, client_name,
                          for a in driver.find_elements(By.TAG_NAME, "a")
                          if a.is_displayed() and a.text.strip()]
                 log(f"  Links on page: {links[:10]}", "info")
-            except: pass
+            except Exception: pass
 
         raise RuntimeError(f"Could not reach Returns Dashboard. Last URL: {driver.current_url}")
 
@@ -5111,7 +5540,7 @@ def _auto_download(job_id, gstin, client_name,
                             log(f"  FY: {opt.text} ✓")
                             break
                     break
-            except: continue
+            except Exception: continue
         time.sleep(1)
 
         all_sels = driver.find_elements(By.TAG_NAME, "select")
@@ -5128,7 +5557,7 @@ def _auto_download(job_id, gstin, client_name,
                             log(f"  Quarter: {opt.text} ✓")
                             break
                     break
-            except: continue
+            except Exception: continue
         time.sleep(1)
 
         all_sels = driver.find_elements(By.TAG_NAME, "select")
@@ -5146,7 +5575,7 @@ def _auto_download(job_id, gstin, client_name,
                             log(f"  Period: {opt.text} ✓")
                             break
                     break
-            except: continue
+            except Exception: continue
         time.sleep(1)
 
         # SEARCH
@@ -5173,7 +5602,7 @@ def _auto_download(job_id, gstin, client_name,
                 show_captcha(img_b64)   # reuse captcha slot to show screenshot
                 time.sleep(0.5)
                 clear_captcha()
-        except: pass
+        except Exception: pass
         try:
             body_text = driver.find_element(By.TAG_NAME, "body").text
             # Log all visible text to find tile names
@@ -5204,7 +5633,7 @@ def _auto_download(job_id, gstin, client_name,
             gstr_els = driver.find_elements(By.XPATH, "//*[contains(text(),'GSTR') or contains(text(),'gstr')]")
             gstr_texts = list(set(e.text.strip()[:40] for e in gstr_els if e.is_displayed() and e.text.strip()))
             log(f"  GSTR elements on page: {gstr_texts[:20]}", "info")
-        except: pass
+        except Exception: pass
 
         name_variants = {
             "GSTR1":  ["GSTR1","GSTR-1","GSTR 1","gstr1","Gstr1"],
@@ -5238,8 +5667,8 @@ def _auto_download(job_id, gstin, client_name,
                                     driver.execute_script("arguments[0].click();", btn)
                                     log(f"  ✅ {tile_name} DOWNLOAD clicked (strategy 1, level {level})", "ok")
                                     return True
-                        except: break
-            except: continue
+                        except Exception: break
+            except Exception: continue
 
         # Strategy 2: scan all DOWNLOAD buttons, find the one near the tile title
         try:
@@ -5263,7 +5692,7 @@ def _auto_download(job_id, gstin, client_name,
                             driver.execute_script("arguments[0].click();", btn)
                             log(f"  ✅ {tile_name} DOWNLOAD clicked (strategy 2)", "ok")
                             return True
-                except: continue
+                except Exception: continue
         except Exception as e:
             log(f"  Strategy 2 error: {e}", "warn")
 
@@ -5355,7 +5784,7 @@ def _auto_download(job_id, gstin, client_name,
                                 time.sleep(8)
                                 if _rename_latest(save_name, dl_extensions):
                                     return True
-                except: continue
+                except Exception: continue
 
             # Also check dl_dir for any new file that may have arrived
             for f in dl_dir.iterdir():
@@ -5384,7 +5813,7 @@ def _auto_download(job_id, gstin, client_name,
                         _select_and_search(current_month[0])
                         _click_tile_download(current_tile[0])
                         time.sleep(8)
-                except: pass
+                except Exception: pass
 
         log(f"  ⚠ No download link found for {save_name} after {max_wait}s", "warn")
         return False
@@ -5525,7 +5954,7 @@ def _auto_download(job_id, gstin, client_name,
                                 src_f = dl_dir / save_name
                                 sz = src_f.stat().st_size // 1024
                                 try: _shutil.copy2(str(src_f), str(out_dir / save_name))
-                                except: pass
+                                except Exception: pass
                                 downloaded.append({"name": save_name, "size": f"{sz} KB"})
                                 with jobs_lock:
                                     if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
@@ -5604,7 +6033,7 @@ def _auto_download(job_id, gstin, client_name,
                             sz = src_f.stat().st_size // 1024
                             # Copy immediately to out_dir so /api/dl-file works during live polling
                             try: _shutil.copy2(str(src_f), str(out_dir / save_name))
-                            except: pass
+                            except Exception: pass
                             downloaded.append({"name": save_name, "size": f"{sz} KB"})
                             with jobs_lock:
                                 if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
@@ -5693,7 +6122,7 @@ def _auto_download(job_id, gstin, client_name,
                                 sz = src_f.stat().st_size // 1024
                                 # Copy immediately to out_dir so /api/dl-file works during live polling
                                 try: _shutil.copy2(str(src_f), str(out_dir / save_name))
-                                except: pass
+                                except Exception: pass
                                 downloaded.append({"name": save_name, "size": f"{sz} KB"})
                                 with jobs_lock:
                                     if job_id in jobs: jobs[job_id]["files"] = list(downloaded)
@@ -5749,7 +6178,7 @@ def _auto_download(job_id, gstin, client_name,
     finally:
         if driver:
             try: driver.quit()
-            except: pass
+            except Exception: pass
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -5793,7 +6222,7 @@ def api_bulk_start():
     fobj = request.files.get("companies_file")
     if not fobj:
         return jsonify(error="No file uploaded"), 400
-    fy      = request.form.get("fy","2025-26")
+    fy      = request.form.get("fy","2026-27")
     returns = request.form.get("returns","all")
 
     # Parse the Excel
@@ -5843,6 +6272,7 @@ def api_bulk_start():
     with jobs_lock:
         jobs[job_id] = {
             "status":"running","progress":0,
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "logs":[{"type":"info","msg":f"Loaded {len(companies)} companies. Starting…"}],
             "files":[],"error":None,
             "captcha_needed":False,"captcha_img":None,"captcha_company":None,
@@ -6038,7 +6468,7 @@ def _bulk_worker(job_id, companies, fy, returns, sess, out_dir):
                     # Clear token queue and wait
                     while not sess["token_q"].empty():
                         try: sess["token_q"].get_nowait()
-                        except: pass
+                        except Exception: pass
                     try:
                         new_token = sess["token_q"].get(timeout=600)
                         S.headers["Authorization"] = f"Bearer {new_token}"
@@ -6128,7 +6558,7 @@ def run_it_reconciliation(job_id):
                 dest = job_dir / f"{dest_prefix}{ext}"
                 if not dest.exists():
                     try:    Path(fpath).rename(dest)
-                    except: shutil.copy2(fpath, str(dest))
+                    except Exception: shutil.copy2(fpath, str(dest))
                 log(f"  ✓ {dest_prefix}: {dest.name}")
                 pdf_found[zone] = dest.name
 
@@ -6212,7 +6642,7 @@ def api_it_upload():
     company_name = request.form.get("company_name","").strip()
     pan          = request.form.get("pan","").strip().upper()
     gstin        = request.form.get("gstin","").strip().upper()
-    fy           = request.form.get("fy","2025-26").strip() or "2025-26"
+    fy           = request.form.get("fy","2026-27").strip() or "2025-26"
     itr_form     = request.form.get("itr_form","ITR-3").strip()
     entity_type  = request.form.get("entity_type","company").strip()
 
@@ -6241,6 +6671,7 @@ def api_it_upload():
     with jobs_lock:
         jobs[job_id] = {
             "status":       "queued",
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "progress":     0,
             "logs":         [],
             "files":        [],
@@ -6269,12 +6700,14 @@ def api_it_job(job_id):
             return jsonify(error="Job not found"), 404
         new_logs = job["logs"][:]
         job["logs"] = []
+        elapsed = int(time.time() - job.get("created_at", time.time()))
         return jsonify(
             status   = job["status"],
             progress = job["progress"],
             logs     = new_logs,
             files    = job["files"],
             error    = job["error"],
+            elapsed_seconds = elapsed,   # BUG FIX: was missing from IT tab responses
         )
 
 
@@ -6304,7 +6737,7 @@ def api_it_auto_download():
     company_name = d.get("company_name","").strip()
     username     = d.get("username","").strip()
     password     = d.get("password","")
-    fy           = d.get("fy","2025-26")
+    fy           = d.get("fy","2026-27")
 
     if not pan or len(pan) != 10:
         return jsonify(error="PAN must be 10 characters"), 400
@@ -6320,6 +6753,7 @@ def api_it_auto_download():
     with jobs_lock:
         jobs[job_id] = {
             "status": "running", "progress": 0,
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "logs": [{"type":"info","msg":"Starting IT Portal auto-download..."}],
             "files": [], "error": None,
             "captcha_needed": False, "captcha_img": None,
@@ -6397,7 +6831,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
     def wait_user_input(prompt_msg):
         while not sess["captcha_q"].empty():
             try: sess["captcha_q"].get_nowait()
-            except: pass
+            except Exception: pass
         log(f"⏳ {prompt_msg}")
         try:
             return sess["captcha_q"].get(timeout=600)
@@ -6414,11 +6848,11 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
                         "ts": datetime.now().strftime("%H:%M:%S"),
                     })
             log(f"  📸 Screenshot saved: {label}", "warn")
-        except: pass
+        except Exception: pass
 
     def _sshot_b64():
         try: return base64.b64encode(driver.get_screenshot_as_png()).decode()
-        except: return None
+        except Exception: return None
 
     out_dir = Path(jobs[job_id]["out_dir"])
     dl_dir  = out_dir / "it_downloads"
@@ -6455,9 +6889,9 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
                 time.sleep(0.3)
                 try: el.click()
-                except: driver.execute_script("arguments[0].click();", el)
+                except Exception: driver.execute_script("arguments[0].click();", el)
                 return True
-            except: continue
+            except Exception: continue
         return False
 
     # ── Helper: human_type ────────────────────────────────────────────────
@@ -6477,7 +6911,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
                     "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
                     el, text)
             return True
-        except: return False
+        except Exception: return False
 
     # ── Helper: wait_for_new_file ─────────────────────────────────────────
     def _wait_new_file(extensions, before_set, timeout=120):
@@ -6521,7 +6955,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
         try:
             from webdriver_manager.chrome import ChromeDriverManager
             driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=opts)
-        except:
+        except Exception:  # FIX v11: bare except → except Exception (webdriver-manager / version mismatch)
             driver = webdriver.Chrome(options=opts)
 
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
@@ -6663,7 +7097,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
                 ])
                 time.sleep(SHORT_WAIT)
                 log("  ✅ Device registered — future logins will skip OTP", "ok")
-        except: pass
+        except Exception: pass
 
         # ── Verify login success ───────────────────────────────────────────
         cur = driver.current_url.lower()
@@ -6884,9 +7318,9 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
                             s.select_by_visible_text(opt.text)
                             log(f"  Selected AY: {opt.text} ✓")
                             break
-                except: continue
+                except Exception: continue
             time.sleep(SHORT_WAIT)
-        except: pass
+        except Exception: pass
 
         # ── Click View Tax Credit (Form 26AS) ──────────────────────────────
         _click([
@@ -6964,7 +7398,7 @@ def _it_auto_download(job_id, pan, company_name, username, password, fy, sess):
     finally:
         if driver:
             try: driver.quit()
-            except: pass
+            except Exception: pass
 
 
 
@@ -7011,7 +7445,7 @@ def api_it_bulk_start():
     fobj = request.files.get("clients_file")
     if not fobj:
         return jsonify(error="No file uploaded"), 400
-    fy   = request.form.get("fy", "2025-26")
+    fy   = request.form.get("fy", "2026-27")
     mode = request.form.get("mode", "all")
 
     import io, openpyxl
@@ -7068,6 +7502,7 @@ def api_it_bulk_start():
     with jobs_lock:
         jobs[job_id] = {
             "status":"running","progress":0,
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "logs":[{"type":"info","msg":f"Loaded {len(clients)} clients. Starting IT downloads…"}],
             "files":[],"error":None,
             "captcha_needed":False,"captcha_img":None,"captcha_company":None,
@@ -7153,7 +7588,7 @@ def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
     def wait_otp(prompt):
         while not sess["captcha_q"].empty():
             try: sess["captcha_q"].get_nowait()
-            except: pass
+            except Exception: pass
         log(f"⏳ {prompt}")
         try:
             return sess["captcha_q"].get(timeout=900)
@@ -7231,12 +7666,12 @@ def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
                         candidate = sub_out / f["name"]
                         if candidate.exists():
                             try: _shutil.copy2(str(candidate), str(fp))
-                            except: pass
+                            except Exception: pass
                     if fp.exists():
                         dest_name = f"{pan}_{f['name']}" if not f["name"].startswith(pan) else f["name"]
                         dest = out_path / dest_name
                         try: _shutil.copy2(str(fp), str(dest))
-                        except: pass
+                        except Exception: pass
                         sz = dest.stat().st_size // 1024 if dest.exists() else 0
                         all_files.append({"name": dest_name, "size": f"{sz} KB"})
                         log(f"  ✓ {dest_name} ({sz} KB)", "ok")
@@ -7304,7 +7739,7 @@ def _it_bulk_worker(job_id, clients, fy, mode, sess, out_dir):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# CLIENT MANAGER — Load from Client_Manager_Secure_AY2025-26.xlsx
+# CLIENT MANAGER — Load from Client_Manager_Secure_AY2026-27.xlsx (or AY2025-26)
 # ═══════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════
@@ -7378,7 +7813,7 @@ def api_gstin_lookup():
             except urllib.error.HTTPError as e:
                 body = ""
                 try: body = e.read().decode(errors="replace")[:200]
-                except: pass
+                except Exception: pass
                 if e.code == 400:
                     return jsonify(error="Invalid GSTIN or not registered on GST portal", gstin=gstin), 404
                 if e.code == 403:
@@ -7519,7 +7954,7 @@ def api_gstin_lookup_bulk():
 @rate_limit(limit=10, window=60)
 def api_client_manager_load():
     """
-    Upload Client_Manager_Secure_AY2025-26.xlsx (or clients.xlsx).
+    Upload Client_Manager_Secure_AY2026-27.xlsx (or AY2025-26 / clients.xlsx).
     Returns JSON list of clients with name, pan, gstin, gst_pass, it_pass, active fields.
     """
     fobj = request.files.get("file")
@@ -7588,7 +8023,7 @@ def _run_master_bridge(job_id):
 
     try:
         job     = jobs[job_id]
-        fy      = job.get("fy", "2025-26")
+        fy      = job.get("fy", "2026-27")
         gst_dir = job.get("gst_dir", "")
         it_dir  = job.get("it_dir", "")
         out_dir = Path(job["out_dir"])
@@ -7628,9 +8063,9 @@ def _run_master_bridge(job_id):
             elif hasattr(mb, "main"):
                 import sys as _sys
                 _orig_argv = _sys.argv
-                _sys.argv  = ["master_bridge.py", "--fy", fy]
-                if gst_dir: _sys.argv += ["--gst-dir", gst_dir]
-                if it_dir:  _sys.argv += ["--it-dir",  it_dir]
+                _sys.argv  = ["master_bridge.py", "--fy", fy, "--out", str(out_dir)]
+                if gst_dir: _sys.argv += ["--gst", gst_dir]   # BUG FIX: was --gst-dir (not a valid arg)
+                if it_dir:  _sys.argv += ["--it",  it_dir]    # BUG FIX: was --it-dir  (not a valid arg)
                 mb.main()
                 _sys.argv = _orig_argv
             else:
@@ -7682,7 +8117,7 @@ def api_master_bridge_start():
     Accepts either JSON {fy, gst_dir, it_dir} or multipart form with file uploads.
     """
     if request.content_type and "multipart" in request.content_type:
-        fy           = request.form.get("fy", "2025-26")
+        fy           = request.form.get("fy", "2026-27")
         company_name = request.form.get("company_name", "")
         gstin        = request.form.get("gstin", "")
         pan          = request.form.get("pan", "")
@@ -7705,7 +8140,7 @@ def api_master_bridge_start():
         it_dir  = str(job_dir)
     else:
         data    = request.get_json(silent=True) or {}
-        fy      = data.get("fy", "2025-26")
+        fy      = data.get("fy", "2026-27")
         gst_dir = data.get("gst_dir", "")
         it_dir  = data.get("it_dir",  "")
         company_name = data.get("company_name", "")
@@ -7718,6 +8153,7 @@ def api_master_bridge_start():
     with jobs_lock:
         jobs[job_id] = {
             "status": "running", "progress": 0, "logs": [],
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "files": [], "error": None,
             "fy": fy, "gst_dir": gst_dir, "it_dir": it_dir,
             "company_name": company_name, "gstin": gstin, "pan": pan,
@@ -7766,7 +8202,7 @@ def _run_gst_it_comparison(job_id):
 
     try:
         job     = jobs[job_id]
-        fy      = job.get("fy", "2025-26")
+        fy      = job.get("fy", "2026-27")
         gst_dir = job.get("gst_dir", "")
         out_dir = Path(job["out_dir"])
 
@@ -7794,6 +8230,19 @@ def _run_gst_it_comparison(job_id):
                 f"Jul-{fy_start}", f"Aug-{fy_start}", f"Sep-{fy_start}",
                 f"Oct-{fy_start}", f"Nov-{fy_start}", f"Dec-{fy_start}",
                 f"Jan-{fy_end}",   f"Feb-{fy_end}",   f"Mar-{fy_end}",
+            ]
+        # FIX v9: also patch MONTHS_SHORT — was missing, so comparison sheets using
+        # MONTHS_SHORT still showed hardcoded 2025-26 labels for any other FY.
+        # FIX v11: use cmp._build_months() if available (avoids duplicate inline list)
+        if hasattr(cmp, "_build_months"):
+            _fy_label = f"{fy_start}-{str(fy_end)[2:]}"
+            cmp.MONTHS_FY, cmp.MONTHS_SHORT = cmp._build_months(_fy_label)
+        elif hasattr(cmp, "MONTHS_SHORT"):
+            _S, _E = str(fy_start), str(fy_end)
+            cmp.MONTHS_SHORT = [
+                ("Apr",_S),("May",_S),("Jun",_S),("Jul",_S),
+                ("Aug",_S),("Sep",_S),("Oct",_S),("Nov",_S),
+                ("Dec",_S),("Jan",_E),("Feb",_E),("Mar",_E),
             ]
 
         try:
@@ -7837,7 +8286,7 @@ def _run_gst_it_comparison(job_id):
 @rate_limit(limit=5, window=60)
 def api_gst_it_comparison_start():
     data    = request.get_json(silent=True) or {}
-    fy      = data.get("fy", "2025-26")
+    fy      = data.get("fy", "2026-27")
     gst_dir = data.get("gst_dir", "")
     job_id  = str(uuid.uuid4())
     out_dir = OUTPUT_DIR / job_id
@@ -7845,6 +8294,7 @@ def api_gst_it_comparison_start():
     with jobs_lock:
         jobs[job_id] = {
             "status": "running", "progress": 0, "logs": [],
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "files": [], "error": None,
             "fy": fy, "gst_dir": gst_dir, "out_dir": str(out_dir),
         }
@@ -7881,7 +8331,7 @@ def api_gst_it_comparison_upload():
     """Upload-based entry point for the GST-IT comparison tab.
     Accepts multipart files: files_gst, files_it, files_ais, files_tis.
     """
-    fy           = request.form.get("fy", "2025-26")
+    fy           = request.form.get("fy", "2026-27")
     company_name = request.form.get("company_name", "")
     gstin        = request.form.get("gstin", "")
     pan          = request.form.get("pan", "")
@@ -7901,6 +8351,7 @@ def api_gst_it_comparison_upload():
     with jobs_lock:
         jobs[job_id] = {
             "status": "running", "progress": 0, "logs": [],
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "files": [], "error": None,
             "fy": fy, "gst_dir": gst_dir,
             "company_name": company_name, "gstin": gstin, "pan": pan,
@@ -7926,7 +8377,7 @@ def _run_gstr2b_extractor(job_id):
 
     try:
         job        = jobs[job_id]
-        fy         = job.get("fy", "2025-26")
+        fy         = job.get("fy", "2026-27")
         input_dir  = job.get("input_dir", "")
         out_dir    = Path(job["out_dir"])
         job_dir    = Path(job.get("job_dir", str(out_dir)))
@@ -8003,7 +8454,7 @@ def api_gstr2b_extract_start():
     Upload one or more GSTR2B_*.xlsx monthly files.
     Query params: fy (default 2025-26).
     """
-    fy      = request.form.get("fy", "2025-26")
+    fy      = request.form.get("fy", "2026-27")
     files   = request.files.getlist("files")
     if not files:
         return jsonify(error="No files uploaded"), 400
@@ -8023,6 +8474,7 @@ def api_gstr2b_extract_start():
     with jobs_lock:
         jobs[job_id] = {
             "status": "running", "progress": 0, "logs": [],
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "files": [], "error": None,
             "fy": fy, "job_dir": str(job_dir),
             "out_dir": str(out_dir), "uploaded_files": saved,
@@ -8069,7 +8521,7 @@ def _run_gstr1_tally(job_id):
 
     try:
         job        = jobs[job_id]
-        fy         = job.get("fy", "2025-26")
+        fy         = job.get("fy", "2026-27")
         out_dir    = Path(job["out_dir"])
         job_dir    = Path(job.get("job_dir", str(out_dir)))
 
@@ -8143,7 +8595,7 @@ def api_gstr1_tally_start():
     Upload Tally Excel + GSTR-1 JSON zips.
     Query params: fy (default 2025-26).
     """
-    fy    = request.form.get("fy", "2025-26")
+    fy    = request.form.get("fy", "2026-27")
     files = request.files.getlist("files")
     if not files:
         return jsonify(error="No files uploaded"), 400
@@ -8163,6 +8615,7 @@ def api_gstr1_tally_start():
     with jobs_lock:
         jobs[job_id] = {
             "status": "running", "progress": 0, "logs": [],
+            "created_at": time.time(),  # stamped at job creation for elapsed timer + TTL eviction
             "files": [], "error": None,
             "fy": fy, "job_dir": str(job_dir),
             "out_dir": str(out_dir), "uploaded_files": saved,
@@ -8231,7 +8684,7 @@ def api_engines():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n  ════════════════════════════════════════════════════════════════════")
-    print(f"   🚀 GST + IT Automation Portal v7 — Full Suite Integration")
+    print(f"   🚀 RPR GST + IT Automation Suite v3.5 ADVANCED PRO  (app v14)")
     print(f"  ════════════════════════════════════════════════════════════════════")
     print(f"   📁 Upload dir    : {UPLOAD_DIR}")
     print(f"   📂 Output dir    : {OUTPUT_DIR}")
@@ -8264,6 +8717,8 @@ if __name__ == "__main__":
     print(f"      POST /api/gstr2b-extract/start      ← GSTR-2B bulk extractor")
     print(f"      POST /api/gstr1-tally/start         ← Tally vs JSON comparison")
     print(f"      GET  /api/engines                   ← engine health check")
+    print(f"      GET  /api/version                   ← suite version + engine map")
+    print(f"      GET  /api/pipeline-health           ← deep health (engines+dirs+client)")
     print(f"\n   🌐 Open: http://localhost:{port}")
     print(f"  ════════════════════════════════════════════════════════════════════\n")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

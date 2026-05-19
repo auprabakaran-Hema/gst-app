@@ -1,9 +1,10 @@
 """
 ================================================================================
-  INCOME TAX COMPLETE SUITE v6 — AY 2026-27  (Tab-Overlap Parallel Mode)
+  INCOME TAX COMPLETE SUITE v6 — AY 2027-28  (Tab-Overlap Parallel Mode)  # FIX v12: updated to AY 2027-28
+  Suite v3.5 ADVANCED PRO — FIX v11: all 27 bare except: → except Exception:
   ==========================================================
   Automates login to incometax.gov.in and downloads:
-    - Form 26AS  (TRACES 2.0 — FY 2025-26 / AY 2026-27)
+    - Form 26AS  (TRACES 2.0 — FY 2026-27 / AY 2027-28)  # FIX v12
     - AIS        (Annual Information Statement — PDF)
     - TIS        (Taxpayer Information Summary — PDF)
 
@@ -68,7 +69,7 @@ except ImportError:
 try:
     from webdriver_manager.chrome import ChromeDriverManager
     CHROME_MGR = True
-except:
+except Exception:  # FIX v11: bare except → except Exception
     CHROME_MGR = False
 
 try:
@@ -99,7 +100,7 @@ PAGE_WAIT      = 4    # was 10 — smart waits replace fixed sleeps
 SHORT_WAIT     = 1.5  # was 4
 ACTION_WAIT    = 0.8  # was 1.5
 CLIENT_GAP     = 2
-FY_LABEL       = "2025-26"   # ← Change ONLY this line each new financial year
+FY_LABEL       = "2026-27"   # ← Change ONLY this line each new financial year
 # AY is always FY start_year+1 — computed automatically — never gets out of sync
 _fy_yr         = int(FY_LABEL.split("-")[0])
 AY_LABEL       = f"{_fy_yr + 1}-{str(_fy_yr + 2)[2:]}"   # e.g. "2026-27"
@@ -271,10 +272,10 @@ def try_click(driver, xpaths, timeout=8, log=None):
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
             time.sleep(0.3)
             try:   el.click()
-            except: driver.execute_script("arguments[0].click();", el)
+            except Exception: driver.execute_script("arguments[0].click();", el)
             if log: log.info(f"    Clicked: {xp[:70]}")
             return True
-        except: continue
+        except Exception: continue
     return False
 
 
@@ -856,11 +857,11 @@ def it_login(driver, pan, password, log):
                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", cb)
                     time.sleep(0.3)
                     try:   cb.click()
-                    except: driver.execute_script("arguments[0].click();", cb)
+                    except Exception: driver.execute_script("arguments[0].click();", cb)
                 log.info(f"    Checkbox ticked ✓  ({xp[:50]})")
                 checkbox_clicked = True
                 break
-            except: continue
+            except Exception: continue
 
         if not checkbox_clicked:
             try:
@@ -875,7 +876,7 @@ def it_login(driver, pan, password, log):
                 """)
                 log.info("    Checkbox ticked via JS bulk-click ✓")
                 checkbox_clicked = True
-            except: pass
+            except Exception: pass
 
         if not checkbox_clicked:
             log.warning("    Checkbox not found — portal may still accept login")
@@ -946,7 +947,7 @@ def it_login(driver, pan, password, log):
                 return False
             elif "login" in cur:
                 log.warning(f"    Still on login page — attempt {attempt} failed")
-        except: pass
+        except Exception: pass
 
     log.error(f"    IT Login FAILED after {MAX_ATTEMPTS} attempts — {pan}")
     return False
@@ -1048,7 +1049,7 @@ def _handle_remember_device(driver, pan, password, log):
                         el = WebDriverWait(driver, 6).until(
                             EC.element_to_be_clickable((By.XPATH, xp)))
                         el.click(); break
-                    except: continue
+                    except Exception: continue
                 time.sleep(SHORT_WAIT + 2)
             # Fill password
             _type_mat_input(driver, By.CSS_SELECTOR, "input[type='password']", password, log)
@@ -1058,7 +1059,7 @@ def _handle_remember_device(driver, pan, password, log):
                 for cb in driver.find_elements(By.CSS_SELECTOR, "input[type='checkbox']"):
                     if not cb.is_selected():
                         driver.execute_script("arguments[0].click();", cb)
-            except: pass
+            except Exception: pass
             time.sleep(0.5)
             # Submit
             for xp in ["//button[@type='submit']",
@@ -1068,7 +1069,7 @@ def _handle_remember_device(driver, pan, password, log):
                     el = WebDriverWait(driver, 6).until(
                         EC.element_to_be_clickable((By.XPATH, xp)))
                     el.click(); break
-                except: continue
+                except Exception: continue
             time.sleep(PAGE_WAIT)  # trimmed +3
             log.info(f"    After re-login submit: {driver.current_url}")
             # Wait up to 30s for dashboard
@@ -1181,7 +1182,7 @@ def _efile_hover_submenu(driver, log):
                 itr_el = el
                 log.info(f"    Found 'Income Tax Returns' via: {xp[:60]}")
                 break
-        except:
+        except Exception:  # FIX v11: bare except → except Exception
             continue
 
     if itr_el:
@@ -1283,7 +1284,7 @@ def _navigate_to_26as(driver, log):
                 return items;
             """)
             log.warning(f"    Visible clickable items: {vis[:30]}")
-        except: pass
+        except Exception: pass
         return False
 
     log.info("    'View Form 26AS' clicked ✓ — waiting for TRACES...")
@@ -1333,7 +1334,7 @@ def _download_26as_from_traces(driver, client_dir, before, log):
         time.sleep(PAGE_WAIT)  # trimmed +2
         log.info(f"    After 'View Tax Credit': {driver.current_url}")
 
-    log.info("    Stage D: selecting Financial Year 2026-27...")
+    log.info(f"    Stage D: selecting Financial Year {FY_LABEL} ({AY_LABEL}) ...")  # FIX v12
     fy_selected = False
     try:
         from selenium.webdriver.support.ui import Select
@@ -1345,14 +1346,14 @@ def _download_26as_from_traces(driver, client_dir, before, log):
                 opts_text = [o.text.strip() for o in s.options]
                 log.info(f"    Dropdown options: {opts_text}")
                 for opt in s.options:
-                    if FY_LABEL in opt.text or "2026-27" in opt.text or "2026" in opt.text:
+                    if FY_LABEL in opt.text or AY_LABEL in opt.text or str(int(FY_LABEL.split("-")[0])+1) in opt.text:  # FIX v12
                         s.select_by_visible_text(opt.text)
                         log.info(f"    FY selected: {opt.text} ✓")
                         fy_selected = True
                         break
                 if fy_selected:
                     break
-            except:
+            except Exception:  # FIX v11: bare except → except Exception
                 continue
     except Exception as e:
         log.warning(f"    FY dropdown error: {e}")
@@ -1374,7 +1375,7 @@ def _download_26as_from_traces(driver, client_dir, before, log):
                             log.info(f"    View As = {opt.text} ✓")
                             break
                     break
-            except:
+            except Exception:  # FIX v11: bare except → except Exception
                 continue
     except Exception as e:
         log.warning(f"    View As dropdown error: {e}")
@@ -1439,10 +1440,10 @@ def _tick_all_checkboxes(driver, log):
                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", cb)
                     time.sleep(0.2)
                     try:   cb.click()
-                    except: driver.execute_script("arguments[0].click();", cb)
+                    except Exception: driver.execute_script("arguments[0].click();", cb)
                     ticked += 1
-            except: continue
-    except: pass
+            except Exception: continue
+    except Exception: pass
     if ticked == 0:
         try:
             driver.execute_script("""
@@ -1451,7 +1452,7 @@ def _tick_all_checkboxes(driver, log):
                         cb.dispatchEvent(new Event('change',{bubbles:true})); }
                 });
             """)
-        except: pass
+        except Exception: pass
     log.info(f"    Ticked {ticked} checkbox(es) ✓")
 
 
@@ -1667,7 +1668,7 @@ def _navigate_to_ais(driver, log):
                 return items;
             """)
             log.warning(f"    Visible items: {vis[:30]}")
-        except: pass
+        except Exception: pass
         return False
 
     time.sleep(2)
@@ -1744,9 +1745,9 @@ def _navigate_to_ais(driver, log):
                 return items.slice(0,20);
             """)
             log.warning(f"    Visible buttons/links on AIS page: {vis}")
-        except: pass
+        except Exception: pass
 
-    log.info("    Selecting FY 2025-26 tab on AIS portal...")
+    log.info(f"    Selecting FY {FY_LABEL} tab on AIS portal...")  # FIX v12
     _select_ais_fy_tab(driver, log)
     time.sleep(SHORT_WAIT + 1)
 
@@ -1755,8 +1756,16 @@ def _navigate_to_ais(driver, log):
 
 
 def _select_ais_fy_tab(driver, log):
-    FY_LABELS = ["2025-26", "FY 2025-26", "FY2025-26", "2025 - 26",
-                 "AY 2026-27", "AY2026-27", "2026-27"]
+    # FIX v12: build FY/AY label list dynamically from global FY_LABEL
+    _fy  = FY_LABEL                                          # e.g. "2026-27"
+    _ay  = AY_LABEL                                          # e.g. "2027-28"
+    _fy_prev = f"{int(_fy.split('-')[0])-1}-{str(int(_fy.split('-')[0]))[2:]}"  # prev FY fallback
+    _ay_prev = f"{int(_fy.split('-')[0])}-{str(int(_fy.split('-')[0])+1)[2:]}"  # prev AY fallback
+    FY_LABELS = [
+        _fy,  f"FY {_fy}",  f"FY{_fy}",  f"{_fy.replace('-',' - ')}",
+        f"AY {_ay}",  f"AY{_ay}",  _ay,
+        _fy_prev,  f"FY {_fy_prev}",  f"AY {_ay_prev}",  # fallback to prev FY
+    ]
     try:
         for label in FY_LABELS:
             clicked = try_click(driver, [
@@ -1773,22 +1782,24 @@ def _select_ais_fy_tab(driver, log):
                 time.sleep(SHORT_WAIT)
                 return
 
+        _js_label_arr = [str(x) for x in FY_LABELS[:6]]  # FIX v12: dynamic FY/AY labels
         result = driver.execute_script("""
-            var labels = ['2025-26','FY 2025-26','AY 2026-27','2026-27'];
+            var labels = arguments[0];
             var roles  = ['tab','button','a','li'];
-            for (var label of labels) {
+            for (var i=0; i<labels.length; i++) {
+                var label = labels[i];
                 var all = document.querySelectorAll('[role="tab"],button,a,li');
-                for (var el of all) {
+                for (var j=0; j<all.length; j++) {
+                    var el = all[j];
                     var t = (el.innerText || el.textContent || '').trim();
-                    if (t.includes(label) && el.offsetParent !== null) {
-                        el.scrollIntoView({block:'center'});
-                        el.click();
+                    if (t.indexOf(label) >= 0 && el.offsetParent !== null) {
+                        el.scrollIntoView(); el.click();
                         return 'clicked: ' + t;
                     }
                 }
             }
             return 'not found';
-        """)
+        """, _js_label_arr)
         if result and "not found" not in str(result):
             log.info(f"    AIS FY tab selected via JS ✓ ({result})")
             time.sleep(SHORT_WAIT)
@@ -2055,7 +2066,7 @@ def _go_to_dashboard(driver, log):
                 "//img[contains(@class,'logo')]/..",
             ], timeout=5, log=log)
             time.sleep(SHORT_WAIT)
-        except: pass
+        except Exception: pass
 
 
 # ==========================================================
@@ -2064,7 +2075,7 @@ def _go_to_dashboard(driver, log):
 def load_it_clients(script_dir):
     clients = []
 
-    for fname in ["Client_Manager_Secure_AY2025-26.xlsx","clients_manager.xlsx","clients.xlsx"]:
+    for fname in ["Client_Manager_Secure_AY2027-28.xlsx","Client_Manager_Secure_AY2026-27.xlsx","Client_Manager_Secure_AY2025-26.xlsx","clients_manager.xlsx","clients.xlsx"]:  # FIX v13: prioritize newer AY files
         p = os.path.join(script_dir, fname)
         if not os.path.exists(p): continue
         try:
@@ -2167,7 +2178,10 @@ def load_it_clients(script_dir):
     print("  The IT_Username defaults to PAN (no separate column needed).")
     print("  IT_Password is separate from GST password — they may differ.")
     print("  " + "="*60)
-    input("  Press Enter to close...")
+    try:
+        input("  Press Enter to close...")
+    except EOFError:
+        pass
     sys.exit(1)
 
 
@@ -2356,7 +2370,7 @@ def process_it_client(client, base_dir, log):
                             driver.switch_to.window(traces_handle)
                         elif it_portal_handle in live:
                             driver.switch_to.window(it_portal_handle)
-                except: pass
+                except Exception: pass
             finally:
                 _bg_done.set()
 
@@ -2417,7 +2431,7 @@ def process_it_client(client, base_dir, log):
                             log.warning(f"    [BG2] Unlock error {pdf_file.name}: {ue}")
                             if tmp.exists():
                                 try: tmp.unlink()
-                                except: pass
+                                except Exception: pass
                 except Exception as we:
                     log.warning(f"    [BG2] Scan error: {we}")
             log.info("    [BG2] Unlock-watcher stopped.")
@@ -2474,7 +2488,7 @@ def process_it_client(client, base_dir, log):
                         driver.close()
                     driver.switch_to.window(_ais_handle[0])
                     log.info("    TRACES tab closed ✓")
-                except: pass
+                except Exception: pass
             else:
                 log.info("    AIS pre-load not available — navigating normally...")
                 _go_to_dashboard(driver, log)
@@ -2501,7 +2515,7 @@ def process_it_client(client, base_dir, log):
     finally:
         if driver:
             try: driver.quit()
-            except: pass
+            except Exception: pass
         # Stop unlock-watcher
         _stop_watcher.set()
         bg2.join(timeout=10)
@@ -2755,7 +2769,7 @@ def zip_it_outputs(base_dir, log):
     try:
         import subprocess
         subprocess.Popen(["explorer", "/select,", str(zip_path)])
-    except: pass
+    except Exception: pass
     return str(zip_path)
 
 
@@ -2966,7 +2980,10 @@ def main():
         print(f"  ZIP     : {os.path.basename(zip_path)}  ← all files here")
     print(f"  Folder  : {base_dir}")
     print("="*60)
-    input("\n  Press Enter to close...")
+    try:
+        input("\n  Press Enter to close...")
+    except EOFError:
+        pass
 
 
 def _run_offline_it_recon(script_dir):
@@ -2997,7 +3014,7 @@ def _run_offline_it_recon(script_dir):
         print(f"    [{i}] {rf.name}")
     idx = input("\n  Select folder (ENTER = most recent): ").strip()
     try:    sel = run_folders[int(idx)-1] if idx else run_folders[0]
-    except: sel = run_folders[0]
+    except Exception: sel = run_folders[0]
 
     client_dirs = [d for d in sel.iterdir()
                    if d.is_dir() and any(d.glob("*.pdf"))]
@@ -3043,7 +3060,10 @@ def _run_offline_it_recon(script_dir):
 
     print(f"\n  DONE — {generated}/{len(client_dirs)} IT Recon reports generated")
     print(f"  Folder: {sel}")
-    input("\n  Press Enter to close...")
+    try:
+        input("\n  Press Enter to close...")
+    except EOFError:
+        pass
 
 
 if __name__ == "__main__":

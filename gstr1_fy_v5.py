@@ -24,10 +24,14 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-# ── GSTIN Name Cache (auto-fetches buyer names from GST portal) ───────────────
+# ── GSTIN Name Cache ──────────────────────────────────────────────────────────
+# auto_fetch=False here keeps get_bulk() fast during sheet-writing (cache-only).
+# Missing names are fetched AUTOMATICALLY by _auto_fetch_names() at the start of
+# every extract_fy() run — no manual button click required.
 try:
     from gstin_name_cache import GSTINNameCache as _GSTINNameCache
-    _NAME_CACHE    = _GSTINNameCache(log_fn=lambda m: print(m))
+    _NAME_CACHE    = _GSTINNameCache(log_fn=lambda m: print(m),
+                                     auto_fetch=False, prefer_portal=False)
     _CACHE_ENABLED = True
 except Exception:
     _NAME_CACHE    = None
@@ -779,7 +783,7 @@ def build_master_sheet(wb, master_rows, trader_name, gstin, fy_label):
             # Force numeric where expected
             if fmt == NUM and not isinstance(v, (int, float)):
                 try: v = float(v)
-                except: v = 0.0
+                except (ValueError, TypeError): v = 0.0
             ha = "right" if fmt == NUM else "left"
             wcell(ws, r, ci, v, bg=bg, ha=ha, fmt=fmt)
         ws.row_dimensions[r].height = 15
@@ -991,6 +995,72 @@ def read_zip(zp):
 # ════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ════════════════════════════════════════════════════════════════════════
+def _auto_fetch_names(zip_paths):
+    """Scan all GSTR-1 ZIPs, collect every buyer GSTIN, and silently fetch
+    any names that are missing from the local cache before report generation
+    begins.  This means no manual 'Fetch Names' button click is ever needed.
+    """
+    if not _CACHE_ENABLED or _NAME_CACHE is None:
+        return
+
+    all_gstins = set()
+    for zp in zip_paths:
+        try:
+            d, _ = read_zip(zp)
+            if not d:
+                continue
+            # B2B buyers
+            for ent in d.get("b2b", []):
+                g = ent.get("ctin", "").strip().upper()
+                if g:
+                    all_gstins.add(g)
+            # CDNR buyers
+            for ent in d.get("cdnr", []):
+                g = ent.get("ctin", "").strip().upper()
+                if g:
+                    all_gstins.add(g)
+            # AMD B2B buyers
+            for ent in d.get("b2ba", []):
+                g = ent.get("ctin", "").strip().upper()
+                if g:
+                    all_gstins.add(g)
+        except Exception:
+            pass
+
+    if not all_gstins:
+        return
+
+    # Find which GSTINs are genuinely missing (not yet in cache from any source)
+    missing = []
+    for g in sorted(all_gstins):
+        try:
+            rec = _NAME_CACHE._cache.get(g.upper())
+        except Exception:
+            rec = None
+        if not rec:
+            missing.append(g)
+
+    if not missing:
+        print(f"  ✓ All {len(all_gstins)} GSTIN name(s) already in cache — skipping portal fetch.")
+        return
+
+    print(f"  📡 Auto-fetching {len(missing)} missing GSTIN name(s) from GST portal "
+          f"({len(all_gstins) - len(missing)} already cached)…")
+
+    # Temporarily enable auto_fetch so get_bulk hits the portal for missing ones
+    _prev = _NAME_CACHE._auto_fetch
+    _NAME_CACHE._auto_fetch = True
+    try:
+        _NAME_CACHE.get_bulk(missing, show_progress=True)
+    except Exception as e:
+        print(f"  ⚠ Portal fetch encountered an error: {e}")
+    finally:
+        _NAME_CACHE._auto_fetch = _prev
+
+    _NAME_CACHE.save()
+    print(f"  ✓ GSTIN name cache updated.")
+
+
 def extract_fy(zip_paths, trader_name="", out_path=None):
     # Sort by FY month order
     def get_fp(zp):
@@ -999,6 +1069,10 @@ def extract_fy(zip_paths, trader_name="", out_path=None):
 
     if not zip_paths:
         print("  ✗ No ZIP files found."); return
+
+    # ── AUTO: scan all ZIPs and fetch any missing GSTIN names before writing ──
+    print(f"\n  🔍 Scanning ZIPs for buyer GSTINs…")
+    _auto_fetch_names(zip_paths)
 
     print(f"\n  Processing {len(zip_paths)} month(s)...")
 

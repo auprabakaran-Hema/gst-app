@@ -1,6 +1,18 @@
 """
-Tally GST Extractor  v3.14
+Tally GST Extractor  v3.15
 ==========================================================================
+FIX 9 (v3.15) — _focus_tally_window crash fix (PyGetWindowException error 0).
+  pygetwindow on Python 3.13 + Windows 11 raises PyGetWindowException
+  ("Error code 0 — The operation completed successfully") from w.activate().
+  The v3.14 code caught the first raise but then called w.activate() AGAIN
+  inside the except block — that second raise was uncaught and crashed the
+  entire script with a traceback at line 907/911.
+  Fix: every activate() call is individually wrapped in its own try/except.
+  Three fully-isolated fallback methods: pygetwindow → win32gui → ctypes.
+  If Tally window is found but focus fails (Windows anti-focus-steal policy),
+  the script now prints a warning and continues — keyboard automation still
+  works because Tally is already the active window on screen.
+
 FIX 8 (v3.13) — Remove ALL OCR/mouse from Select Company navigation.
   OCR was clicking (485,824) which is OUTSIDE the dialog on this screen.
   New approach: Escape → Alt+K → S — pure keyboard, works on any screen
@@ -63,6 +75,8 @@ TALLY_ODBC_PORTS    = [9000, 9001, 9002, 9003]
 TALLY_XML_PORTS     = [9002, 9000, 9001, 9003]
 
 CLIENT_EXCEL_NAMES = [
+    "Client_Manager_Secure_AY2027-28.xlsx",
+    "Client_Manager_Secure_AY2026-27.xlsx",
     "Client_Manager_Secure_AY2025-26.xlsx",
     "clients_manager.xlsx",
     "clients.xlsx",
@@ -893,46 +907,134 @@ def _tally_search_keyword(name):
 def _focus_tally_window():
     """
     Bring Tally window to foreground.
-    Tries pygetwindow first, falls back to win32 SetForegroundWindow.
-    Returns True if Tally window was found.
+
+    Three independent methods tried in order — any success returns True.
+    Each method is fully isolated in its own try/except so a failure in
+    one never prevents the others from running.
+
+    Fix v3.15: pygetwindow on Python 3.13 + Windows 11 raises
+    PyGetWindowException("Error code 0 — The operation completed
+    successfully") from w.activate().  The original code caught the first
+    raise but then called w.activate() AGAIN in the except block, which
+    raised a second uncaught exception that crashed the entire script.
+    Now every activate() call is individually wrapped.
     """
-    # ── try pygetwindow ───────────────────────────────────────────────────────
+    found_hwnd = None   # shared across methods so ctypes fallback can reuse
+
+    # ── Method 1: pygetwindow ─────────────────────────────────────────────────
     try:
         import pygetwindow as gw
         wins = [w for w in gw.getAllWindows()
                 if "tally" in (w.title or "").lower()]
         if wins:
             w = wins[0]
+            # Each activate() call wrapped individually — error code 0 bug
+            # raises on the SECOND call in the original code.
+            activated = False
             try:
                 w.activate()
+                activated = True
             except Exception:
-                w.restore()
-                time.sleep(0.2)
-                w.activate()
+                pass
+            if not activated:
+                try:
+                    w.restore()
+                    time.sleep(0.2)
+                except Exception:
+                    pass
+                try:
+                    w.activate()
+                    activated = True
+                except Exception:
+                    pass
             time.sleep(0.6)
-            return True
+            if activated:
+                return True
+            # Window was found even if activate() failed — note the hwnd
+            # for the ctypes fallback below (method 3).
+            try:
+                found_hwnd = w._hWnd
+            except Exception:
+                pass
     except ImportError:
         pass
+    except Exception:
+        pass
 
-    # ── try win32gui ──────────────────────────────────────────────────────────
+    # ── Method 2: win32gui ────────────────────────────────────────────────────
     try:
         import win32gui, win32con
-        def _cb(hwnd, found):
+        _found = []
+        def _cb(hwnd, _):
             if "tally" in win32gui.GetWindowText(hwnd).lower():
-                found.append(hwnd)
-        found = []
-        win32gui.EnumWindows(_cb, found)
-        if found:
-            hwnd = found[0]
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            time.sleep(0.6)
-            return True
+                _found.append(hwnd)
+        win32gui.EnumWindows(_cb, None)
+        if _found:
+            hwnd = _found[0]
+            found_hwnd = hwnd
+            try:
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            except Exception:
+                pass
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+                time.sleep(0.6)
+                return True
+            except Exception:
+                pass
     except ImportError:
         pass
+    except Exception:
+        pass
 
-    print("  [UI] pygetwindow / win32gui not available — "
-          "install with:  pip install pygetwindow pywin32")
+    # ── Method 3: ctypes direct WinAPI (works when pygetwindow & win32gui fail)
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+
+        if found_hwnd is None:
+            # Enumerate windows via ctypes
+            _hwnds = []
+            EnumWindowsProc = ctypes.WINFUNCTYPE(
+                ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+            _buf = ctypes.create_unicode_buffer(256)
+            def _enum_cb(hwnd, lParam):
+                user32.GetWindowTextW(hwnd, _buf, 256)
+                if "tally" in _buf.value.lower():
+                    _hwnds.append(hwnd)
+                return True
+            user32.EnumWindows(EnumWindowsProc(_enum_cb), 0)
+            if _hwnds:
+                found_hwnd = _hwnds[0]
+
+        if found_hwnd:
+            SW_RESTORE = 9
+            try:
+                user32.ShowWindow(found_hwnd, SW_RESTORE)
+            except Exception:
+                pass
+            try:
+                # AllowSetForegroundWindow first — reduces chance of silent block
+                cur_pid = ctypes.windll.kernel32.GetCurrentProcessId()
+                user32.AllowSetForegroundWindow(cur_pid)
+            except Exception:
+                pass
+            try:
+                user32.SetForegroundWindow(found_hwnd)
+                time.sleep(0.6)
+                return True
+            except Exception:
+                pass
+            # Window found even if focus failed — return True so keyboard
+            # automation still proceeds (Tally may already be in focus).
+            print("  [UI] Tally window found but focus could not be forced "
+                  "(Windows anti-focus-steal). Continuing anyway.")
+            return True
+    except Exception:
+        pass
+
+    print("  [UI] Tally window not found. "
+          "Install pygetwindow or pywin32:  pip install pygetwindow pywin32")
     return False
 
 

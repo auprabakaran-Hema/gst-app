@@ -160,13 +160,18 @@ def _find_client_folders(base):
 def _sources(cf):
     g = cf/"GST Automation"; i = cf/"IT Download"
     ib = cf/"IT Bridge";     gc = cf/"GST IT Comparison"; r = cf/"26AS vs GSTR1"
+    # GST_Comparison_Report — search GST IT Comparison folder first, then GST Automation
+    gst_cmp = (_rglob(gc,"GST_Comparison_Report*.xlsx") or
+               _rglob(g, "GST_Comparison_Report*.xlsx") or
+               _rglob(cf,"GST_Comparison_Report*.xlsx"))
     return (_rglob(g,"ANNUAL_RECONCILIATION*.xlsx"),
             _rglob(i,"IT_RECONCILIATION*.xlsx"),
             _rglob(r,"26AS_GSTR1_Compare*.xlsx"),
             _rglob(gc,"GSTR2B_EXTRACT*.xlsx"),
             _rglob(gc,"TIS_AIS_COMPARISON*.xlsx"),
             _rglob(ib,"MASTER_GST_IT_RECONCILIATION*.xlsx"),
-            _rglob(g,"*RECONCILED*.xlsx") or _rglob(cf,"*RECONCILED*.xlsx"))
+            _rglob(g,"*RECONCILED*.xlsx") or _rglob(cf,"*RECONCILED*.xlsx"),
+            gst_cmp)
 
 def _fy(client_list):
     for _, cf in client_list:
@@ -177,7 +182,7 @@ def _fy(client_list):
 
 def _sf(v):
     try: return float(v) if v not in (None,"","-") else 0.0
-    except: return 0.0
+    except Exception: return 0.0
 
 def _inv_key(r):
     inv = str(r[3] or "") if len(r)>3 else ""
@@ -216,7 +221,7 @@ def _validate_columns(headers, data_rows, source_label):
             if v is None or v == "" or v == 0 or v == 0.0: continue
             try:
                 if float(str(v).replace(",","")) == 0: continue
-            except: pass
+            except Exception: pass
             has_value = True; break
         if not has_value:
             blank_cols.append(hdr.strip())
@@ -229,26 +234,28 @@ def _validate_columns(headers, data_rows, source_label):
 # ── Sheet 1: Run Summary ──────────────────────────────────────────────────────
 def _sh1(wb, clients, fy):
     ws = wb.create_sheet("1_Run_Summary"); ts = datetime.now().strftime("%d-%b-%Y %H:%M")
-    _title(ws,1,1,9,f"FINAL CONSOLIDATED REPORT — FY {fy}  |  Generated: {ts}",h=28,size=13)
+    _title(ws,1,1,10,f"FINAL CONSOLIDATED REPORT — FY {fy}  |  Generated: {ts}",h=28,size=13)
     _hdr(ws,2,[("Client",30),("Annual",14),("IT Recon",12),("26AS",12),
-               ("Bridge",12),("GST-IT",12),("GSTR1-FY",14),("Status",12),("Notes",28)])
+               ("Bridge",12),("GST-IT",12),("GSTR1-FY",14),("RC Summ",12),
+               ("Status",12),("Notes",28)])
     ri=3
     for i,(cn,cf) in enumerate(clients):
         bg=ALT1 if i%2==0 else ALT2
-        AN,IT,C2,GB,TA,BR,RC=_sources(cf)
+        AN,IT,C2,GB,TA,BR,RC,GST_CMP=_sources(cf)
         GF=_rglob(cf/"GST Automation","GSTR1_FY_*.xlsx")
         ok=all([AN,IT]); st="COMPLETE" if ok else ("PARTIAL" if any([AN,IT]) else "MISSING")
         sb=GREEN_BG if ok else (YELLOW_BG if st=="PARTIAL" else RED_BG)
         sf="276221" if ok else ("7D5A00" if st=="PARTIAL" else "9C0006")
         t=lambda f:"✓" if f else "✗"
-        for ci,v in enumerate([cn,t(AN),t(IT),t(C2),t(BR),t(TA),t(GF)],1):
+        for ci,v in enumerate([cn,t(AN),t(IT),t(C2),t(BR),t(TA),t(GF),t(GST_CMP)],1):
             _w(ws,ri,ci,v,bg=bg,bold=(ci==1),align="center" if ci>1 else "left")
-        c=ws.cell(row=ri,column=8,value=st)
+        c=ws.cell(row=ri,column=9,value=st)
         c.font=_font(True,sf,9); c.fill=_fill(sb); c.alignment=_aln("center"); c.border=_bd()
         notes=[]
         if not AN: notes.append("No Annual Recon")
         if not IT: notes.append("No IT Recon")
-        _w(ws,ri,9," | ".join(notes) if notes else "All files OK",bg=bg)
+        if not GST_CMP: notes.append("No GST Comparison Report (run Step 6e)")
+        _w(ws,ri,10," | ".join(notes) if notes else "All files OK",bg=bg)
         ri+=1
     ws.freeze_panes="A3"
     print(f"  ✓ Sheet 1 — Summary ({len(clients)} clients)")
@@ -304,7 +311,7 @@ def _sh2(wb, cn, fy, annual):
         rows = m_data.get(ml, [])
         if not rows: continue
         try: rows = sorted(rows, key=_inv_key)
-        except: pass
+        except Exception: pass
         ri = _month_sep(ws, ri, NC, ml, len(rows))
         mv = mt = mi = mc = ms = 0.
         for row in rows:
@@ -1672,6 +1679,416 @@ def _sh7(wb, cn, fy, it_rc, annual, compare_26as=None):
         print(f"  ✗ Sheet 7 — 26AS compare file not found")
 
 
+# ── Sheet RC: RC_Summary_Only — copied from GST_Comparison_Report ─────────────
+def _sh_rc(wb, cn, fy, gst_cmp_file):
+    """
+    Reads the RC_Summary_Only sheet from GST_Comparison_Report_*.xlsx and
+    copies it into the consolidated workbook as a clean, fully-styled sheet.
+
+    Columns reproduced (28 cols):
+      A  Month
+      B  RC Supplier GSTINs    C  RC Invoice Count    D  RC Taxable Value
+      E  RC IGST               F  RC CGST              G  RC SGST
+      H  RC Total Tax
+      I  All 2B IGST           J  All 2B CGST          K  All 2B SGST
+      L  All 2B Total
+      M  TaxLib 3B ITC IGST    N  TaxLib 3B ITC CGST   O  TaxLib 3B ITC SGST
+      P  TaxLib 3B ITC Total
+      Q  TaxLib 2B ITC IGST    R  TaxLib 2B ITC CGST   S  TaxLib 2B ITC SGST
+      T  TaxLib 2B ITC Total
+      U  Shortfall IGST (3B-2B)  V  Shortfall Total
+      W  RC IGST %             X  Status
+      Y  Diff IGST (2B-3B)    Z  Diff CGST            AA Diff SGST
+      AB Diff Total
+
+    Missing values (None/blank) in numeric columns are written as 0.0 so the
+    annual total row at the bottom can SUM correctly.
+    """
+    safe = re.sub(r"[^A-Za-z0-9 ]", "", cn)[:16]
+    ws = wb.create_sheet(f"RC_Summary_{safe}"[:31])
+    ws.sheet_view.showGridLines = False
+
+    NC = 28   # total columns
+
+    # ── Colour scheme matching gst_comparison_report_v2 ─────────────────────
+    C_RC    = "C00000"   # deep red  — RC columns
+    C_ALL   = "4472C4"   # blue      — All 2B ITC
+    C_3B    = "375623"   # dark green — 3B claimed
+    C_2B    = "7030A0"   # purple    — 2B available
+    C_SH    = "843C0C"   # orange    — shortfall
+    C_SUM   = "1F3864"   # navy      — summary / header
+    C_DIFF  = "7030A0"   # purple    — diff columns
+    GREEN_BG= "C6EFCE"; GREEN_FG = "276221"
+    RED_BG  = "FFC7CE";  RED_FG  = "9C0006"
+    YELLOW_BG="FFEB9C";  YELLOW_FG="9C6500"
+    NUM_FMT  = "#,##0.00"
+    ALT1_RC  = "FFFFFF";  ALT2_RC  = "FFF2CC"   # RC cols alt rows
+    ALT1_ALL = "FFFFFF";  ALT2_ALL = "DEEAF1"
+    ALT1_3B  = "FFFFFF";  ALT2_3B  = "E2EFDA"
+    ALT1_2B  = "FFFFFF";  ALT2_2B  = "EAD1DC"
+    ALT1_SH  = "FFFFFF";  ALT2_SH  = "FCE4D6"
+    ALT1_SUM = "FFFFFF";  ALT2_SUM = ALT2
+
+    def _bg_pair(grp, idx):
+        m = {"rc": (ALT1_RC, ALT2_RC), "all": (ALT1_ALL, ALT2_ALL),
+             "3b": (ALT1_3B, ALT2_3B), "2b": (ALT1_2B, ALT2_2B),
+             "sh": (ALT1_SH, ALT2_SH), "sum": (ALT1_SUM, ALT2_SUM),
+             "diff":("FFFFFF", "EAD1F5")}
+        p = m.get(grp, (ALT1, ALT2)); return p[idx % 2]
+
+    COL_GROUPS = (
+        "sum",                           # 1  Month
+        "rc","rc","rc","rc","rc","rc","rc",  # 2-8
+        "all","all","all","all",         # 9-12
+        "3b","3b","3b","3b",             # 13-16
+        "2b","2b","2b","2b",             # 17-20
+        "sh","sh",                       # 21-22
+        "sum","sum",                     # 23 RC%, 24 Status
+        "diff","diff","diff","diff",     # 25-28
+    )
+
+    # ── Row 1: main title ────────────────────────────────────────────────────
+    _title(ws, 1, 1, NC,
+           f"GSTR-2B RC Month-wise Summary — {cn} — FY {fy}",
+           bg=C_RC, size=12, h=24)
+
+    # ── Row 2: note bar ──────────────────────────────────────────────────────
+    ws.merge_cells(f"A2:{get_column_letter(NC)}2")
+    n = ws.cell(row=2, column=1,
+                value=("RC = Supply Attract Reverse Charge = YES from GSTR-2B B2B sheet.  "
+                       "All 2B ITC = Net values from GSTR2B_Consolidated_Analysis (net of CDN).  "
+                       "TaxLib = portal TaxLiability_*.xlsx ITC Other than IMPG sheet.  "
+                       "Shortfall = 3B ITC claimed − 2B ITC available.  "
+                       "Diff = All 2B ITC − 3B Claimed."))
+    n.font = _font(False, "000000", 8)
+    n.fill = _fill("FFEB9C"); n.alignment = _aln("left"); n.border = _bd()
+    ws.row_dimensions[2].height = 20
+
+    # ── Row 3: group band headers ────────────────────────────────────────────
+    def _band3(c1, c2, label, bg):
+        if c1 == c2:
+            c = ws.cell(row=3, column=c1, value=label)
+        else:
+            ws.merge_cells(f"{get_column_letter(c1)}3:{get_column_letter(c2)}3")
+            c = ws.cell(row=3, column=c1, value=label)
+        c.font = _font(True, "FFFFFF", 8); c.fill = _fill(bg)
+        c.alignment = _aln("center"); c.border = _bd()
+        ws.row_dimensions[3].height = 16
+
+    _band3(1,  1,  "Month",                                     "2E75B6")
+    _band3(2,  8,  "◀ GSTR-2B Reverse Charge (RC = YES) ▶",    C_RC)
+    _band3(9,  12, "◀ All GSTR-2B ITC (Consolidated Net) ▶",   C_ALL)
+    _band3(13, 16, "◀ Portal: 3B ITC Claimed ▶",               C_3B)
+    _band3(17, 20, "◀ Portal: 2B ITC Available ▶",             C_2B)
+    _band3(21, 22, "◀ Shortfall (3B−2B) ▶",                   C_SH)
+    _band3(23, 24, "Summary",                                   C_SUM)
+    _band3(25, 28, "◀ 2B ITC − 3B Claimed ▶",                  C_DIFF)
+
+    # ── Row 4: column headers ────────────────────────────────────────────────
+    HDR_COLS = [
+        ("Month", 14),
+        ("RC Supplier\nGSTINs", 14), ("RC Invoice\nCount", 13),
+        ("RC Taxable\nValue ₹", 16), ("RC IGST ₹", 13),
+        ("RC CGST ₹", 13), ("RC SGST ₹", 13), ("RC Total\nTax ₹", 14),
+        ("All 2B\nIGST ₹", 14), ("All 2B\nCGST ₹", 14),
+        ("All 2B\nSGST ₹", 14), ("All 2B\nTotal ₹", 14),
+        ("TaxLib: 3B\nITC IGST ₹", 16), ("TaxLib: 3B\nITC CGST ₹", 16),
+        ("TaxLib: 3B\nITC SGST ₹", 16), ("TaxLib: 3B\nITC Total ₹", 16),
+        ("TaxLib: 2B\nITC IGST ₹", 16), ("TaxLib: 2B\nITC CGST ₹", 16),
+        ("TaxLib: 2B\nITC SGST ₹", 16), ("TaxLib: 2B\nITC Total ₹", 16),
+        ("Shortfall\nIGST ₹", 15), ("Shortfall\nTotal ₹", 15),
+        ("RC IGST %", 12), ("Status", 18),
+        ("Diff IGST ₹\n(2B−3B)", 15), ("Diff CGST ₹\n(2B−3B)", 15),
+        ("Diff SGST ₹\n(2B−3B)", 15), ("Diff Total ₹\n(2B−3B)", 15),
+    ]
+    for ci, (lbl, w) in enumerate(HDR_COLS, 1):
+        c = ws.cell(row=4, column=ci, value=lbl)
+        c.font = _font(True, "FFFFFF", 9); c.fill = _fill(C_SUM)
+        c.alignment = _aln("center"); c.border = _bd()
+        ws.column_dimensions[get_column_letter(ci)].width = w
+    ws.row_dimensions[4].height = 28
+    ws.freeze_panes = "A5"
+
+    # ── Load source RC_Summary_Only from GST_Comparison_Report ──────────────
+    src_rows = []   # list of raw value tuples from source (row 5 onward = data)
+    if gst_cmp_file and Path(str(gst_cmp_file)).exists():
+        try:
+            _src_wb = load_workbook(str(gst_cmp_file), data_only=True)
+            if "RC_Summary_Only" in _src_wb.sheetnames:
+                _src_ws = _src_wb["RC_Summary_Only"]
+                _all = list(_src_ws.iter_rows(values_only=True))
+                # rows 0=title, 1=note, 2=bands, 3=headers, 4+=data
+                src_rows = [r for r in _all[4:] if any(c is not None for c in r)]
+                print(f"    RC_Summary source: {Path(str(gst_cmp_file)).name}  ({len(src_rows)} rows)")
+            else:
+                print(f"    [WARN] RC_Summary_Only sheet not in {Path(str(gst_cmp_file)).name}")
+        except Exception as e:
+            print(f"    [WARN] Could not read GST_Comparison_Report: {e}")
+
+    # ── Month order for sorting / full-name lookup ────────────────────────────
+    MONTH_SEQ = ["April","May","June","July","August","September",
+                 "October","November","December","January","February","March"]
+    SHORT_MAP = {"apr":"April","may":"May","jun":"June","jul":"July",
+                 "aug":"August","sep":"September","oct":"October",
+                 "nov":"November","dec":"December","jan":"January",
+                 "feb":"February","mar":"March"}
+
+    def _to_month_full(v):
+        s = str(v or "").strip()
+        for full in MONTH_SEQ:
+            if full.lower() in s.lower(): return full
+        for short, full in SHORT_MAP.items():
+            if s.lower().startswith(short): return full
+        return s
+
+    def _sfv(v):
+        """Safe float — treat None/blank/nan/formula strings as 0.0.
+        FIX: Excel formula strings (e.g. '=I5-M5') are returned as-is when
+        openpyxl loads with data_only=True and the workbook was never opened
+        in Excel. Treat any string starting with '=' as 0.0 so RC_Summary
+        data is never zeroed out by unresolved formula strings."""
+        if v is None: return 0.0
+        try:
+            sv = str(v).strip().replace(",","")
+            if sv.startswith("="): return 0.0   # unresolved Excel formula
+            return float(sv) if sv and sv.lower() not in ("","nan","none","-") else 0.0
+        except Exception: return 0.0
+
+    # ── Numeric column indices (1-based) ─────────────────────────────────────
+    # Cols 2-8: RC values, 9-12: All 2B, 13-22: TaxLib+shortfall, 23: RC%
+    NUM_COLS = set(range(2, 24)) - {24}   # col 24 = Status (text), 23 = RC% (float)
+
+    # ── Write data rows ──────────────────────────────────────────────────────
+    ri = 5
+    ann = {c: 0.0 for c in range(1, NC+1)}   # accumulator keyed by col index
+    written_months = []
+
+    # Build a month-keyed dict from src_rows so we can emit in FY order
+    month_data = {}
+    for row in src_rows:
+        if not row or not row[0]: continue
+        mn_raw = str(row[0]).strip()
+        mn_full = _to_month_full(mn_raw)
+        if mn_full in MONTH_SEQ:
+            month_data[mn_full] = row
+        elif "ANNUAL" in mn_raw.upper() or "TOTAL" in mn_raw.upper():
+            pass  # skip source annual total — we recalculate
+
+    for mn in MONTH_SEQ:
+        row = month_data.get(mn)
+        row_idx = ri - 5   # 0-based for alternating
+
+        # Build value array — 28 elements (1-based via enumerate below)
+        if row:
+            def _g(i): return _sfv(row[i]) if i < len(row) else 0.0
+            vals = [
+                mn,              # 1 Month
+                _g(1),           # 2 RC Supplier GSTINs
+                _g(2),           # 3 RC Invoice Count
+                _g(3),           # 4 RC Taxable Value
+                _g(4),           # 5 RC IGST
+                _g(5),           # 6 RC CGST
+                _g(6),           # 7 RC SGST
+                _g(7),           # 8 RC Total Tax
+                _g(8),           # 9 All 2B IGST
+                _g(9),           # 10 All 2B CGST
+                _g(10),          # 11 All 2B SGST
+                _g(11),          # 12 All 2B Total
+                _g(12),          # 13 TaxLib 3B ITC IGST
+                _g(13),          # 14 TaxLib 3B ITC CGST
+                _g(14),          # 15 TaxLib 3B ITC SGST
+                _g(15),          # 16 TaxLib 3B ITC Total
+                _g(16),          # 17 TaxLib 2B ITC IGST
+                _g(17),          # 18 TaxLib 2B ITC CGST
+                _g(18),          # 19 TaxLib 2B ITC SGST
+                _g(19),          # 20 TaxLib 2B ITC Total
+                round(_g(12) - _g(16), 2),  # 21 Shortfall IGST (3B-2B)
+                round(_g(15) - _g(19), 2),  # 22 Shortfall Total
+                _g(22),          # 23 RC IGST %
+                str(row[23] or "") if len(row) > 23 else "",  # 24 Status
+                round(_g(8)  - _g(12), 2),  # 25 Diff IGST (2B-3B)
+                round(_g(9)  - _g(13), 2),  # 26 Diff CGST
+                round(_g(10) - _g(14), 2),  # 27 Diff SGST
+                round(_g(11) - _g(15), 2),  # 28 Diff Total
+            ]
+        else:
+            # Month not in source — write zero row
+            vals = [mn] + [0.0] * 21 + [0.0, "⚠ No Data"] + [0.0] * 4
+
+        # Determine status colour (col 24)
+        status_v = str(vals[23]) if len(vals) > 23 else ""
+        if "✓" in status_v or "OK" in status_v.upper():
+            st_bg = GREEN_BG; st_fg = GREEN_FG
+        elif "✗" in status_v or "MISSING" in status_v.upper() or "EXCESS" in status_v.upper():
+            st_bg = RED_BG;  st_fg = RED_FG
+        elif "⚠" in status_v or "RC" in status_v.upper() or "UNDER" in status_v.upper():
+            st_bg = YELLOW_BG; st_fg = YELLOW_FG
+        elif not status_v or status_v == "⚠ No Data":
+            st_bg = ALT2; st_fg = "000000"
+        else:
+            st_bg = ALT2; st_fg = "000000"
+
+        # Write each cell
+        for ci, v in enumerate(vals, 1):
+            grp = COL_GROUPS[ci - 1]
+            is_num = ci in NUM_COLS
+            if ci == 24:  # Status — special colour
+                c = ws.cell(row=ri, column=ci, value=status_v)
+                c.font = _font(True, st_fg, 9); c.fill = _fill(st_bg)
+                c.alignment = _aln("center"); c.border = _bd()
+            elif ci == 25:  # Diff IGST — colour by sign
+                c = ws.cell(row=ri, column=ci, value=v)
+                diff_bg = (RED_BG if v < -1 else
+                           YELLOW_BG if v > 1 else GREEN_BG)
+                c.font = _font(False, "000000", 9); c.fill = _fill(diff_bg)
+                c.alignment = _aln("right"); c.border = _bd()
+                if isinstance(v, float): c.number_format = NUM_FMT
+            elif ci in (26, 27, 28):  # Other diff cols
+                c = ws.cell(row=ri, column=ci, value=v)
+                diff_bg = (RED_BG if v < -1 else
+                           YELLOW_BG if v > 1 else GREEN_BG)
+                c.font = _font(False, "000000", 9); c.fill = _fill(diff_bg)
+                c.alignment = _aln("right"); c.border = _bd()
+                if isinstance(v, float): c.number_format = NUM_FMT
+            else:
+                bg = _bg_pair(grp, row_idx)
+                c = ws.cell(row=ri, column=ci, value=v)
+                c.font = _font(False, "000000", 9); c.fill = _fill(bg)
+                c.alignment = _aln("right" if is_num else "left")
+                c.border = _bd()
+                if is_num and isinstance(v, float):
+                    c.number_format = NUM_FMT
+
+            # Accumulate numeric columns for annual total
+            if is_num and isinstance(v, (int, float)):
+                ann[ci] = ann.get(ci, 0.0) + v
+
+        ws.row_dimensions[ri].height = 16
+        written_months.append(mn)
+        ri += 1
+
+    if not written_months:
+        ws.merge_cells(f"A{ri}:{get_column_letter(NC)}{ri}")
+        c = ws.cell(row=ri, column=1,
+                    value="  No RC_Summary_Only data found — ensure GST_Comparison_Report_*.xlsx "
+                           "is in GST IT Comparison or GST Automation folder and run Step 6e first.")
+        c.font = _font(False, "9C0006", 9); c.fill = _fill(RED_BG)
+        c.border = _bd(); c.alignment = _aln("left")
+        ws.row_dimensions[ri].height = 18; ri += 1
+
+    # ── Annual Total row ─────────────────────────────────────────────────────
+    tot_bg = ANN_BG  # dark blue
+    for ci in range(1, NC + 1):
+        if ci == 1:
+            v = f"ANNUAL TOTAL  ({len(written_months)} months)"
+        elif ci == 24:  # Status
+            v = ""
+        elif ci in NUM_COLS:
+            v = round(ann.get(ci, 0.0), 2)
+        else:
+            v = None
+        c = ws.cell(row=ri, column=ci, value=v)
+        c.font = _font(True, "FFFFFF", 9); c.fill = _fill(tot_bg)
+        c.alignment = _aln("right" if ci in NUM_COLS else "left")
+        c.border = _bd()
+        if isinstance(v, float): c.number_format = NUM_FMT
+    ws.row_dimensions[ri].height = 18
+
+    ws.sheet_properties.tabColor = C_RC
+    _has = "✓" if gst_cmp_file else "✗"
+    print(f"  {_has} Sheet RC_Summary — {cn}  ({len(written_months)} months written from "
+          f"{Path(str(gst_cmp_file)).name if gst_cmp_file else 'NOT FOUND'})")
+
+
+# ── Auto-generate GST_Comparison_Report (Step 6e fallback) ───────────────────
+def _auto_gen_gst_cmp(cn, cf, fy):
+    """
+    When Step 6e was skipped or failed, try to generate GST_Comparison_Report
+    on-the-fly by calling gst_comparison_report_v2.py directly.
+    Returns Path of generated file, or None on failure.
+
+    FOLDER SEARCH (mirrors run_all.py Priority 1→4):
+      1. ClientName/GST Automation/         — direct GSTR2B files
+      2. Any subfolder of GST Automation with GSTR2B*.xlsx  (GSTIN subfolder)
+      3. ClientName root                    — flat layout
+    Output → ClientName/GST IT Comparison/GST_Comparison_Report_*.xlsx
+    """
+    import subprocess as _sp
+
+    comp_script = Path(__file__).parent / "gst_comparison_report_v2.py"
+    if not comp_script.exists():
+        print(f"  [6e-AUTO] gst_comparison_report_v2.py not found — cannot auto-generate RC data")
+        return None
+
+    # Find GST folder with GSTR2B files
+    gst_dir = None
+    _gst_auto = cf / "GST Automation"
+    if _gst_auto.exists():
+        if any(_gst_auto.glob("GSTR2B*.xlsx")):
+            gst_dir = _gst_auto
+        else:
+            # Look for GSTIN subfolder containing GSTR2B files
+            try:
+                for sub in sorted(_gst_auto.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                    if sub.is_dir() and any(sub.glob("GSTR2B*.xlsx")):
+                        gst_dir = sub; break
+            except Exception:
+                pass
+        if gst_dir is None:
+            gst_dir = _gst_auto  # use even if empty — script will print warnings
+
+    if gst_dir is None:
+        # Flat client folder layout
+        if any(cf.glob("GSTR2B*.xlsx")):
+            gst_dir = cf
+
+    if gst_dir is None:
+        print(f"  [6e-AUTO] No GSTR2B folder found for {cn} — skipping auto-generate")
+        return None
+
+    out_dir = cf / "GST IT Comparison"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts2  = datetime.now().strftime("%Y%m%d_%H%M")
+    fy_t = fy.replace("-", "_")
+    out_path = out_dir / f"GST_Comparison_Report_{cn.replace(' ','_')}_{fy_t}_{ts2}.xlsx"
+
+    print(f"  [6e-AUTO] Generating GST Comparison Report for {cn}...")
+    print(f"            source: {gst_dir}")
+    print(f"            output: {out_path.name}")
+
+    try:
+        import sys as _sys
+        result = _sp.run(
+            [_sys.executable, str(comp_script),
+             "--folder", str(gst_dir),
+             "--fy",     fy,
+             "--client", cn,
+             "--out",    str(out_path)],
+            timeout=300, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        if result.returncode == 0 and out_path.exists():
+            print(f"  [6e-AUTO] ✓ Generated: {out_path.name}")
+            return out_path
+        else:
+            # Script might have written to gst_dir
+            written = sorted(
+                gst_dir.glob("GST_Comparison_Report_*.xlsx"),
+                key=lambda p: p.stat().st_mtime, reverse=True
+            )
+            if written:
+                import shutil as _sh
+                dest = out_dir / written[0].name
+                _sh.move(str(written[0]), str(dest))
+                print(f"  [6e-AUTO] ✓ Moved to: {dest.name}")
+                return dest
+            stderr_tail = result.stderr[-300:] if result.stderr else "(no stderr)"
+            print(f"  [6e-AUTO] ✗ Failed (exit {result.returncode}): {stderr_tail}")
+            return None
+    except Exception as e:
+        print(f"  [6e-AUTO] ✗ Error: {e}")
+        return None
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def build(client_folder_or_base=None, output_file=None):
     ts=datetime.now().strftime("%Y%m%d_%H%M")
@@ -1697,7 +2114,7 @@ def build(client_folder_or_base=None, output_file=None):
     wb=openpyxl.Workbook(); wb.remove(wb.active)
     _sh1(wb,clients,fy)
     for cn,cf in clients:
-        AN,IT,C26,GB,TA,MX,RC=_sources(cf)
+        AN,IT,C26,GB,TA,MX,RC,GST_CMP=_sources(cf)
         if not AN and not IT:
             print(f"\n  [SKIP] {cn}: no source files"); continue
         # Also search base folder for master Excel if not in IT Bridge subfolder
@@ -1705,16 +2122,24 @@ def build(client_folder_or_base=None, output_file=None):
             MX=_rglob(base,"MASTER_GST_IT_RECONCILIATION*.xlsx")
         if not MX:
             MX=_rglob(cf/"IT Bridge","MASTER_GST_IT_RECONCILIATION*.xlsx")
-        print(f"\n{'─'*60}\nClient: {cn}")
+        # Also search base + client IT Comparison for GST_Comparison_Report if not found
+        if not GST_CMP:
+            GST_CMP=_rglob(base,"GST_Comparison_Report*.xlsx")
+        # Auto-generate GST_Comparison_Report if still not found (Step 6e fallback)
+        if not GST_CMP:
+            GST_CMP = _auto_gen_gst_cmp(cn, cf, fy)
+        print(f"\n" + "─"*60 + f"\nClient: {cn}")
         print(f"  Annual: {AN.name if AN else 'NOT FOUND'}")
         print(f"  IT RC : {IT.name if IT else 'NOT FOUND'}")
         print(f"  Master: {MX.name if MX else 'NOT FOUND - AIS/TIS will be 0'}")
+        print(f"  GSTCmp: {GST_CMP.name if GST_CMP else 'NOT FOUND - RC_Summary will be empty'}")
         _sh2(wb,cn,fy,AN)
         _sh3(wb,cn,fy,AN)
         _sh4(wb,cn,fy,RC)
         _sh5(wb,cn,fy,AN,IT,MX)
         _sh6(wb,cn,fy,IT)
         _sh7(wb,cn,fy,IT,AN,compare_26as=C26)
+        _sh_rc(wb,cn,fy,GST_CMP)
 
     wb.save(str(out))
     print(f"\n{'='*60}")
