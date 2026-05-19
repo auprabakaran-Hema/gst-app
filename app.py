@@ -722,10 +722,7 @@ footer a:hover{color:var(--txt)}
       style="padding:.35rem .9rem;background:linear-gradient(135deg,var(--grn),#00c853);
       border-radius:7px;font-size:.7rem;font-weight:800;color:#000;font-family:var(--sans);
       text-decoration:none;white-space:nowrap">⬇ Full Suite</a>
-    <a href="/download/gst-suite-v32"
-      style="padding:.35rem .9rem;background:rgba(0,229,255,.1);border:1px solid rgba(0,229,255,.35);
-      border-radius:7px;font-size:.7rem;font-weight:800;color:var(--accent);font-family:var(--mono);
-      text-decoration:none;white-space:nowrap">⬇ gst_suite (latest)</a>
+
   </div>
 </div>
 
