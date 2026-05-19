@@ -682,7 +682,7 @@ footer a:hover{color:var(--txt)}
   </div>
   <div class="kpi">
     <div class="kpi-ico">🏛️</div>
-    <div class="kpi-val kpi-grn" id="kpi-fy">2025-26</div>
+    <div class="kpi-val kpi-grn" id="kpi-fy">2026-27</div>
     <div class="kpi-lbl">Assessment Year</div>
   </div>
   <div class="kpi">
